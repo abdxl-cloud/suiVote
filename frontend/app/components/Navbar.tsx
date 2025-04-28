@@ -8,7 +8,7 @@ export default function Navbar() {
 
 	return (
 		<header className="border-b">
-			<div className="container mx-auto flex h-16 items-center justify-between px-4">
+			<div className="container mx-auto flex h-16 items-center justify-between px-6">
 				<div className="flex items-center gap-2">
 					<h1 className="text-xl font-bold text-primary">SuiVote</h1>
 				</div>
