@@ -1,7 +1,14 @@
-// src/pages/PollDetailPage.jsx
 import { useParams } from "react-router";
 import { Button } from "../components/ui/button";
+import type { Route } from "./+types/poll-detail";
 
+export function meta({}: Route.MetaArgs) {
+	const { id } = useParams();
+	return [
+		{ title: `Poll ${id} - SUI Vote` },
+		{ name: "description", content: "This is the poll." },
+	];
+}
 export default function PollDetailPage() {
 	const { id } = useParams();
 	// In a real app, you would fetch the poll data based on the ID
