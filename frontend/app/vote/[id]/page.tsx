@@ -14,152 +14,144 @@ import { Alert, AlertDescription } from "@/components/ui/alert"
 import { ShareDialog } from "@/components/share-dialog"
 import { WalletConnectButton } from "@/components/wallet-connect-button"
 import { motion, AnimatePresence } from "framer-motion"
-
-// Sample data for a vote with multiple polls
-const voteData = {
-  id: "1",
-  title: "Q2 Team Feedback",
-  description:
-    "Please provide your feedback on the following topics to help us improve our team processes and environment.",
-  polls: [
-    {
-      id: "poll-1",
-      title: "How satisfied are you with the current project management process?",
-      description: "Please rate your satisfaction with our Agile workflow and tools.",
-      isMultiSelect: false,
-      isRequired: true,
-      options: [
-        { id: "option-1-1", text: "Very satisfied", mediaUrl: null },
-        { id: "option-1-2", text: "Satisfied", mediaUrl: null },
-        { id: "option-1-3", text: "Neutral", mediaUrl: null },
-        { id: "option-1-4", text: "Dissatisfied", mediaUrl: null },
-        { id: "option-1-5", text: "Very dissatisfied", mediaUrl: null },
-      ],
-    },
-    {
-      id: "poll-2",
-      title: "Which team-building activities would you prefer?",
-      description: "Select all activities you would be interested in participating in (max 3).",
-      isMultiSelect: true,
-      maxSelections: 3,
-      isRequired: false,
-      options: [
-        {
-          id: "option-2-1",
-          text: "Outdoor adventure (hiking, kayaking, etc.)",
-          mediaUrl: "/placeholder.svg?height=200&width=200",
-        },
-        { id: "option-2-2", text: "Cooking class or food tasting", mediaUrl: "/placeholder.svg?height=200&width=200" },
-        { id: "option-2-3", text: "Escape room or puzzle-solving", mediaUrl: null },
-        { id: "option-2-4", text: "Sports tournament (basketball, volleyball, etc.)", mediaUrl: null },
-        { id: "option-2-5", text: "Virtual game night", mediaUrl: null },
-      ],
-    },
-    {
-      id: "poll-3",
-      title: "What technology would you like to learn more about?",
-      description: "Select one area you'd like to focus on for professional development.",
-      isMultiSelect: false,
-      isRequired: true,
-      options: [
-        { id: "option-3-1", text: "Blockchain and Web3", mediaUrl: null },
-        { id: "option-3-2", text: "AI and Machine Learning", mediaUrl: null },
-        { id: "option-3-3", text: "DevOps and Cloud Infrastructure", mediaUrl: null },
-        { id: "option-3-4", text: "Mobile App Development", mediaUrl: null },
-        { id: "option-3-5", text: "UI/UX Design", mediaUrl: null },
-      ],
-    },
-  ],
-  requiredToken: "sui",
-  requiredAmount: "10",
-  paymentAmount: "1",
-  status: "active",
-  votes: 124,
-  created: "2023-10-15",
-  endDate: "2023-11-15",
-  requireAllPolls: false,
-}
-
-// Sample closed vote data for testing
-const closedVoteData = {
-  ...voteData,
-  id: "2",
-  status: "closed",
-}
+import { useWallet } from "@suiet/wallet-kit"
+import { useSuiVote } from "@/hooks/use-suivote"
+import type { VoteDetails, PollDetails, PollOptionDetails } from "@/services/suivote-service"
 
 export default function VotePage() {
   const params = useParams()
   const router = useRouter()
   const { id } = params
+  const wallet = useWallet()
+  const suivote = useSuiVote()
 
-  const [vote, setVote] = useState(voteData)
+  const [vote, setVote] = useState<VoteDetails | null>(null)
+  const [polls, setPolls] = useState<PollDetails[]>([])
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [submitted, setSubmitted] = useState(false)
   const [shareDialogOpen, setShareDialogOpen] = useState(false)
   const [validationError, setValidationError] = useState<string | null>(null)
+  const [hasUserVoted, setHasUserVoted] = useState(false)
 
   // State to track selections for each poll
   const [selections, setSelections] = useState<Record<string, string | string[]>>({})
 
-  useEffect(() => {
-    // In a real app, fetch the vote data based on the ID
-    // For now, we'll just use the sample data based on the ID
-    const currentVote = id === "2" ? closedVoteData : voteData
-    setVote(currentVote)
+  // Function to fetch vote details and polls
+  const fetchVoteData = async () => {
+    try {
+      setLoading(true)
 
-    // If the vote is closed, redirect to the closed page
-    if (currentVote.status === "closed") {
-      router.push(`/vote/${id}/closed`)
-      return
-    }
+      if (!id) {
+        throw new Error("Vote ID is required")
+      }
 
-    setLoading(false)
+      // Get vote details
+      const voteDetails = await suivote.getVoteDetails(id as string)
+      if (!voteDetails) {
+        throw new Error("Vote not found")
+      }
 
-    // Initialize selections
-    const initialSelections: Record<string, string | string[]> = {}
-    currentVote.polls.forEach((poll) => {
-      initialSelections[poll.id] = poll.isMultiSelect ? [] : ""
-    })
-    setSelections(initialSelections)
+      setVote(voteDetails)
 
-    // Update document title and metadata
-    if (!loading && vote) {
-      document.title = `${vote.title} - SuiVote`
+      // If the vote is closed, redirect to the closed page
+      if (voteDetails.status === "closed") {
+        router.push(`/vote/${id}/closed`)
+        return
+      }
+
+      // Get polls for the vote
+      const pollsData = await suivote.getVotePolls(id as string)
+      
+      // Fetch options for each poll
+      const pollsWithOptions = await Promise.all(
+        pollsData.map(async (poll, index) => {
+          // Get options for this poll (index + 1 because poll indices are 1-based)
+          const options = await suivote.getPollOptions(id as string, index + 1)
+          return {
+            ...poll,
+            options: options || []
+          }
+        })
+      )
+      
+      setPolls(pollsWithOptions || [])
+
+      // Initialize selections
+      const initialSelections: Record<string, string | string[]> = {}
+      pollsWithOptions.forEach((poll) => {
+        initialSelections[poll.id] = poll.isMultiSelect ? [] : ""
+      })
+      setSelections(initialSelections)
+
+      // Check if user has already voted
+      if (wallet.connected && wallet.address) {
+        const votedStatus = await suivote.hasVoted(wallet.address, id as string)
+        setHasUserVoted(votedStatus)
+        if (votedStatus) {
+          setSubmitted(true)
+        }
+      }
+
+      // Update document title and metadata
+      document.title = `${voteDetails.title} - SuiVote`
 
       // Create meta description
       const metaDescription = document.querySelector('meta[name="description"]')
       if (metaDescription) {
-        metaDescription.setAttribute("content", vote.description || `Vote on ${vote.title}`)
+        metaDescription.setAttribute("content", voteDetails.description || `Vote on ${voteDetails.title}`)
       } else {
         const meta = document.createElement("meta")
         meta.name = "description"
-        meta.content = vote.description || `Vote on ${vote.title}`
+        meta.content = voteDetails.description || `Vote on ${voteDetails.title}`
         document.head.appendChild(meta)
       }
 
       // Create meta for social sharing
       const ogTitle = document.querySelector('meta[property="og:title"]')
       if (ogTitle) {
-        ogTitle.setAttribute("content", `${vote.title} - SuiVote`)
+        ogTitle.setAttribute("content", `${voteDetails.title} - SuiVote`)
       } else {
         const meta = document.createElement("meta")
         meta.setAttribute("property", "og:title")
-        meta.content = `${vote.title} - SuiVote`
+        meta.content = `${voteDetails.title} - SuiVote`
         document.head.appendChild(meta)
       }
 
       const ogDescription = document.querySelector('meta[property="og:description"]')
       if (ogDescription) {
-        ogDescription.setAttribute("content", vote.description || `Vote on ${vote.title}`)
+        ogDescription.setAttribute("content", voteDetails.description || `Vote on ${voteDetails.title}`)
       } else {
         const meta = document.createElement("meta")
         meta.setAttribute("property", "og:description")
-        meta.content = vote.description || `Vote on ${vote.title}`
+        meta.content = voteDetails.description || `Vote on ${voteDetails.title}`
         document.head.appendChild(meta)
       }
+    } catch (error) {
+      console.error("Error fetching vote data:", error)
+      setValidationError(error instanceof Error ? error.message : "Failed to load vote data")
+    } finally {
+      setLoading(false)
     }
-  }, [id, router, loading, vote])
+  }
+
+  useEffect(() => {
+    fetchVoteData()
+  }, [id, router])
+
+  // Re-check if user has voted when wallet changes
+  useEffect(() => {
+    if (wallet.connected && wallet.address && id) {
+      suivote.hasVoted(wallet.address, id as string).then(voted => {
+        setHasUserVoted(voted)
+        if (voted) {
+          setSubmitted(true)
+        }
+      })
+    } else {
+      setHasUserVoted(false)
+    }
+  }, [wallet.connected, wallet.address, id])
 
   const handleSingleSelect = (pollId: string, optionId: string) => {
     setSelections({
@@ -195,8 +187,16 @@ export default function VotePage() {
   }
 
   const validateVote = (): boolean => {
+    if (!vote) return false
+
+    // Check if wallet is connected
+    if (!wallet.connected) {
+      setValidationError("Please connect your wallet to vote")
+      return false
+    }
+
     // Check if all required polls have selections
-    const requiredPolls = vote.requireAllPolls ? vote.polls : vote.polls.filter((poll) => poll.isRequired)
+    const requiredPolls = vote.requireAllPolls ? polls : polls.filter((poll) => poll.isRequired)
 
     for (const poll of requiredPolls) {
       const selection = selections[poll.id]
@@ -218,17 +218,75 @@ export default function VotePage() {
   }
 
   const handleSubmit = async () => {
-    if (!validateVote()) return
+    if (!validateVote() || !vote || !id) return
 
-    setSubmitting(true)
+    try {
+      setSubmitting(true)
+      setValidationError(null)
 
-    // Simulate API call
-    await new Promise((resolve) => setTimeout(resolve, 1500))
+      // Prepare the poll indices and option selections
+      const pollIndices: number[] = []
+      const optionIndicesPerPoll: number[][] = []
 
-    // In a real app, you would submit the vote to the blockchain here
+      for (let i = 0; i < polls.length; i++) {
+        const poll = polls[i]
+        const selection = selections[poll.id]
 
-    setSubmitting(false)
-    setSubmitted(true)
+        if (selection) {
+          // Add the poll index (1-based index)
+          pollIndices.push(i + 1)
+
+          if (Array.isArray(selection)) {
+            // For multi-select polls, convert option IDs to indices
+            const optionIndices = selection.map(optionId => {
+              // Find the index of this option
+              const optionIndex = poll.options?.findIndex(opt => opt.id === optionId)
+              // Return 1-based index
+              return optionIndex !== undefined && optionIndex >= 0 ? optionIndex + 1 : 0
+            }).filter(idx => idx > 0)
+            
+            optionIndicesPerPoll.push(optionIndices)
+          } else {
+            // For single-select polls, find the option index
+            const optionIndex = poll.options?.findIndex(opt => opt.id === selection)
+            // Push as an array with a single 1-based index
+            optionIndicesPerPoll.push(optionIndex !== undefined && optionIndex >= 0 ? [optionIndex + 1] : [])
+          }
+        }
+      }
+
+      // If we have only one poll to vote on, use castVoteTransaction
+      if (pollIndices.length === 1) {
+        const transaction = suivote.castVoteTransaction(
+          id as string, 
+          pollIndices[0], 
+          optionIndicesPerPoll[0],
+          vote.paymentAmount
+        )
+        
+        const response = await suivote.executeTransaction(transaction)
+        console.log("Vote transaction response:", response)
+      } else {
+        // Use castMultipleVotesTransaction for multiple polls
+        const transaction = suivote.castMultipleVotesTransaction(
+          id as string,
+          pollIndices,
+          optionIndicesPerPoll,
+          vote.paymentAmount
+        )
+        
+        const response = await suivote.executeTransaction(transaction)
+        console.log("Multiple votes transaction response:", response)
+      }
+
+      setSubmitted(true)
+      setHasUserVoted(true)
+    } catch (error) {
+      console.error("Error submitting vote:", error)
+      setValidationError(error instanceof Error ? error.message : "Failed to submit vote")
+    } finally {
+      setSubmitting(false)
+    }
   }
 
   const handleShare = () => {
@@ -241,6 +299,17 @@ export default function VotePage() {
         <div className="flex items-center justify-center h-64">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
         </div>
+      </div>
+    )
+  }
+
+  if (!vote) {
+    return (
+      <div className="container max-w-3xl py-10 px-4 md:px-6">
+        <Alert variant="destructive">
+          <AlertCircle className="h-4 w-4" />
+          <AlertDescription>Vote not found or failed to load</AlertDescription>
+        </Alert>
       </div>
     )
   }
@@ -259,7 +328,7 @@ export default function VotePage() {
               <CardDescription className="mt-1">{vote.description}</CardDescription>
             </div>
             <Badge variant={vote.status === "active" ? "success" : "secondary"} className="text-sm px-3 py-1">
-              {vote.status === "active" ? "Active" : "Closed"}
+              {vote.status === "active" ? "Active" : vote.status === "upcoming" ? "Upcoming" : "Closed"}
             </Badge>
           </div>
         </CardHeader>
@@ -267,34 +336,24 @@ export default function VotePage() {
           <div className="flex flex-col sm:flex-row justify-between gap-4 text-sm">
             <div className="flex items-center gap-2">
               <Users className="h-4 w-4 text-muted-foreground" />
-              <span>{vote.votes} votes</span>
+              <span>{vote.totalVotes} votes</span>
             </div>
             <div className="flex items-center gap-2">
               <Clock className="h-4 w-4 text-muted-foreground" />
-              <span>Ends: {vote.endDate}</span>
+              <span>Ends: {new Date(vote.endTimestamp).toLocaleDateString()}</span>
             </div>
           </div>
 
-          {vote.requiredToken && (
+          {vote.paymentAmount > 0 && (
             <div className="bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-lg p-4 mt-4">
               <p className="text-sm text-amber-800 dark:text-amber-300">
-                <span className="font-medium">Token Required:</span> Minimum {vote.requiredAmount}
+                <span className="font-medium">Payment Required:</span> {vote.paymentAmount}
                 <span className="inline-flex items-center ml-1">
                   <img src="/images/sui-logo.png" alt="SUI" className="h-4 w-4 mr-1" />
-                  {vote.requiredToken.toUpperCase()}
+                  SUI
                 </span>{" "}
-                to vote
+                per vote
               </p>
-              {vote.paymentAmount && Number(vote.paymentAmount) > 0 && (
-                <p className="text-sm text-amber-800 dark:text-amber-300 mt-1">
-                  <span className="font-medium">Payment Required:</span> {vote.paymentAmount}
-                  <span className="inline-flex items-center ml-1">
-                    <img src="/images/sui-logo.png" alt="SUI" className="h-4 w-4 mr-1" />
-                    SUI
-                  </span>{" "}
-                  per vote
-                </p>
-              )}
             </div>
           )}
         </CardContent>
@@ -316,7 +375,7 @@ export default function VotePage() {
         )}
       </AnimatePresence>
 
-      {submitted ? (
+      {submitted || hasUserVoted ? (
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
           <Card className="border-2 shadow-lg mb-8 bg-green-50 dark:bg-green-900/20">
             <CardContent className="pt-6">
@@ -339,7 +398,7 @@ export default function VotePage() {
         </motion.div>
       ) : (
         <div className="space-y-8">
-          {vote.polls.map((poll, index) => (
+          {polls.map((poll, index) => (
             <motion.div
               key={poll.id}
               initial={{ opacity: 0, y: 20 }}
@@ -362,15 +421,15 @@ export default function VotePage() {
                   {poll.description && <CardDescription>{poll.description}</CardDescription>}
                   {poll.isMultiSelect && (
                     <p className="text-sm text-muted-foreground mt-1">
-                      Select up to {poll.maxSelections || poll.options.length} option
-                      {(poll.maxSelections || poll.options.length) !== 1 ? "s" : ""}
+                      Select up to {poll.maxSelections || (poll.options?.length || 1)} option
+                      {(poll.maxSelections || (poll.options?.length || 1)) !== 1 ? "s" : ""}
                     </p>
                   )}
                 </CardHeader>
                 <CardContent>
                   {poll.isMultiSelect ? (
                     <div className="space-y-4">
-                      {poll.options.map((option) => (
+                      {poll.options?.map((option) => (
                         <div
                           key={option.id}
                           className="flex items-start space-x-3 p-3 rounded-md hover:bg-muted/50 border border-transparent hover:border-border"
@@ -379,11 +438,12 @@ export default function VotePage() {
                             id={option.id}
                             checked={isOptionSelected(poll.id, option.id)}
                             onCheckedChange={() =>
-                              handleMultiSelect(poll.id, option.id, poll.maxSelections || poll.options.length)
+                              handleMultiSelect(poll.id, option.id, poll.maxSelections || (poll.options?.length || 1))
                             }
                             disabled={
                               (selections[poll.id] as string[])?.length >=
-                                (poll.maxSelections || poll.options.length) && !isOptionSelected(poll.id, option.id)
+                                (poll.maxSelections || (poll.options?.length || 1)) && 
+                                !isOptionSelected(poll.id, option.id)
                             }
                             className="mt-1"
                           />
@@ -406,7 +466,7 @@ export default function VotePage() {
                     </div>
                   ) : (
                     <RadioGroup value={selections[poll.id] as string} className="space-y-4">
-                      {poll.options.map((option) => (
+                      {poll.options?.map((option) => (
                         <div
                           key={option.id}
                           className="flex items-start space-x-3 p-3 rounded-md hover:bg-muted/50 border border-transparent hover:border-border"
@@ -436,7 +496,7 @@ export default function VotePage() {
                     </RadioGroup>
                   )}
                 </CardContent>
-                {index < vote.polls.length - 1 && (
+                {index < polls.length - 1 && (
                   <CardFooter className="border-t px-6 py-4">
                     <Separator />
                   </CardFooter>
@@ -447,18 +507,28 @@ export default function VotePage() {
         </div>
       )}
 
-      {!submitted && (
+      {!submitted && !hasUserVoted && (
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ delay: 0.5 }}
           className="mt-8 flex justify-end"
         >
-          <Button size="lg" className="gap-2" onClick={handleSubmit} disabled={submitting}>
+          <Button 
+            size="lg" 
+            className="gap-2" 
+            onClick={handleSubmit} 
+            disabled={submitting || !wallet.connected}
+          >
             {submitting ? (
               <>
                 <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
                 Submitting...
+              </>
+            ) : !wallet.connected ? (
+              <>
+                Connect Wallet to Vote
+                <ArrowRight className="h-4 w-4" />
               </>
             ) : (
               <>
@@ -474,7 +544,7 @@ export default function VotePage() {
         open={shareDialogOpen}
         onOpenChange={setShareDialogOpen}
         title={vote.title}
-        url={`${typeof window !== "undefined" ? window.location.origin : ""}/vote/${vote.id}`}
+        url={`${typeof window !== "undefined" ? window.location.origin : ""}/vote/${id}`}
       />
     </div>
   )

@@ -133,79 +133,87 @@ export class SuiVoteService {
   }
 
   /**
-   * Get votes created by a specific address
-   * @param address The creator's address
-   * @param limit Maximum number of votes to return
-   * @param cursor Pagination cursor
-   * @returns Array of vote details with pagination cursor
-   */
-  async getVotesCreatedByAddress(
-    address: string,
-    limit = 20,
-    cursor?: string,
-  ): Promise<{ data: VoteDetails[]; nextCursor?: string }> {
-    try {
-      this.checkInitialization()
+ * Get votes created by a specific address
+ * @param address The creator's address
+ * @param limit Maximum number of votes to return
+ * @param cursor Pagination cursor
+ * @returns Array of vote details with pagination cursor
+ */
+async getVotesCreatedByAddress(
+  address: string,
+  limit = 20,
+  cursor?: string,
+): Promise<{ data: VoteDetails[]; nextCursor?: string }> {
+  try {
+    this.checkInitialization()
 
-      if (!address) {
-        throw new Error("Address is required")
-      }
-
-      console.log(`Fetching votes created by address ${address}, limit: ${limit}`)
-
-      // Query for VoteCreated events where creator matches address
-      const eventsResponse = await this.client.queryEvents({
-        query: {
-          MoveEventType: `${PACKAGE_ID}::voting::VoteCreated`,
-          MoveEventField: {
-            path: "/creator",
-            value: address,
-          },
-        },
-        cursor,
-        limit,
-        descending_order: true, // Get most recent first
-      })
-
-      // Process events to extract vote IDs
-      const votes: VoteDetails[] = []
-      const processedIds = new Set<string>()
-
-      console.log(`Found ${eventsResponse.data.length} vote creation events`)
-
-      // Use Promise.all for parallel processing
-      await Promise.all(
-        eventsResponse.data.map(async (event) => {
-          if (!event.parsedJson) return
-
-          const voteCreatedEvent = event.parsedJson as VoteCreatedEvent
-
-          // Avoid processing duplicates
-          if (processedIds.has(voteCreatedEvent.vote_id)) return
-          processedIds.add(voteCreatedEvent.vote_id)
-
-          // Get detailed vote information
-          const voteDetails = await this.getVoteDetails(voteCreatedEvent.vote_id)
-          if (voteDetails) {
-            votes.push(voteDetails)
-          }
-        }),
-      )
-
-      // Sort by most recent first
-      votes.sort((a, b) => b.startTimestamp - a.startTimestamp)
-
-      console.log(`Processed ${votes.length} unique votes`)
-
-      return {
-        data: votes,
-        nextCursor: eventsResponse.nextCursor,
-      }
-    } catch (error) {
-      console.error("Failed to fetch votes created by address:", error)
-      throw new Error(`Failed to fetch votes: ${error instanceof Error ? error.message : String(error)}`)
+    if (!address) {
+      throw new Error("Address is required")
     }
+
+    console.log(`Fetching votes created by address ${address}, limit: ${limit}`)
+
+    // Query for VoteCreated events using MoveEventType filter
+    const eventsResponse = await this.client.queryEvents({
+      query: {
+        MoveEventType: `${PACKAGE_ID}::voting::VoteCreated`
+      },
+      cursor,
+      limit: 100, // Using a higher limit initially since we'll filter manually
+      descending_order: true, // Get most recent first
+    })
+
+    // Process events to extract vote IDs
+    const votes: VoteDetails[] = []
+    const processedIds = new Set<string>()
+
+    console.log(`Found ${eventsResponse.data.length} vote creation events, filtering for creator: ${address}`)
+
+    // Manually filter the events for creator = address
+    const filteredEvents = eventsResponse.data.filter(event => {
+      if (!event.parsedJson) return false
+      const voteCreatedEvent = event.parsedJson as VoteCreatedEvent
+      return voteCreatedEvent.creator === address
+    })
+
+    console.log(`After filtering, found ${filteredEvents.length} events by creator ${address}`)
+
+    // Use Promise.all for parallel processing
+    await Promise.all(
+      filteredEvents.map(async (event) => {
+        if (!event.parsedJson) return
+
+        const voteCreatedEvent = event.parsedJson as VoteCreatedEvent
+
+        // Avoid processing duplicates
+        if (processedIds.has(voteCreatedEvent.vote_id)) return
+        processedIds.add(voteCreatedEvent.vote_id)
+
+        // Get detailed vote information
+        const voteDetails = await this.getVoteDetails(voteCreatedEvent.vote_id)
+        if (voteDetails) {
+          votes.push(voteDetails)
+        }
+      }),
+    )
+
+    // Sort by most recent first
+    votes.sort((a, b) => b.startTimestamp - a.startTimestamp)
+
+    // Apply limit after filtering
+    const limitedVotes = votes.slice(0, limit)
+
+    console.log(`Processed ${limitedVotes.length} unique votes`)
+
+    return {
+      data: limitedVotes,
+      nextCursor: eventsResponse.nextCursor,
+    }
+  } catch (error) {
+    console.error("Failed to fetch votes created by address:", error)
+    throw new Error(`Failed to fetch votes: ${error instanceof Error ? error.message : String(error)}`)
   }
+}
 
   /**
    * Get votes that a user has participated in
@@ -228,31 +236,30 @@ export class SuiVoteService {
 
       console.log(`Fetching votes participated by address ${address}, limit: ${limit}`)
 
-      // Query for VoteCast events where voter matches the address
+      // Query for VoteCast events using MoveEventType filter
       const eventsResponse = await this.client.queryEvents({
         query: {
-          And: [
-            {
-              MoveEventType: `${PACKAGE_ID}::voting::VoteCast`,
-            },
-            {
-              MoveEventField: {
-                path: "/voter",
-                value: address,
-              },
-            },
-          ],
+          MoveEventType: `${PACKAGE_ID}::voting::VoteCast`
         },
         cursor,
-        limit,
+        limit: 100, // Using a higher limit initially since we'll filter manually
         descending_order: true, // Get most recent first
       })
 
-      console.log(`Found ${eventsResponse.data.length} vote cast events`)
+      console.log(`Found ${eventsResponse.data.length} vote cast events, filtering for voter: ${address}`)
+
+      // Manually filter the events for voter = address
+      const filteredEvents = eventsResponse.data.filter(event => {
+        if (!event.parsedJson) return false
+        const voteCastEvent = event.parsedJson as VoteCastEvent
+        return voteCastEvent.voter === address
+      })
+
+      console.log(`After filtering, found ${filteredEvents.length} events by voter ${address}`)
 
       // Process events to extract unique vote IDs
       const voteIds = new Set<string>()
-      for (const event of eventsResponse.data) {
+      for (const event of filteredEvents) {
         if (!event.parsedJson) continue
 
         const voteCastEvent = event.parsedJson as VoteCastEvent
@@ -957,58 +964,49 @@ export class SuiVoteService {
   }
 
   /**
-   * Check if a user has voted on a specific vote
-   * @param userAddress User address
-   * @param voteId Vote object ID
-   * @returns Boolean indicating whether the user has voted
-   */
-  async hasVoted(userAddress: string, voteId: string): Promise<boolean> {
-    try {
-      this.checkInitialization()
+ * Check if a user has voted on a specific vote
+ * @param userAddress User address
+ * @param voteId Vote object ID
+ * @returns Boolean indicating whether the user has voted
+ */
+async hasVoted(userAddress: string, voteId: string): Promise<boolean> {
+  try {
+    this.checkInitialization()
 
-      if (!userAddress) {
-        throw new Error("User address is required")
-      }
-
-      if (!voteId) {
-        throw new Error("Vote ID is required")
-      }
-
-      console.log(`Checking if user ${userAddress} has voted on vote ${voteId}`)
-
-      // Query for VoteCast events with this user and vote ID
-      const { data } = await this.client.queryEvents({
-        query: {
-          And: [
-            {
-              MoveEventType: `${PACKAGE_ID}::voting::VoteCast`,
-            },
-            {
-              MoveEventField: {
-                path: "/voter",
-                value: userAddress,
-              },
-            },
-            {
-              MoveEventField: {
-                path: "/vote_id",
-                value: voteId,
-              },
-            },
-          ],
-        },
-        limit: 1,
-      })
-
-      const hasVoted = data.length > 0
-      console.log(`User ${userAddress} has ${hasVoted ? "" : "not "}voted on vote ${voteId}`)
-
-      return hasVoted
-    } catch (error) {
-      console.error(`Failed to check if user ${userAddress} has voted on vote ${voteId}:`, error)
-      return false
+    if (!userAddress) {
+      throw new Error("User address is required")
     }
+
+    if (!voteId) {
+      throw new Error("Vote ID is required")
+    }
+
+    console.log(`Checking if user ${userAddress} has voted on vote ${voteId}`)
+
+    // Query for VoteCast events using MoveEventType filter
+    const { data } = await this.client.queryEvents({
+      query: {
+        MoveEventType: `${PACKAGE_ID}::voting::VoteCast`
+      },
+      limit: 50, // Using a reasonable limit to search through
+    })
+
+    // Manually filter for both voter and vote_id
+    const hasVoted = data.some(event => {
+      if (!event.parsedJson) return false
+      
+      const voteCastEvent = event.parsedJson as VoteCastEvent
+      return voteCastEvent.voter === userAddress && voteCastEvent.vote_id === voteId
+    })
+
+    console.log(`User ${userAddress} has ${hasVoted ? "" : "not "}voted on vote ${voteId}`)
+
+    return hasVoted
+  } catch (error) {
+    console.error(`Failed to check if user ${userAddress} has voted on vote ${voteId}:`, error)
+    return false
   }
+}
 
   /**
    * Get vote results if available
