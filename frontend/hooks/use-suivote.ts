@@ -1,251 +1,427 @@
-// hooks/use-suivote.ts
-import { useState, useCallback, useEffect } from 'react';
-import { SuiVoteService } from '../services/suivote-service';
-import { Transaction } from '@mysten/sui/transactions';
-import { useWallet } from '@suiet/wallet-kit';
+"use client"
 
-// Create a reusable hook for accessing the SuiVoteService
+import { useState, useCallback } from "react"
+import { useWallet } from "@suiet/wallet-kit"
+import type { Transaction } from "@mysten/sui/transactions"
+import {
+  SuiVoteService,
+  type PollData,
+  type DashboardVote,
+  type VoteDetails,
+  type PollDetails,
+  type PollOptionDetails,
+} from "@/services/suivote-service"
+import { SUI_CONFIG } from "@/config/sui-config"
+
+// Initialize the service
+const suiVoteService = new SuiVoteService(SUI_CONFIG.NETWORK)
+
 export function useSuiVote() {
-  const wallet = useWallet();
-  const [service, setService] = useState<SuiVoteService | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const wallet = useWallet()
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
-  // Initialize the service with network from wallet when connected
-  useEffect(() => {
-    if (wallet.connected) {
+  /**
+   * Get votes created by the current user
+   */
+  const getMyVotes = useCallback(async (address: string, limit = 20): Promise<{ data: DashboardVote[] }> => {
+    try {
+      setLoading(true)
+      setError(null)
+
+      if (!address) {
+        throw new Error("Wallet address is required")
+      }
+
+      const result = await suiVoteService.getMyVotes(address, limit)
+      return result
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err)
+      setError(errorMessage)
+      console.error("Error fetching votes:", errorMessage)
+      return { data: [] }
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  /**
+   * Get votes created by a specific address
+   */
+  const getVotesCreatedByAddress = useCallback(
+    async (address: string, limit = 20, cursor?: string): Promise<{ data: VoteDetails[]; nextCursor?: string }> => {
       try {
-        // Get the network from wallet if available, otherwise use 'devnet'
-        const network = wallet.chain?.name?.toLowerCase() || 'devnet';
-        console.log(`Initializing SuiVoteService with network: ${network}`);
-        
-        const suivoteService = new SuiVoteService(network);
-        setService(suivoteService);
-        setError(null);
-      } catch (error) {
-        console.error('Failed to initialize SuiVoteService:', error);
-        setError(`Failed to initialize voting service: ${(error instanceof Error) ? error.message : String(error)}`);
+        setLoading(true)
+        setError(null)
+
+        if (!address) {
+          throw new Error("Address is required")
+        }
+
+        const result = await suiVoteService.getVotesCreatedByAddress(address, limit, cursor)
+        return result
+      } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : String(err)
+        setError(errorMessage)
+        console.error("Error fetching votes:", errorMessage)
+        return { data: [] }
+      } finally {
+        setLoading(false)
       }
-    } else {
-      // If wallet disconnected, clear service
-      setService(null);
-    }
-  }, [wallet.connected, wallet.chain]);
+    },
+    [],
+  )
 
   /**
-   * Create a complete vote transaction with proper validation and error handling
+   * Get votes that a user has participated in
    */
-  const createCompleteVoteTransaction = useCallback((
-    title: string,
-    description: string,
-    startTimestamp: number,
-    endTimestamp: number,
-    requiredToken: string = '',
-    requiredAmount: number = 0,
-    paymentAmount: number = 0,
-    requireAllPolls: boolean = true,
-    pollData: any[]
-  ): Transaction => {
-    setLoading(true);
-    setError(null);
+  const getVotesParticipatedByAddress = useCallback(
+    async (address: string, limit = 20, cursor?: string): Promise<{ data: VoteDetails[]; nextCursor?: string }> => {
+      try {
+        setLoading(true)
+        setError(null)
 
-    try {
-      if (!service) {
-        throw new Error('SuiVote service not initialized. Please connect your wallet.');
-      }
+        if (!address) {
+          throw new Error("Address is required")
+        }
 
-      if (!wallet.connected) {
-        throw new Error('Wallet not connected');
+        const result = await suiVoteService.getVotesParticipatedByAddress(address, limit, cursor)
+        return result
+      } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : String(err)
+        setError(errorMessage)
+        console.error("Error fetching votes:", errorMessage)
+        return { data: [] }
+      } finally {
+        setLoading(false)
       }
-      
-      // Validate and sanitize poll data
-      console.log('Preparing poll data for transaction');
-      
-      // Ensure all fields have proper values
-      const sanitizedPollData = pollData.map(poll => ({
-        title: poll.title || '',
-        description: poll.description || '',
-        isMultiSelect: !!poll.isMultiSelect,
-        maxSelections: Math.max(1, poll.isMultiSelect ? Math.min(poll.maxSelections || 1, poll.options.length - 1) : 1),
-        isRequired: !!poll.isRequired,
-        options: poll.options.map((option: any) => ({
-          text: option.text || '',
-          mediaUrl: option.mediaUrl || ''
-        }))
-      }));
-      
-      // Log transaction parameters for debugging
-      console.log('Creating vote transaction with parameters:', {
-        title,
-        descriptionLength: description?.length || 0,
-        startTimestamp: new Date(startTimestamp).toISOString(),
-        endTimestamp: new Date(endTimestamp).toISOString(),
-        requiredToken: requiredToken || 'none',
-        requiredAmount,
-        paymentAmount,
-        requireAllPolls,
-        pollCount: sanitizedPollData.length,
-        totalOptions: sanitizedPollData.reduce((sum, poll) => sum + poll.options.length, 0)
-      });
-      
-      // Create the transaction
-      const transaction = service.createCompleteVote(
-        title,
-        description,
-        startTimestamp,
-        endTimestamp,
-        requiredToken,
-        requiredAmount,
-        paymentAmount,
-        requireAllPolls,
-        sanitizedPollData
-      );
-      
-      setLoading(false);
-      return transaction;
-    } catch (error) {
-      const errorMessage = (error instanceof Error) ? error.message : String(error);
-      console.error('Error creating vote transaction:', errorMessage);
-      setError(errorMessage);
-      setLoading(false);
-      
-      // Return an empty transaction as fallback - the error will be handled by the component
-      return new Transaction();
-    }
-  }, [service, wallet.connected]);
+    },
+    [],
+  )
 
   /**
-   * Get votes created by the connected wallet
+   * Get detailed information about a specific vote
    */
-  const getMyCreatedVotes = useCallback(async (limit = 20, cursor?: string) => {
-    setLoading(true);
-    setError(null);
-    
+  const getVoteDetails = useCallback(async (voteId: string): Promise<VoteDetails | null> => {
     try {
-      if (!service) {
-        throw new Error('SuiVote service not initialized. Please connect your wallet.');
+      setLoading(true)
+      setError(null)
+
+      if (!voteId) {
+        throw new Error("Vote ID is required")
       }
 
-      if (!wallet.connected || !wallet.account?.address) {
-        throw new Error('Wallet not connected');
-      }
-      
-      const result = await service.getVotesCreatedByAddress(wallet.account.address, limit, cursor);
-      setLoading(false);
-      return result;
-    } catch (error) {
-      const errorMessage = (error instanceof Error) ? error.message : String(error);
-      console.error('Error fetching created votes:', errorMessage);
-      setError(errorMessage);
-      setLoading(false);
-      return { data: [], nextCursor: undefined };
+      const result = await suiVoteService.getVoteDetails(voteId)
+      return result
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err)
+      setError(errorMessage)
+      console.error("Error fetching vote details:", errorMessage)
+      return null
+    } finally {
+      setLoading(false)
     }
-  }, [service, wallet.connected, wallet.account?.address]);
+  }, [])
 
   /**
-   * Get votes participated in by the connected wallet
+   * Get detailed information about a vote's polls
    */
-  const getMyParticipatedVotes = useCallback(async (limit = 20, cursor?: string) => {
-    setLoading(true);
-    setError(null);
-    
+  const getVotePolls = useCallback(async (voteId: string): Promise<PollDetails[]> => {
     try {
-      if (!service) {
-        throw new Error('SuiVote service not initialized. Please connect your wallet.');
+      setLoading(true)
+      setError(null)
+
+      if (!voteId) {
+        throw new Error("Vote ID is required")
       }
 
-      if (!wallet.connected || !wallet.account?.address) {
-        throw new Error('Wallet not connected');
-      }
-      
-      const result = await service.getVotesParticipatedByAddress(wallet.account.address, limit, cursor);
-      setLoading(false);
-      return result;
-    } catch (error) {
-      const errorMessage = (error instanceof Error) ? error.message : String(error);
-      console.error('Error fetching participated votes:', errorMessage);
-      setError(errorMessage);
-      setLoading(false);
-      return { data: [], nextCursor: undefined };
+      const result = await suiVoteService.getVotePolls(voteId)
+      return result
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err)
+      setError(errorMessage)
+      console.error("Error fetching vote polls:", errorMessage)
+      return []
+    } finally {
+      setLoading(false)
     }
-  }, [service, wallet.connected, wallet.account?.address]);
+  }, [])
 
   /**
-   * Cast a vote on a poll
+   * Get detailed information about a poll's options
    */
-  const castVote = useCallback((
-    voteId: string,
-    pollIndex: number,
-    optionIndices: number[],
-    paymentAmount: number = 0
-  ): Transaction => {
-    setLoading(true);
-    setError(null);
-    
+  const getPollOptions = useCallback(async (voteId: string, pollIndex: number): Promise<PollOptionDetails[]> => {
     try {
-      if (!service) {
-        throw new Error('SuiVote service not initialized. Please connect your wallet.');
+      setLoading(true)
+      setError(null)
+
+      if (!voteId) {
+        throw new Error("Vote ID is required")
       }
 
-      if (!wallet.connected) {
-        throw new Error('Wallet not connected');
-      }
-      
-      const transaction = service.castVote(voteId, pollIndex, optionIndices, paymentAmount);
-      setLoading(false);
-      return transaction;
-    } catch (error) {
-      const errorMessage = (error instanceof Error) ? error.message : String(error);
-      console.error('Error creating cast vote transaction:', errorMessage);
-      setError(errorMessage);
-      setLoading(false);
-      return new Transaction();
+      const result = await suiVoteService.getPollOptions(voteId, pollIndex)
+      return result
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err)
+      setError(errorMessage)
+      console.error("Error fetching poll options:", errorMessage)
+      return []
+    } finally {
+      setLoading(false)
     }
-  }, [service, wallet.connected]);
+  }, [])
 
   /**
-   * Cast votes on multiple polls at once
+   * Create a transaction to create a complete vote with polls and options
    */
-  const castMultipleVotes = useCallback((
-    voteId: string,
-    pollIndices: number[],
-    optionIndicesPerPoll: number[][],
-    paymentAmount: number = 0
-  ): Transaction => {
-    setLoading(true);
-    setError(null);
-    
+  const createCompleteVoteTransaction = useCallback(
+    (
+      title: string,
+      description: string,
+      startTimestamp: number,
+      endTimestamp: number,
+      requiredToken = "",
+      requiredAmount = 0,
+      paymentAmount = 0,
+      requireAllPolls = true,
+      pollData: PollData[],
+    ): Transaction => {
+      try {
+        setLoading(true)
+        setError(null)
+
+        console.log("Creating vote transaction with:", {
+          title,
+          description,
+          startTimestamp,
+          endTimestamp,
+          requiredToken,
+          requiredAmount,
+          paymentAmount,
+          requireAllPolls,
+          pollCount: pollData.length,
+        })
+
+        // Call the service method to create the transaction
+        const transaction = suiVoteService.createCompleteVoteTransaction(
+          title,
+          description,
+          startTimestamp,
+          endTimestamp,
+          requiredToken,
+          requiredAmount,
+          paymentAmount,
+          requireAllPolls,
+          pollData,
+        )
+
+        return transaction
+      } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : String(err)
+        console.error("Error creating vote transaction:", errorMessage)
+        setError(errorMessage)
+        throw err
+      } finally {
+        setLoading(false)
+      }
+    },
+    [],
+  )
+
+  /**
+   * Create a transaction to cast a vote
+   */
+  const castVoteTransaction = useCallback(
+    (voteId: string, pollIndex: number, optionIndices: number[], payment = 0): Transaction => {
+      try {
+        setLoading(true)
+        setError(null)
+
+        const transaction = suiVoteService.castVoteTransaction(voteId, pollIndex, optionIndices, payment)
+        return transaction
+      } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : String(err)
+        setError(errorMessage)
+        throw err
+      } finally {
+        setLoading(false)
+      }
+    },
+    [],
+  )
+
+  /**
+   * Create a transaction to cast multiple votes at once
+   */
+  const castMultipleVotesTransaction = useCallback(
+    (voteId: string, pollIndices: number[], optionIndicesPerPoll: number[][], payment = 0): Transaction => {
+      try {
+        setLoading(true)
+        setError(null)
+
+        const transaction = suiVoteService.castMultipleVotesTransaction(
+          voteId,
+          pollIndices,
+          optionIndicesPerPoll,
+          payment,
+        )
+        return transaction
+      } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : String(err)
+        setError(errorMessage)
+        throw err
+      } finally {
+        setLoading(false)
+      }
+    },
+    [],
+  )
+
+  /**
+   * Create a transaction to close a vote
+   */
+  const closeVoteTransaction = useCallback((voteId: string): Transaction => {
     try {
-      if (!service) {
-        throw new Error('SuiVote service not initialized. Please connect your wallet.');
-      }
+      setLoading(true)
+      setError(null)
 
-      if (!wallet.connected) {
-        throw new Error('Wallet not connected');
-      }
-      
-      const transaction = service.castMultipleVotes(voteId, pollIndices, optionIndicesPerPoll, paymentAmount);
-      setLoading(false);
-      return transaction;
-    } catch (error) {
-      const errorMessage = (error instanceof Error) ? error.message : String(error);
-      console.error('Error creating cast multiple votes transaction:', errorMessage);
-      setError(errorMessage);
-      setLoading(false);
-      return new Transaction();
+      const transaction = suiVoteService.closeVoteTransaction(voteId)
+      return transaction
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err)
+      setError(errorMessage)
+      throw err
+    } finally {
+      setLoading(false)
     }
-  }, [service, wallet.connected]);
+  }, [])
 
-  // Return all the useful functions and state from the hook
+  /**
+   * Create a transaction to cancel a vote
+   */
+  const cancelVoteTransaction = useCallback((voteId: string): Transaction => {
+    try {
+      setLoading(true)
+      setError(null)
+
+      const transaction = suiVoteService.cancelVoteTransaction(voteId)
+      return transaction
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err)
+      setError(errorMessage)
+      throw err
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  /**
+   * Create a transaction to extend a vote's voting period
+   */
+  const extendVotingPeriodTransaction = useCallback((voteId: string, newEndTimestamp: number): Transaction => {
+    try {
+      setLoading(true)
+      setError(null)
+
+      const transaction = suiVoteService.extendVotingPeriodTransaction(voteId, newEndTimestamp)
+      return transaction
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err)
+      setError(errorMessage)
+      throw err
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  /**
+   * Check if a user has voted on a specific vote
+   */
+  const hasVoted = useCallback(async (userAddress: string, voteId: string): Promise<boolean> => {
+    try {
+      setLoading(true)
+      setError(null)
+
+      const result = await suiVoteService.hasVoted(userAddress, voteId)
+      return result
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err)
+      setError(errorMessage)
+      console.error("Error checking if user has voted:", errorMessage)
+      return false
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  /**
+   * Get vote results
+   */
+  const getVoteResults = useCallback(async (voteId: string) => {
+    try {
+      setLoading(true)
+      setError(null)
+
+      const results = await suiVoteService.getVoteResults(voteId)
+      return results
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err)
+      setError(errorMessage)
+      console.error("Error getting vote results:", errorMessage)
+      return null
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  /**
+   * Execute a transaction using the wallet
+   */
+  const executeTransaction = useCallback(
+    async (transaction: Transaction) => {
+      try {
+        setLoading(true)
+        setError(null)
+
+        if (!wallet.connected) {
+          throw new Error("Wallet not connected")
+        }
+
+        const response = await wallet.signAndExecuteTransaction({
+          transaction,
+          chain: SUI_CONFIG.NETWORK,
+        })
+
+        return response
+      } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : String(err)
+        setError(errorMessage)
+        console.error("Error executing transaction:", errorMessage)
+        throw err
+      } finally {
+        setLoading(false)
+      }
+    },
+    [wallet],
+  )
+
   return {
-    service,
     loading,
     error,
+    getMyVotes,
+    getVotesCreatedByAddress,
+    getVotesParticipatedByAddress,
+    getVoteDetails,
+    getVotePolls,
+    getPollOptions,
     createCompleteVoteTransaction,
-    getMyCreatedVotes,
-    getMyParticipatedVotes,
-    castVote,
-    castMultipleVotes,
-    clearError: () => setError(null)
-  };
+    castVoteTransaction,
+    castMultipleVotesTransaction,
+    closeVoteTransaction,
+    cancelVoteTransaction,
+    extendVotingPeriodTransaction,
+    hasVoted,
+    getVoteResults,
+    executeTransaction,
+  }
 }

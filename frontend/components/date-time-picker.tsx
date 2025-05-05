@@ -1,12 +1,13 @@
 "use client"
 
 import * as React from "react"
-import { CalendarIcon, Clock } from "lucide-react"
 import { format } from "date-fns"
+import { CalendarIcon } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Calendar } from "@/components/ui/calendar"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 
 interface DateTimePickerProps {
@@ -14,73 +15,81 @@ interface DateTimePickerProps {
   setDate: (date: Date | undefined) => void
   label?: string
   error?: boolean
+  required?: boolean
 }
 
-export function DateTimePicker({ date, setDate, label, error }: DateTimePickerProps) {
-  const [selectedHour, setSelectedHour] = React.useState<string>(
-    date ? date.getHours().toString().padStart(2, "0") : "",
-  )
-  const [selectedMinute, setSelectedMinute] = React.useState<string>(
-    date ? date.getMinutes().toString().padStart(2, "0") : "",
-  )
+export function DateTimePicker({ date, setDate, label, error, required }: DateTimePickerProps) {
+  const [selectedTime, setSelectedTime] = React.useState<string>(() => {
+    return date ? format(date, "HH:mm") : "12:00"
+  })
 
-  // Update the hour and minute when the date changes
+  // Update the time when the date changes
   React.useEffect(() => {
     if (date) {
-      setSelectedHour(date.getHours().toString().padStart(2, "0"))
-      setSelectedMinute(date.getMinutes().toString().padStart(2, "0"))
+      setSelectedTime(format(date, "HH:mm"))
     }
   }, [date])
 
-  const handleSelect = (selectedDate: Date | undefined) => {
-    if (selectedDate) {
-      const newDate = new Date(selectedDate)
-
-      // If we already have a date, preserve the time
+  // Update the date with the selected time
+  const handleTimeChange = React.useCallback(
+    (time: string) => {
+      setSelectedTime(time)
       if (date) {
-        newDate.setHours(date.getHours(), date.getMinutes())
-      } else {
-        // Default to current time if no previous time
-        const now = new Date()
-        newDate.setHours(now.getHours(), now.getMinutes())
+        const [hours, minutes] = time.split(":").map(Number)
+        const newDate = new Date(date)
+        newDate.setHours(hours)
+        newDate.setMinutes(minutes)
+        setDate(newDate)
+      }
+    },
+    [date, setDate],
+  )
+
+  // Handle date selection from calendar
+  const handleSelect = React.useCallback(
+    (day: Date | undefined) => {
+      if (!day) {
+        setDate(undefined)
+        return
       }
 
-      setDate(newDate)
-    } else {
-      setDate(undefined)
-    }
-  }
+      // If there's already a date, preserve the time
+      if (date) {
+        day.setHours(date.getHours())
+        day.setMinutes(date.getMinutes())
+      } else if (selectedTime) {
+        // If there's no date but there is a selected time, use it
+        const [hours, minutes] = selectedTime.split(":").map(Number)
+        day.setHours(hours)
+        day.setMinutes(minutes)
+      }
 
-  const handleTimeChange = (type: "hour" | "minute", value: string) => {
-    if (!date) {
-      // If no date is set, use today
-      const newDate = new Date()
-      if (type === "hour") {
-        newDate.setHours(Number.parseInt(value, 10), newDate.getMinutes())
-        setSelectedHour(value)
-      } else {
-        newDate.setHours(newDate.getHours(), Number.parseInt(value, 10))
-        setSelectedMinute(value)
+      setDate(day)
+    },
+    [date, setDate, selectedTime],
+  )
+
+  // Generate time options (every 15 minutes)
+  const timeOptions = React.useMemo(() => {
+    const options = []
+    for (let hour = 0; hour < 24; hour++) {
+      for (let minute = 0; minute < 60; minute += 15) {
+        const formattedHour = hour.toString().padStart(2, "0")
+        const formattedMinute = minute.toString().padStart(2, "0")
+        options.push(`${formattedHour}:${formattedMinute}`)
       }
-      setDate(newDate)
-    } else {
-      // Update existing date
-      const newDate = new Date(date)
-      if (type === "hour") {
-        newDate.setHours(Number.parseInt(value, 10), newDate.getMinutes())
-        setSelectedHour(value)
-      } else {
-        newDate.setHours(newDate.getHours(), Number.parseInt(value, 10))
-        setSelectedMinute(value)
-      }
-      setDate(newDate)
     }
-  }
+    return options
+  }, [])
 
   return (
-    <div className="flex flex-col space-y-2">
-      {label && <span className="text-sm font-medium">{label}</span>}
-      <div className="flex flex-col sm:flex-row gap-2">
+    <div className="space-y-2">
+      {label && (
+        <Label className="text-sm">
+          {label} {required && <span className="text-red-500">*</span>}
+        </Label>
+      )}
+      <div className="flex gap-2">
         <Popover>
           <PopoverTrigger asChild>
             <Button
@@ -92,44 +101,26 @@ export function DateTimePicker({ date, setDate, label, error }: DateTimePickerPr
               )}
             >
               <CalendarIcon className="mr-2 h-4 w-4" />
-              {date ? format(date, "PPP") : "Select date"}
+              {date ? format(date, "PPP") : <span>Pick a date</span>}
             </Button>
           </PopoverTrigger>
-          <PopoverContent className="w-auto p-0" align="start">
+          <PopoverContent className="w-auto p-0">
             <Calendar mode="single" selected={date} onSelect={handleSelect} initialFocus />
           </PopoverContent>
         </Popover>
 
-        <div className="flex items-center gap-1 bg-background border rounded-md px-3 py-2 w-full sm:w-auto">
-          <Clock className="h-4 w-4 text-muted-foreground" />
-          <div className="flex items-center flex-1 justify-between sm:justify-start">
-            <Select value={selectedHour} onValueChange={(value) => handleTimeChange("hour", value)}>
-              <SelectTrigger className="w-[65px] h-8 border-0 p-0 pl-1 focus:ring-0 focus:ring-offset-0">
-                <SelectValue placeholder="Hour" />
-              </SelectTrigger>
-              <SelectContent position="popper" className="max-h-[300px]">
-                {Array.from({ length: 24 }, (_, i) => i).map((hour) => (
-                  <SelectItem key={hour} value={hour.toString().padStart(2, "0")} className="cursor-pointer">
-                    {hour.toString().padStart(2, "0")}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <span className="mx-1 text-muted-foreground">:</span>
-            <Select value={selectedMinute} onValueChange={(value) => handleTimeChange("minute", value)}>
-              <SelectTrigger className="w-[65px] h-8 border-0 p-0 pl-1 focus:ring-0 focus:ring-offset-0">
-                <SelectValue placeholder="Min" />
-              </SelectTrigger>
-              <SelectContent position="popper" className="max-h-[300px]">
-                {Array.from({ length: 60 }, (_, i) => i).map((minute) => (
-                  <SelectItem key={minute} value={minute.toString().padStart(2, "0")} className="cursor-pointer">
-                    {minute.toString().padStart(2, "0")}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        </div>
+        <Select value={selectedTime} onValueChange={handleTimeChange} disabled={!date}>
+          <SelectTrigger className={cn("w-[120px]", error && "border-red-500 focus-visible:ring-red-500")}>
+            <SelectValue placeholder="Time" />
+          </SelectTrigger>
+          <SelectContent>
+            {timeOptions.map((time) => (
+              <SelectItem key={time} value={time}>
+                {time}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
     </div>
   )
