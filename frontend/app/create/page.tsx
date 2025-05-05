@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
-import { toast } from "sonner" // Added for better error notifications
+import { toast } from "sonner"
 import {
   PlusCircle,
   Trash2,
@@ -21,6 +21,8 @@ import {
   ListChecks,
   X,
   Check,
+  Loader2,
+  ExternalLink,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -30,9 +32,8 @@ import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Separator } from "@/components/ui/separator"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Slider } from "@/components/ui/slider"
-import { Alert, AlertDescription } from "@/components/ui/alert"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { Badge } from "@/components/ui/badge"
 import { DateTimePicker } from "@/components/date-time-picker"
@@ -40,18 +41,43 @@ import { isAfter, addDays } from "date-fns"
 import { motion, AnimatePresence } from "framer-motion"
 import { cn } from "@/lib/utils"
 import Link from "next/link"
-import { useWallet } from "@suiet/wallet-kit" // Added wallet integration
-import { useSuiVote } from "@/hooks/use-suivote" // Import the hook
-import { useToast } from "@/components/ui/use-toast" // Added for UI toast messages
+import { useWallet } from "@suiet/wallet-kit"
+import { useSuiVote } from "@/hooks/use-suivote"
+import { useToast } from "@/components/ui/use-toast"
+import { SUI_CONFIG } from "@/config/sui-config"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import { Progress } from "@/components/ui/progress"
 
-// Sample token data
-const suiTokens = [
-  { id: "sui", name: "SUI", icon: <img src="/images/sui-logo.png" alt="SUI" className="h-4 w-4" /> },
-  { id: "usdc", name: "USDC", icon: "💲" },
-  { id: "eth", name: "ETH", icon: "💠" },
-  { id: "btc", name: "BTC", icon: "🔶" },
-  { id: "apt", name: "APT", icon: "🔹" },
-]
+// Update the imports to include the new TokenSelector component
+import { TokenSelector } from "@/components/token-selector"
+
+// Sample token data - in a real app, this would come from an API or config
+// Remove these lines:
+// Sample token data - in a real app, this would come from an API or config
+// const suiTokens = [
+//   { id: "0x2::sui::SUI", name: "SUI", icon: "🔷" },
+//   { id: "0x5d4b302506645c37ff133b98c4b50a5ae14841659738d6d733d59d0d217a93bf::coin::COIN", name: "USDC", icon: "💲" },
+//   { id: "0x5d4b302506645c37ff133b98c4b50a5ae14841659738d6d733d59d0d217a93bf::coin::ETH", name: "ETH", icon: "💠" },
+//   { id: "0x5d4b302506645c37ff133b98c4b50a5ae14841659738d6d733d59d0d217a93bf::coin::BTC", name: "BTC", icon: "🔶" },
+// ]
+
+// Transaction status enum
+enum TransactionStatus {
+  IDLE = "idle",
+  BUILDING = "building",
+  SIGNING = "signing",
+  EXECUTING = "executing",
+  CONFIRMING = "confirming",
+  SUCCESS = "success",
+  ERROR = "error",
+}
 
 type PollType = {
   id: string
@@ -85,19 +111,22 @@ type ValidationErrors = {
       title?: string
       options?: string
       optionTexts?: string[]
+      maxSelections?: string
     }
   }
   votingSettings?: {
     dates?: string
     token?: string
+    amount?: string
   }
+  environment?: string
 }
 
 export default function CreateVotePage() {
   const router = useRouter()
-  const wallet = useWallet() // Using wallet hook
-  const { createCompleteVoteTransaction, loading, error } = useSuiVote() // Using our custom hook
-  const { toast: uiToast } = useToast() // Toast for UI notifications
+  const wallet = useWallet()
+  const { createCompleteVoteTransaction, loading, error } = useSuiVote()
+  const { toast: uiToast } = useToast()
 
   const [voteTitle, setVoteTitle] = useState("")
   const [voteDescription, setVoteDescription] = useState("")
@@ -127,11 +156,52 @@ export default function CreateVotePage() {
   })
 
   const [errors, setErrors] = useState<ValidationErrors>({})
-  const [isSubmitting, setIsSubmitting] = useState(false)
   const [activeTab, setActiveTab] = useState("details")
   const [activePollIndex, setActivePollIndex] = useState(0)
   const [showLiveStats, setShowLiveStats] = useState(false)
   const [transactionError, setTransactionError] = useState<string | null>(null)
+
+  // New state for transaction status tracking
+  const [txStatus, setTxStatus] = useState<TransactionStatus>(TransactionStatus.IDLE)
+  const [txDigest, setTxDigest] = useState<string | null>(null)
+  const [txStatusDialogOpen, setTxStatusDialogOpen] = useState(false)
+  const [txProgress, setTxProgress] = useState(0)
+
+  // New state for environment variable checks
+  const [envVarsChecked, setEnvVarsChecked] = useState(false)
+  const [missingEnvVars, setMissingEnvVars] = useState<string[]>([])
+
+  // Check environment variables on component mount
+  useEffect(() => {
+    const requiredEnvVars = [
+      { name: "PACKAGE_ID", value: SUI_CONFIG.PACKAGE_ID },
+      { name: "ADMIN_ID", value: SUI_CONFIG.ADMIN_ID },
+      { name: "NETWORK", value: SUI_CONFIG.NETWORK },
+    ]
+
+    const missing = requiredEnvVars
+      .filter(
+        (env) =>
+          !env.value || env.value === "YOUR_PACKAGE_ID_HERE" || env.value === "ADMIN_OBJECT_ID_FROM_PUBLISH_OUTPUT",
+      )
+      .map((env) => env.name)
+
+    setMissingEnvVars(missing)
+    setEnvVarsChecked(true)
+
+    if (missing.length > 0) {
+      setErrors((prev) => ({
+        ...prev,
+        environment: `Missing required configuration: ${missing.join(", ")}`,
+      }))
+
+      uiToast({
+        variant: "destructive",
+        title: "Configuration Error",
+        description: `Missing required configuration: ${missing.join(", ")}`,
+      })
+    }
+  }, [uiToast])
 
   // Update document title when vote title changes
   useEffect(() => {
@@ -142,6 +212,8 @@ export default function CreateVotePage() {
   useEffect(() => {
     if (error) {
       setTransactionError(error)
+      setTxStatus(TransactionStatus.ERROR)
+
       toast.error("Error creating vote", {
         description: error,
       })
@@ -159,6 +231,33 @@ export default function CreateVotePage() {
       })
     }
   }, [activeTab, wallet.connected, uiToast])
+
+  // Update progress bar based on transaction status
+  useEffect(() => {
+    switch (txStatus) {
+      case TransactionStatus.IDLE:
+        setTxProgress(0)
+        break
+      case TransactionStatus.BUILDING:
+        setTxProgress(20)
+        break
+      case TransactionStatus.SIGNING:
+        setTxProgress(40)
+        break
+      case TransactionStatus.EXECUTING:
+        setTxProgress(60)
+        break
+      case TransactionStatus.CONFIRMING:
+        setTxProgress(80)
+        break
+      case TransactionStatus.SUCCESS:
+        setTxProgress(100)
+        break
+      case TransactionStatus.ERROR:
+        // Keep the progress where it was when the error occurred
+        break
+    }
+  }, [txStatus])
 
   // Update the addPoll function to use timestamp-based unique ID
   const addPoll = () => {
@@ -267,10 +366,21 @@ export default function CreateVotePage() {
     setPolls(newPolls)
   }
 
-  // Update the validateForm function to navigate to the tab with errors
+  // Enhanced validation function aligned with service validation
   const validateForm = (): boolean => {
     const newErrors: ValidationErrors = {}
     let errorTab: string | null = null
+
+    // Check for environment variable errors first
+    if (missingEnvVars.length > 0) {
+      newErrors.environment = `Missing required configuration: ${missingEnvVars.join(", ")}`
+      uiToast({
+        variant: "destructive",
+        title: "Configuration Error",
+        description: `Missing required configuration: ${missingEnvVars.join(", ")}`,
+      })
+      return false
+    }
 
     // Validate vote title
     if (!voteTitle.trim()) {
@@ -282,18 +392,41 @@ export default function CreateVotePage() {
     const pollErrors: ValidationErrors["polls"] = {}
 
     polls.forEach((poll, index) => {
-      const pollError: { title?: string; options?: string; optionTexts?: string[] } = {}
+      const pollError: {
+        title?: string
+        options?: string
+        optionTexts?: string[]
+        maxSelections?: string
+      } = {}
 
       if (!poll.title.trim()) {
         pollError.title = "Poll title is required"
         errorTab = "polls"
       }
 
+      // Check for empty options
       const emptyOptions = poll.options.filter((option) => !option.text.trim())
       if (emptyOptions.length > 0) {
         pollError.options = "All options must have text"
         pollError.optionTexts = poll.options.map((option) => (option.text.trim() ? "" : "Option text is required"))
         errorTab = "polls"
+      }
+
+      // Check minimum number of options
+      if (poll.options.length < 2) {
+        pollError.options = "Each poll must have at least 2 options"
+        errorTab = "polls"
+      }
+
+      // Validate maxSelections for multi-select polls
+      if (poll.isMultiSelect) {
+        if (poll.maxSelections < 1) {
+          pollError.maxSelections = "Maximum selections must be at least 1"
+          errorTab = "polls"
+        } else if (poll.maxSelections >= poll.options.length) {
+          pollError.maxSelections = `Maximum selections must be less than the number of options (${poll.options.length})`
+          errorTab = "polls"
+        }
       }
 
       if (Object.keys(pollError).length > 0) {
@@ -306,8 +439,9 @@ export default function CreateVotePage() {
     }
 
     // Validate voting settings
-    const settingsErrors: { dates?: string; token?: string } = {}
+    const settingsErrors: { dates?: string; token?: string; amount?: string } = {}
 
+    // Validate dates
     if (votingSettings.startDate && votingSettings.endDate) {
       if (!isAfter(votingSettings.endDate, votingSettings.startDate)) {
         settingsErrors.dates = "End date must be after start date"
@@ -318,8 +452,20 @@ export default function CreateVotePage() {
       errorTab = "settings"
     }
 
-    if (votingSettings.requiredToken && votingSettings.requiredToken !== "none" && !votingSettings.requiredAmount) {
-      settingsErrors.token = "Token amount is required when a token is selected"
+    // Validate token requirements
+    if (votingSettings.requiredToken && votingSettings.requiredToken !== "none") {
+      if (!votingSettings.requiredAmount) {
+        settingsErrors.token = "Token amount is required when a token is selected"
+        errorTab = "settings"
+      } else if (Number.parseFloat(votingSettings.requiredAmount) <= 0) {
+        settingsErrors.amount = "Token amount must be greater than 0"
+        errorTab = "settings"
+      }
+    }
+
+    // Validate payment amount
+    if (votingSettings.paymentAmount && Number.parseFloat(votingSettings.paymentAmount) < 0) {
+      settingsErrors.amount = "Payment amount cannot be negative"
       errorTab = "settings"
     }
 
@@ -357,7 +503,7 @@ export default function CreateVotePage() {
     return true
   }
 
-  // Modified handleSubmit to create and execute the transaction
+  // Enhanced handleSubmit with transaction status tracking
   const handleSubmit = async () => {
     try {
       if (!validateForm()) {
@@ -378,20 +524,22 @@ export default function CreateVotePage() {
         return
       }
 
-      setIsSubmitting(true)
+      // Reset states
       setTransactionError(null)
+      setTxStatus(TransactionStatus.BUILDING)
+      setTxStatusDialogOpen(true)
 
       // Convert poll data to the format expected by the service
-      const pollData = polls.map(poll => ({
+      const pollData = polls.map((poll) => ({
         title: poll.title,
         description: poll.description,
         isMultiSelect: poll.isMultiSelect,
         maxSelections: poll.maxSelections,
         isRequired: poll.isRequired,
-        options: poll.options.map(option => ({
+        options: poll.options.map((option) => ({
           text: option.text,
-          mediaUrl: option.mediaUrl || undefined
-        }))
+          mediaUrl: option.mediaUrl || undefined,
+        })),
       }))
 
       // Convert dates to timestamps (milliseconds)
@@ -406,43 +554,69 @@ export default function CreateVotePage() {
         startTimestamp,
         endTimestamp,
         votingSettings.requiredToken !== "none" ? votingSettings.requiredToken : "",
-        parseInt(votingSettings.requiredAmount || "0"),
-        parseInt(votingSettings.paymentAmount || "0"),
+        Number.parseInt(votingSettings.requiredAmount || "0"),
+        Number.parseInt(votingSettings.paymentAmount || "0"),
         votingSettings.requireAllPolls,
-        pollData
+        pollData,
       )
 
       console.log("Transaction built successfully, signing transaction...")
-      
+      setTxStatus(TransactionStatus.SIGNING)
+
       // Sign and execute the transaction
       const response = await wallet.signAndExecuteTransaction({
         transaction,
-        chain: "sui"  // or whichever network you're using
+        chain: "sui", // or whichever network you're using
       })
 
       console.log("Transaction executed successfully:", response)
-      
+      setTxStatus(TransactionStatus.EXECUTING)
+      setTxDigest(response.digest)
+
+      // Wait for confirmation (simulate with timeout in this example)
+      // In a real app, you would poll the blockchain for confirmation
+      setTxStatus(TransactionStatus.CONFIRMING)
+
+      // Simulate waiting for confirmation
+      await new Promise((resolve) => setTimeout(resolve, 2000))
+
+      // Transaction confirmed
+      setTxStatus(TransactionStatus.SUCCESS)
+
       // Show success message
       toast.success("Vote created successfully!", {
         description: "Your vote has been published to the blockchain",
       })
 
-      // Navigate to success page with vote data
-      router.push(`/success?digest=${response.digest}`)
+      // Wait a moment to show the success state before redirecting
+      setTimeout(() => {
+        // Navigate to success page with vote data
+        router.push(`/success?digest=${response.digest}`)
+      }, 1500)
     } catch (err) {
       console.error("Error creating vote:", err)
-      
+
       // Extract error message
-      const errorMessage = err instanceof Error 
-        ? err.message 
-        : "An unknown error occurred while creating the vote"
-      
+      const errorMessage = err instanceof Error ? err.message : "An unknown error occurred while creating the vote"
+
       setTransactionError(errorMessage)
+      setTxStatus(TransactionStatus.ERROR)
+
       toast.error("Failed to create vote", {
         description: errorMessage,
       })
-    } finally {
-      setIsSubmitting(false)
+    }
+  }
+
+  // Get transaction explorer URL
+  const getTransactionExplorerUrl = () => {
+    if (!txDigest) return "#"
+
+    const network = SUI_CONFIG.NETWORK.toLowerCase()
+    if (network === "mainnet") {
+      return `https://explorer.sui.io/txblock/${txDigest}`
+    } else {
+      return `https://explorer.sui.io/txblock/${txDigest}?network=${network}`
     }
   }
 
@@ -484,7 +658,25 @@ export default function CreateVotePage() {
         </div>
       </motion.div>
 
-      {/* Update the error alert in the details tab to include role="alert" for accessibility */}
+      {/* Environment Variable Error Alert */}
+      <AnimatePresence mode="wait">
+        {errors.environment && (
+          <motion.div
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            className="mb-4"
+          >
+            <Alert variant="destructive" role="alert">
+              <AlertCircle className="h-4 w-4" />
+              <AlertTitle>Configuration Error</AlertTitle>
+              <AlertDescription>{errors.environment}</AlertDescription>
+            </Alert>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Title Error Alert */}
       <AnimatePresence mode="wait">
         {errors.title && (
           <motion.div
@@ -807,6 +999,12 @@ export default function CreateVotePage() {
                           Voters can select up to {polls[activePollIndex].maxSelections} option
                           {polls[activePollIndex].maxSelections !== 1 ? "s" : ""}
                         </p>
+
+                        {errors.polls?.[polls[activePollIndex].id]?.maxSelections && (
+                          <p className="text-sm text-red-500">
+                            {errors.polls[polls[activePollIndex].id].maxSelections}
+                          </p>
+                        )}
                       </motion.div>
                     )}
 
@@ -1020,52 +1218,14 @@ export default function CreateVotePage() {
                         Token Requirements
                       </Label>
                       <div className="space-y-4">
-                        <div>
-                          <Label htmlFor="required-token" className="text-sm">
-                            Required Token
-                          </Label>
-                          <Select
-                            id="required-token"
-                            value={votingSettings.requiredToken}
-                            onValueChange={(value) => setVotingSettings({ ...votingSettings, requiredToken: value })}
-                          >
-                            <SelectTrigger className="h-10 transition-all hover:bg-muted/50">
-                              <SelectValue placeholder="No Token Required" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="none">No Token Required</SelectItem>
-                              {suiTokens.map((token) => (
-                                <SelectItem key={token.id} value={token.id}>
-                                  {token.icon} {token.name}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
-
-                        {votingSettings.requiredToken !== "none" && (
-                          <motion.div
-                            initial={{ opacity: 0, height: 0 }}
-                            animate={{ opacity: 1, height: "auto" }}
-                            exit={{ opacity: 0, height: 0 }}
-                          >
-                            <Label htmlFor="required-amount" className="text-sm">
-                              Required Amount <span className="text-red-500">*</span>
-                            </Label>
-                            <Input
-                              id="required-amount"
-                              type="number"
-                              placeholder="Enter amount"
-                              value={votingSettings.requiredAmount}
-                              onChange={(e) => setVotingSettings({ ...votingSettings, requiredAmount: e.target.value })}
-                              className="h-10 transition-all focus:scale-[1.01]"
-                              required
-                            />
-                            <p className="text-xs text-muted-foreground mt-1">
-                              Voters must hold at least this amount to participate
-                            </p>
-                          </motion.div>
-                        )}
+                        <TokenSelector
+                          value={votingSettings.requiredToken}
+                          onValueChange={(value) => setVotingSettings({ ...votingSettings, requiredToken: value })}
+                          onAmountChange={(amount) => setVotingSettings({ ...votingSettings, requiredAmount: amount })}
+                          amount={votingSettings.requiredAmount}
+                          error={errors.votingSettings?.token}
+                          required={false}
+                        />
                       </div>
                     </div>
 
@@ -1088,7 +1248,10 @@ export default function CreateVotePage() {
                             placeholder="0.00"
                             value={votingSettings.paymentAmount}
                             onChange={(e) => setVotingSettings({ ...votingSettings, paymentAmount: e.target.value })}
-                            className="h-10 transition-all focus:scale-[1.01]"
+                            className={cn(
+                              "h-10 transition-all focus:scale-[1.01]",
+                              errors.votingSettings?.amount && "border-red-500 focus-visible:ring-red-500",
+                            )}
                           />
                           <div className="ml-2 text-sm font-medium">
                             <Coins className="h-4 w-4" />
@@ -1097,6 +1260,9 @@ export default function CreateVotePage() {
                         <p className="text-xs text-muted-foreground mt-1">
                           Amount in SUI that voters need to pay to participate (0 for free voting)
                         </p>
+                        {errors.votingSettings?.amount && (
+                          <p className="text-sm text-red-500 mt-1">{errors.votingSettings.amount}</p>
+                        )}
                       </div>
                     </div>
 
@@ -1161,11 +1327,11 @@ export default function CreateVotePage() {
                     size="lg"
                     className="gap-2 transition-all hover:scale-105"
                     onClick={handleSubmit}
-                    disabled={isSubmitting}
+                    disabled={txStatus !== TransactionStatus.IDLE && txStatus !== TransactionStatus.ERROR}
                   >
-                    {isSubmitting ? (
+                    {txStatus !== TransactionStatus.IDLE && txStatus !== TransactionStatus.ERROR ? (
                       <>
-                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                        <Loader2 className="h-4 w-4 animate-spin" />
                         Creating Vote...
                       </>
                     ) : (
@@ -1222,6 +1388,150 @@ export default function CreateVotePage() {
           </motion.div>
         </div>
       </Tabs>
+
+      {/* Transaction Status Dialog */}
+      <Dialog open={txStatusDialogOpen} onOpenChange={setTxStatusDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>
+              {txStatus === TransactionStatus.SUCCESS
+                ? "Vote Created Successfully!"
+                : txStatus === TransactionStatus.ERROR
+                  ? "Error Creating Vote"
+                  : "Creating Vote"}
+            </DialogTitle>
+            <DialogDescription>
+              {txStatus === TransactionStatus.SUCCESS
+                ? "Your vote has been published to the blockchain."
+                : txStatus === TransactionStatus.ERROR
+                  ? "There was an error creating your vote."
+                  : "Please wait while we create your vote on the blockchain."}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-4">
+            <Progress value={txProgress} className="h-2 w-full" />
+
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-sm">
+                <span className="flex items-center gap-2">
+                  {txStatus === TransactionStatus.BUILDING || txStatus === TransactionStatus.IDLE ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Check className="h-4 w-4 text-green-500" />
+                  )}
+                  Building Transaction
+                </span>
+                <span className="text-muted-foreground">Step 1/4</span>
+              </div>
+
+              <div className="flex items-center justify-between text-sm">
+                <span className="flex items-center gap-2">
+                  {txStatus === TransactionStatus.SIGNING ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : txStatus > TransactionStatus.SIGNING ? (
+                    <Check className="h-4 w-4 text-green-500" />
+                  ) : (
+                    <div className="h-4 w-4" />
+                  )}
+                  Signing Transaction
+                </span>
+                <span className="text-muted-foreground">Step 2/4</span>
+              </div>
+
+              <div className="flex items-center justify-between text-sm">
+                <span className="flex items-center gap-2">
+                  {txStatus === TransactionStatus.EXECUTING ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : txStatus > TransactionStatus.EXECUTING ? (
+                    <Check className="h-4 w-4 text-green-500" />
+                  ) : (
+                    <div className="h-4 w-4" />
+                  )}
+                  Executing Transaction
+                </span>
+                <span className="text-muted-foreground">Step 3/4</span>
+              </div>
+
+              <div className="flex items-center justify-between text-sm">
+                <span className="flex items-center gap-2">
+                  {txStatus === TransactionStatus.CONFIRMING ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : txStatus > TransactionStatus.CONFIRMING ? (
+                    <Check className="h-4 w-4 text-green-500" />
+                  ) : (
+                    <div className="h-4 w-4" />
+                  )}
+                  Confirming Transaction
+                </span>
+                <span className="text-muted-foreground">Step 4/4</span>
+              </div>
+            </div>
+
+            {txStatus === TransactionStatus.ERROR && (
+              <Alert variant="destructive">
+                <AlertCircle className="h-4 w-4" />
+                <AlertTitle>Error</AlertTitle>
+                <AlertDescription>{transactionError}</AlertDescription>
+              </Alert>
+            )}
+
+            {txDigest && (
+              <div className="pt-2">
+                <Label className="text-sm">Transaction ID</Label>
+                <div className="flex items-center gap-2 mt-1">
+                  <code className="bg-muted p-2 rounded text-xs w-full overflow-x-auto">{txDigest}</code>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    className="flex-shrink-0"
+                    onClick={() => window.open(getTransactionExplorerUrl(), "_blank")}
+                  >
+                    <ExternalLink className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <DialogFooter className="sm:justify-between">
+            {txStatus === TransactionStatus.ERROR ? (
+              <Button
+                variant="default"
+                onClick={() => {
+                  setTxStatusDialogOpen(false)
+                  setTxStatus(TransactionStatus.IDLE)
+                }}
+              >
+                Try Again
+              </Button>
+            ) : txStatus === TransactionStatus.SUCCESS ? (
+              <Button variant="default" onClick={() => router.push(`/success?digest=${txDigest}`)}>
+                View Vote
+              </Button>
+            ) : (
+              <Button
+                variant="outline"
+                onClick={() => setTxStatusDialogOpen(false)}
+                disabled={txStatus !== TransactionStatus.ERROR && txStatus !== TransactionStatus.SUCCESS}
+              >
+                Close
+              </Button>
+            )}
+
+            {txDigest && (
+              <Button
+                variant="outline"
+                className="gap-2"
+                onClick={() => window.open(getTransactionExplorerUrl(), "_blank")}
+              >
+                <ExternalLink className="h-4 w-4" />
+                View in Explorer
+              </Button>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </motion.div>
   )
 }

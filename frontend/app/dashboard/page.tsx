@@ -13,46 +13,54 @@ import {
   Users,
   CheckCircle,
   ListChecks,
+  Loader2,
+  AlertCircle,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+  DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu"
 import { Alert, AlertDescription } from "@/components/ui/alert"
-import { ShareDialog } from "@/components/share-dialog"
 import { motion, AnimatePresence } from "framer-motion"
 import Link from "next/link"
-import { DropdownMenuSeparator } from "@radix-ui/react-dropdown-menu"
-import { useSuiVote } from '@/hooks/use-suivote';
-import { useWallet } from '@/contexts/wallet-context';
-
-
+import { useSuiVote } from "@/hooks/use-suivote"
+import { useWallet } from "@suiet/wallet-kit"
+import { formatDistanceToNow } from "date-fns"
+import { ShareDialog } from "@/components/share-dialog"
 
 export default function DashboardPage() {
   const searchParams = useSearchParams()
   const [searchQuery, setSearchQuery] = useState("")
   const [shareDialogOpen, setShareDialogOpen] = useState(false)
-  const [selectedVote, setSelectedVote] = useState<(typeof votes)[0] | null>(null)
+  const [selectedVote, setSelectedVote] = useState<any | null>(null)
   const [showSuccess, setShowSuccess] = useState(false)
   const [filterStatus, setFilterStatus] = useState("all")
   const [filterDate, setFilterDate] = useState("newest")
-  // Sample data
-  const { address } = useWallet();
-  const { getMyVotes, loading, error } = useSuiVote();
-  const [votes, setVotes] = useState([]);
+
+  const wallet = useWallet()
+  const { getMyVotes, loading, error } = useSuiVote()
+  const [votes, setVotes] = useState<any[]>([])
 
   useEffect(() => {
-    if (address) {
+    if (wallet.connected && wallet.address) {
       const fetchVotes = async () => {
-        const { data } = await getMyVotes(address);
-        setVotes(data);
-      };
-      fetchVotes();
+        try {
+          const { data } = await getMyVotes(wallet.address!)
+          setVotes(data)
+        } catch (err) {
+          console.error("Error fetching votes:", err)
+        }
+      }
+      fetchVotes()
     }
-  }, [address, getMyVotes]);
-
-  console.log(votes);
+  }, [wallet.connected, wallet.address, getMyVotes])
 
   useEffect(() => {
     // Check if we're coming from a successful vote creation
@@ -68,9 +76,17 @@ export default function DashboardPage() {
     }
   }, [searchParams])
 
-  const handleShare = (vote: (typeof votes)[0]) => {
+  const handleShare = (vote: any) => {
     setSelectedVote(vote)
     setShareDialogOpen(true)
+  }
+
+  const formatDate = (timestamp: number) => {
+    try {
+      return formatDistanceToNow(new Date(timestamp), { addSuffix: true })
+    } catch (e) {
+      return "Unknown date"
+    }
   }
 
   const filteredVotes = votes
@@ -125,6 +141,20 @@ export default function DashboardPage() {
             </motion.div>
           )}
         </AnimatePresence>
+
+        {error && (
+          <Alert variant="destructive">
+            <AlertCircle className="h-4 w-4" />
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
+
+        {!wallet.connected && (
+          <Alert>
+            <AlertCircle className="h-4 w-4" />
+            <AlertDescription>Please connect your wallet to view your votes.</AlertDescription>
+          </Alert>
+        )}
 
         <motion.div
           initial={{ y: 10, opacity: 0 }}
@@ -182,74 +212,104 @@ export default function DashboardPage() {
           </div>
         </motion.div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {filteredVotes.map((vote, index) => (
-            <motion.div
-              key={vote.id}
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.4, delay: index * 0.1 }}
-              whileHover={{ y: -5, transition: { duration: 0.2 } }}
-            >
-              <Card className="overflow-hidden transition-all hover:shadow-md">
-                <div className={`h-2 w-full ${vote.status === "active" ? "bg-green-500" : "bg-gray-300"}`} />
-                <CardHeader>
-                  <div className="flex justify-between items-start">
-                    <CardTitle className="text-xl">{vote.title}</CardTitle>
-                    <Badge variant={vote.status === "active" ? "success" : "secondary"}>
-                      {vote.status === "active" ? "Active" : "Closed"}
-                    </Badge>
-                  </div>
-                  <p className="text-muted-foreground text-sm line-clamp-2">{vote.description}</p>
-                </CardHeader>
-                <CardContent>
-                  <div className="flex justify-between text-sm">
-                    <div className="flex items-center gap-1">
-                      <Calendar className="h-4 w-4 text-muted-foreground" />
-                      <span>{vote.created}</span>
+        {loading ? (
+          <div className="flex justify-center items-center py-12">
+            <Loader2 className="h-8 w-8 animate-spin text-primary" />
+          </div>
+        ) : filteredVotes.length > 0 ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {filteredVotes.map((vote, index) => (
+              <motion.div
+                key={vote.id}
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.4, delay: index * 0.1 }}
+                whileHover={{ y: -5, transition: { duration: 0.2 } }}
+              >
+                <Card className="overflow-hidden transition-all hover:shadow-md">
+                  <div
+                    className={`h-2 w-full ${vote.status === "active" ? "bg-green-500" : vote.status === "upcoming" ? "bg-blue-500" : "bg-gray-300"}`}
+                  />
+                  <CardHeader>
+                    <div className="flex justify-between items-start">
+                      <CardTitle className="text-xl">{vote.title}</CardTitle>
+                      <Badge
+                        variant={
+                          vote.status === "active" ? "success" : vote.status === "upcoming" ? "default" : "secondary"
+                        }
+                      >
+                        {vote.status === "active" ? "Active" : vote.status === "upcoming" ? "Upcoming" : "Closed"}
+                      </Badge>
                     </div>
-                    <div className="flex items-center gap-1">
-                      <Users className="h-4 w-4 text-muted-foreground" />
-                      <span>{vote.votes} votes</span>
+                    <p className="text-muted-foreground text-sm line-clamp-2">{vote.description}</p>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="flex justify-between text-sm">
+                      <div className="flex items-center gap-1">
+                        <Calendar className="h-4 w-4 text-muted-foreground" />
+                        <span>{vote.created}</span>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <Users className="h-4 w-4 text-muted-foreground" />
+                        <span>{vote.votes} votes</span>
+                      </div>
                     </div>
-                  </div>
-                  <div className="mt-2 flex items-center gap-1">
-                    <ListChecks className="h-4 w-4 text-muted-foreground" />
-                    <span className="text-sm font-medium">{vote.pollCount}</span>
-                    <span className="text-sm text-muted-foreground">poll{vote.pollCount !== 1 ? "s" : ""}</span>
-                  </div>
-                </CardContent>
-                <CardFooter className="flex justify-between border-t p-4">
-                  <Link href={`/vote/${vote.id}`}>
-                    <Button variant="ghost" size="sm" className="gap-1">
-                      <Eye className="h-4 w-4" />
-                      View
-                    </Button>
-                  </Link>
-                  <Button variant="ghost" size="sm" className="gap-1" onClick={() => handleShare(vote)}>
-                    <Share2 className="h-4 w-4" />
-                    Share
-                  </Button>
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
+                    <div className="mt-2 flex items-center gap-1">
+                      <ListChecks className="h-4 w-4 text-muted-foreground" />
+                      <span className="text-sm font-medium">{vote.pollCount}</span>
+                      <span className="text-sm text-muted-foreground">poll{vote.pollCount !== 1 ? "s" : ""}</span>
+                    </div>
+                  </CardContent>
+                  <CardFooter className="flex justify-between border-t p-4">
+                    <Link href={`/vote/${vote.id}`}>
                       <Button variant="ghost" size="sm" className="gap-1">
-                        <MoreHorizontal className="h-4 w-4" />
-                        More
+                        <Eye className="h-4 w-4" />
+                        View
                       </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      <Link href={`/edit/${vote.id}`}>
-                        <DropdownMenuItem>Edit</DropdownMenuItem>
-                      </Link>
-                      <DropdownMenuItem>Duplicate</DropdownMenuItem>
-                      <DropdownMenuItem className="text-destructive">Delete</DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                </CardFooter>
-              </Card>
-            </motion.div>
-          ))}
-        </div>
+                    </Link>
+                    <Button variant="ghost" size="sm" className="gap-1" onClick={() => handleShare(vote)}>
+                      <Share2 className="h-4 w-4" />
+                      Share
+                    </Button>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button variant="ghost" size="sm" className="gap-1">
+                          <MoreHorizontal className="h-4 w-4" />
+                          More
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <Link href={`/edit/${vote.id}`}>
+                          <DropdownMenuItem>Edit</DropdownMenuItem>
+                        </Link>
+                        <DropdownMenuItem>Duplicate</DropdownMenuItem>
+                        <DropdownMenuItem className="text-destructive">Delete</DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </CardFooter>
+                </Card>
+              </motion.div>
+            ))}
+          </div>
+        ) : wallet.connected ? (
+          <div className="flex flex-col items-center justify-center py-12 text-center">
+            <div className="bg-muted rounded-full p-3 mb-4">
+              <ListChecks className="h-6 w-6 text-muted-foreground" />
+            </div>
+            <h3 className="text-lg font-medium">No votes found</h3>
+            <p className="text-muted-foreground mt-1 mb-4 max-w-md">
+              {searchQuery
+                ? "No votes match your search criteria."
+                : "You haven't created or participated in any votes yet."}
+            </p>
+            <Link href="/create">
+              <Button className="gap-2">
+                <Plus className="h-4 w-4" />
+                Create Your First Vote
+              </Button>
+            </Link>
+          </div>
+        ) : null}
       </motion.div>
 
       {selectedVote && (
