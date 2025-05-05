@@ -171,7 +171,7 @@ export function WalletConnectButton({ variant = "default", size = "default", cla
             <div className="border rounded-lg p-4 hover:bg-muted/50 transition-colors">
               <div className="flex items-center gap-4">
                 <div className="h-10 w-10 flex-shrink-0 bg-black rounded-md flex items-center justify-center">
-                  <img src="/images/sui-wallet-logo.jpeg" alt="Suiet" className="h-10 w-10 rounded-md" />
+                  <img src="/images/suiet-logo.jpeg" alt="Suiet" className="h-10 w-10 rounded-md" />
                 </div>
                 <div className="flex-grow">
                   <h3 className="text-base font-semibold">Suiet Wallet</h3>
@@ -194,14 +194,14 @@ export function WalletConnectButton({ variant = "default", size = "default", cla
             <div className="border rounded-lg p-4 hover:bg-muted/50 transition-colors">
               <div className="flex items-center gap-4">
                 <div className="h-10 w-10 flex-shrink-0 rounded-md overflow-hidden">
-                  <img src="/images/sui-wallet-logo.jpeg" alt="Sui Wallet" className="h-10 w-10 object-cover" />
+                  <img src="/images/sui-wallet-logo.png" alt="Sui Wallet" className="h-10 w-10 object-cover" />
                 </div>
                 <div className="flex-grow">
                   <h3 className="text-base font-semibold">Sui Wallet</h3>
                 </div>
                 <Button asChild variant="outline" size="sm">
                   <a
-                    href="https://sui.io/wallet"
+                    href="https://suiwallet.com/"
                     target="_blank"
                     rel="noopener noreferrer"
                     className="flex items-center justify-center gap-2"
@@ -217,7 +217,7 @@ export function WalletConnectButton({ variant = "default", size = "default", cla
             <div className="border rounded-lg p-4 hover:bg-muted/50 transition-colors">
               <div className="flex items-center gap-4">
                 <div className="h-10 w-10 flex-shrink-0 rounded-md overflow-hidden">
-                  <img src="/images/ethos-logo.png" alt="Ethos" className="h-10 w-10 object-cover" />
+                  <img src="/images/ethos-logo.jpeg" alt="Ethos" className="h-10 w-10 object-cover" />
                 </div>
                 <div className="flex-grow">
                   <h3 className="text-base font-semibold">Ethos Wallet</h3>
