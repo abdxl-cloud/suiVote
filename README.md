@@ -1,6 +1,6 @@
 # SuiVote
 
-A decentralized voting platform built on the **Sui blockchain**, combining **Move smart contracts** and **SUI Walrus** for efficient off-chain storage. SuiVote enables anyone—wallet or non-wallet users—to create polls, vote securely, and verify results in a trustless environment.
+A decentralized voting platform built on the **Sui blockchain**, combining **Move smart contracts** and **SUI Walrus** for efficient off-chain storage(testing). SuiVote enables anyone—wallet or non-wallet users—to create polls, vote securely, and verify results in a trustless environment.
 
 ---
 
