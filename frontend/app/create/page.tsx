@@ -1194,7 +1194,7 @@ export default function CreateVotePage() {
                       </AnimatePresence>
 
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        <DateTimePicker
+                      <DateTimePicker
                           date={votingSettings.startDate}
                           setDate={(date) => setVotingSettings({ ...votingSettings, startDate: date })}
                           label="Start Date & Time"

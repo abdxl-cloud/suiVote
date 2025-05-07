@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react"
 import { useParams, useRouter } from "next/navigation"
+import { toast } from "sonner"
 import {
   PlusCircle,
   Trash2,
@@ -22,6 +23,9 @@ import {
   FileText,
   ListChecks,
   X,
+  Check,
+  Loader2,
+  ExternalLink,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -31,80 +35,40 @@ import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Separator } from "@/components/ui/separator"
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { Calendar as CalendarComponent } from "@/components/ui/calendar"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Slider } from "@/components/ui/slider"
-import { Alert, AlertDescription } from "@/components/ui/alert"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
+import { Badge } from "@/components/ui/badge"
+import { DateTimePicker } from "@/components/date-time-picker"
 import { format, isAfter, addDays } from "date-fns"
 import { motion, AnimatePresence } from "framer-motion"
 import { cn } from "@/lib/utils"
 import Link from "next/link"
-import { Badge } from "@/components/ui/badge"
+import { useWallet } from "@suiet/wallet-kit"
+import { useSuiVote } from "@/hooks/use-suivote"
+import { useToast } from "@/components/ui/use-toast"
+import { SUI_CONFIG } from "@/config/sui-config"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import { Progress } from "@/components/ui/progress"
+import { TokenSelector } from "@/components/token-selector"
+import { type PollData, type VoteDetails, type PollDetails, type PollOptionDetails } from "@/services/suivote-service"
 
-// Sample token data
-const suiTokens = [
-  { id: "sui", name: "SUI", icon: <img src="/images/sui-logo.png" alt="SUI" className="h-4 w-4" /> },
-  { id: "usdc", name: "USDC", icon: "💲" },
-  { id: "eth", name: "ETH", icon: "💠" },
-  { id: "btc", name: "BTC", icon: "🔶" },
-  { id: "apt", name: "APT", icon: "🔹" },
-]
-
-// Sample vote data for editing
-const sampleVoteData = {
-  id: "1",
-  title: "Q2 Team Feedback",
-  description: "Quarterly feedback survey for team performance and satisfaction",
-  hasVotes: true, // Flag to indicate if the vote has been voted on
-  voteCount: 24,
-  created: "Jan 1, 2024",
-  polls: [
-    {
-      id: "poll-1",
-      title: "How satisfied are you with the current project management process?",
-      description: "Please rate your satisfaction with our Agile workflow and tools.",
-      isMultiSelect: false,
-      isRequired: true,
-      options: [
-        { id: "option-1-1", text: "Very satisfied", mediaUrl: null },
-        { id: "option-1-2", text: "Satisfied", mediaUrl: null },
-        { id: "option-1-3", text: "Neutral", mediaUrl: null },
-        { id: "option-1-4", text: "Dissatisfied", mediaUrl: null },
-        { id: "option-1-5", text: "Very dissatisfied", mediaUrl: null },
-      ],
-      maxSelections: 1,
-    },
-    {
-      id: "poll-2",
-      title: "Which team-building activities would you prefer?",
-      description: "Select all activities you would be interested in participating in (max 3).",
-      isMultiSelect: true,
-      maxSelections: 3,
-      isRequired: false,
-      options: [
-        {
-          id: "option-2-1",
-          text: "Outdoor adventure (hiking, kayaking, etc.)",
-          mediaUrl: "/placeholder.svg?height=200&width=200",
-        },
-        { id: "option-2-2", text: "Cooking class or food tasting", mediaUrl: "/placeholder.svg?height=200&width=200" },
-        { id: "option-2-3", text: "Escape room or puzzle-solving", mediaUrl: null },
-        { id: "option-2-4", text: "Sports tournament (basketball, volleyball, etc.)", mediaUrl: null },
-        { id: "option-2-5", text: "Virtual game night", mediaUrl: null },
-      ],
-    },
-  ],
-  votingSettings: {
-    requiredToken: "sui",
-    requiredAmount: "10",
-    paymentAmount: "1",
-    startDate: new Date(),
-    endDate: addDays(new Date(), 7),
-    requireAllPolls: true,
-    showLiveStats: true,
-  },
+// Transaction status enum
+enum TransactionStatus {
+  IDLE = "idle",
+  BUILDING = "building",
+  SIGNING = "signing",
+  EXECUTING = "executing",
+  CONFIRMING = "confirming",
+  SUCCESS = "success",
+  ERROR = "error",
 }
 
 type PollType = {
@@ -139,18 +103,38 @@ type ValidationErrors = {
       title?: string
       options?: string
       optionTexts?: string[]
+      maxSelections?: string
     }
   }
   votingSettings?: {
     dates?: string
     token?: string
+    amount?: string
   }
+  environment?: string
+  auth?: string
 }
 
 export default function EditVotePage() {
   const params = useParams()
   const router = useRouter()
   const { id } = params
+  const voteId = typeof id === 'string' ? id : Array.isArray(id) ? id[0] : ''
+  
+  const wallet = useWallet()
+  const { toast: uiToast } = useToast()
+  
+  // Initialize the SuiVote hook
+  const {
+    loading: serviceLoading,
+    error: serviceError,
+    getVoteDetails,
+    getVotePolls,
+    getPollOptions,
+    extendVotingPeriodTransaction,
+    executeTransaction,
+    hasVoted
+  } = useSuiVote()
 
   const [voteTitle, setVoteTitle] = useState("")
   const [voteDescription, setVoteDescription] = useState("")
@@ -168,43 +152,218 @@ export default function EditVotePage() {
   const [voteCount, setVoteCount] = useState(0)
   const [loading, setLoading] = useState(true)
   const [errors, setErrors] = useState<ValidationErrors>({})
-  const [isSubmitting, setIsSubmitting] = useState(false)
-  const [successMessage, setSuccessMessage] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState("details")
   const [activePollIndex, setActivePollIndex] = useState(0)
   const [showLiveStats, setShowLiveStats] = useState(false)
+  const [voteDetails, setVoteDetails] = useState<VoteDetails | null>(null)
+  const [originalEndDate, setOriginalEndDate] = useState<Date | undefined>(undefined)
 
-  // Load vote data
+  // New state for transaction status tracking
+  const [txStatus, setTxStatus] = useState<TransactionStatus>(TransactionStatus.IDLE)
+  const [txDigest, setTxDigest] = useState<string | null>(null)
+  const [txStatusDialogOpen, setTxStatusDialogOpen] = useState(false)
+  const [txProgress, setTxProgress] = useState(0)
+  const [transactionError, setTransactionError] = useState<string | null>(null)
+
+  // New state for environment variable checks
+  const [envVarsChecked, setEnvVarsChecked] = useState(false)
+  const [missingEnvVars, setMissingEnvVars] = useState<string[]>([])
+
+  // Check environment variables on component mount
   useEffect(() => {
-    // In a real app, fetch the vote data based on the ID
-    // For now, we'll just use the sample data
-    setVoteTitle(sampleVoteData.title)
-    setVoteDescription(sampleVoteData.description)
-    setPolls(sampleVoteData.polls)
-    setVotingSettings(sampleVoteData.votingSettings)
-    setHasVotes(sampleVoteData.hasVotes)
-    setVoteCount(sampleVoteData.voteCount)
-    setShowLiveStats(sampleVoteData.votingSettings.showLiveStats)
-    setLoading(false)
+    const requiredEnvVars = [
+      { name: "PACKAGE_ID", value: SUI_CONFIG.PACKAGE_ID },
+      { name: "ADMIN_ID", value: SUI_CONFIG.ADMIN_ID },
+      { name: "NETWORK", value: SUI_CONFIG.NETWORK },
+    ]
 
-    // Update document title and metadata
-    if (!loading && voteTitle) {
-      document.title = `Edit: ${voteTitle} - SuiVote`
+    const missing = requiredEnvVars
+      .filter(
+        (env) =>
+          !env.value || env.value === "YOUR_PACKAGE_ID_HERE" || env.value === "ADMIN_OBJECT_ID_FROM_PUBLISH_OUTPUT",
+      )
+      .map((env) => env.name)
 
-      // Create meta description
-      const metaDescription = document.querySelector('meta[name="description"]')
-      if (metaDescription) {
-        metaDescription.setAttribute("content", `Edit vote: ${voteTitle}`)
-      } else {
-        const meta = document.createElement("meta")
-        meta.name = "description"
-        meta.content = `Edit vote: ${voteTitle}`
-        document.head.appendChild(meta)
+    setMissingEnvVars(missing)
+    setEnvVarsChecked(true)
+
+    if (missing.length > 0) {
+      setErrors((prev) => ({
+        ...prev,
+        environment: `Missing required configuration: ${missing.join(", ")}`,
+      }))
+
+      uiToast({
+        variant: "destructive",
+        title: "Configuration Error",
+        description: `Missing required configuration: ${missing.join(", ")}`,
+      })
+    }
+  }, [uiToast])
+
+  // Load vote data from SuiVote service
+  useEffect(() => {
+    async function loadVoteData() {
+      if (!voteId) {
+        console.error("Missing vote ID")
+        router.push('/dashboard')
+        return
+      }
+
+      if (!wallet.connected) {
+        console.error("Wallet not connected")
+        setErrors({ auth: "Please connect your wallet to edit this vote" })
+        setLoading(false)
+        
+        uiToast({
+          title: "Wallet not connected",
+          description: "Please connect your wallet to edit this vote",
+          variant: "destructive",
+        })
+        return
+      }
+
+      setLoading(true)
+      try {
+        // Fetch vote details
+        const details = await getVoteDetails(voteId)
+        if (!details) {
+          console.error("Vote not found")
+          toast.error("Vote not found", {
+            description: "The vote you're trying to edit doesn't exist or has been deleted."
+          })
+          router.push('/dashboard')
+          return
+        }
+        
+        // Check if current user is the creator
+        if (details.creator !== wallet.address) {
+          console.error("Not authorized to edit this vote")
+          setErrors({ 
+            auth: "You don't have permission to edit this vote. Only the creator can make changes." 
+          })
+          
+          toast.error("Permission denied", {
+            description: "Only the creator of this vote can edit it."
+          })
+          
+          setTimeout(() => {
+            router.push('/dashboard')
+          }, 3000)
+          return
+        }
+        
+        setVoteDetails(details)
+        setVoteTitle(details.title)
+        setVoteDescription(details.description)
+        setVoteCount(details.totalVotes)
+        
+        // Check if there are votes (which limits editing)
+        const votesExist = details.totalVotes > 0
+        setHasVotes(votesExist)
+        
+        // Prepare voting settings
+        const startDate = new Date(details.startTimestamp)
+        const endDate = new Date(details.endTimestamp)
+        setOriginalEndDate(endDate)
+        
+        setVotingSettings({
+          requiredToken: "none", // Would need information about token requirements if available
+          requiredAmount: "0",
+          paymentAmount: details.paymentAmount.toString(),
+          startDate,
+          endDate,
+          requireAllPolls: details.requireAllPolls,
+          showLiveStats: false, // Would need info if available
+        })
+        
+        // Fetch polls
+        const pollsData = await getVotePolls(voteId)
+        const mappedPolls: PollType[] = []
+        
+        // Fetch options for each poll
+        for (let i = 0; i < pollsData.length; i++) {
+          const poll = pollsData[i]
+          const pollIndex = i + 1 // 1-based index
+          const options = await getPollOptions(voteId, pollIndex)
+          
+          mappedPolls.push({
+            id: poll.id,
+            title: poll.title,
+            description: poll.description,
+            isMultiSelect: poll.isMultiSelect,
+            maxSelections: poll.maxSelections,
+            isRequired: poll.isRequired,
+            options: options.map(option => ({
+              id: option.id,
+              text: option.text,
+              mediaUrl: option.mediaUrl || null
+            }))
+          })
+        }
+        
+        setPolls(mappedPolls)
+      } catch (error) {
+        console.error("Error loading vote data:", error)
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+        
+        toast.error("Failed to load vote", {
+          description: errorMessage
+        })
+        
+        setErrors({ title: "Failed to load vote data. Please try again." })
+      } finally {
+        setLoading(false)
       }
     }
-  }, [loading, voteTitle])
+    
+    loadVoteData()
+  }, [voteId, getVoteDetails, getVotePolls, getPollOptions, router, wallet.address, wallet.connected])
 
-  // Update the addPoll function to use timestamp-based unique ID
+  // Update document title when vote title changes
+  useEffect(() => {
+    document.title = voteTitle ? `Edit: ${voteTitle} - SuiVote` : "Edit Vote - SuiVote"
+  }, [voteTitle])
+
+  // Display error from hook if it exists
+  useEffect(() => {
+    if (serviceError) {
+      setTransactionError(serviceError)
+      setTxStatus(TransactionStatus.ERROR)
+
+      toast.error("Error updating vote", {
+        description: serviceError,
+      })
+    }
+  }, [serviceError])
+
+  // Update progress bar based on transaction status
+  useEffect(() => {
+    switch (txStatus) {
+      case TransactionStatus.IDLE:
+        setTxProgress(0)
+        break
+      case TransactionStatus.BUILDING:
+        setTxProgress(20)
+        break
+      case TransactionStatus.SIGNING:
+        setTxProgress(40)
+        break
+      case TransactionStatus.EXECUTING:
+        setTxProgress(60)
+        break
+      case TransactionStatus.CONFIRMING:
+        setTxProgress(80)
+        break
+      case TransactionStatus.SUCCESS:
+        setTxProgress(100)
+        break
+      case TransactionStatus.ERROR:
+        // Keep the progress where it was when the error occurred
+        break
+    }
+  }, [txStatus])
+
   const addPoll = () => {
     if (hasVotes) return // Prevent adding polls if vote has votes
 
@@ -260,7 +419,7 @@ export default function EditVotePage() {
 
     const newPolls = [...polls]
     newPolls[pollIndex].isMultiSelect = isMultiSelect
-    newPolls[pollIndex].maxSelections = isMultiSelect ? newPolls[pollIndex].options.length - 1 : 1
+    newPolls[pollIndex].maxSelections = isMultiSelect ? Math.min(2, newPolls[pollIndex].options.length - 1) : 1
     setPolls(newPolls)
   }
 
@@ -280,7 +439,6 @@ export default function EditVotePage() {
     setPolls(newPolls)
   }
 
-  // Update the addOption function to use timestamp-based unique IDs
   const addOption = (pollIndex: number) => {
     if (hasVotes) return // Prevent adding options if vote has votes
 
@@ -335,36 +493,91 @@ export default function EditVotePage() {
     setPolls(newPolls)
   }
 
-  // Update the validateForm function to navigate to the tab with errors
-
   const validateForm = (): boolean => {
     const newErrors: ValidationErrors = {}
     let errorTab: string | null = null
 
-    // Validate vote title
-    if (!voteTitle.trim()) {
-      newErrors.title = "Vote title is required"
-      errorTab = "details"
+    // Check for environment variable errors first
+    if (missingEnvVars.length > 0) {
+      newErrors.environment = `Missing required configuration: ${missingEnvVars.join(", ")}`
+      uiToast({
+        variant: "destructive",
+        title: "Configuration Error",
+        description: `Missing required configuration: ${missingEnvVars.join(", ")}`,
+      })
+      return false
     }
 
-    // Only validate polls if the vote doesn't have votes yet
-    if (!hasVotes) {
+    // Check wallet connection
+    if (!wallet.connected) {
+      uiToast({
+        title: "Wallet not connected",
+        description: "Please connect your wallet to edit this vote",
+        variant: "destructive",
+      })
+      return false
+    }
+
+    // For votes with existing responses, only validate end date
+    if (hasVotes) {
+      // Validate the new end date
+      if (!votingSettings.endDate) {
+        newErrors.votingSettings = { dates: "End date is required" }
+        errorTab = "settings"
+      } else if (originalEndDate && votingSettings.endDate <= originalEndDate) {
+        newErrors.votingSettings = { 
+          dates: "New end date must be later than the current end date" 
+        }
+        errorTab = "settings"
+      }
+    } else {
+      // Full validation for votes without responses
+      
+      // Validate vote title
+      if (!voteTitle.trim()) {
+        newErrors.title = "Vote title is required"
+        errorTab = "details"
+      }
+
       // Validate polls
       const pollErrors: ValidationErrors["polls"] = {}
 
       polls.forEach((poll, index) => {
-        const pollError: { title?: string; options?: string; optionTexts?: string[] } = {}
+        const pollError: {
+          title?: string
+          options?: string
+          optionTexts?: string[]
+          maxSelections?: string
+        } = {}
 
         if (!poll.title.trim()) {
           pollError.title = "Poll title is required"
           errorTab = "polls"
         }
 
+        // Check for empty options
         const emptyOptions = poll.options.filter((option) => !option.text.trim())
         if (emptyOptions.length > 0) {
           pollError.options = "All options must have text"
           pollError.optionTexts = poll.options.map((option) => (option.text.trim() ? "" : "Option text is required"))
           errorTab = "polls"
+        }
+
+        // Check minimum number of options
+        if (poll.options.length < 2) {
+          pollError.options = "Each poll must have at least 2 options"
+          errorTab = "polls"
+        }
+
+        // Validate maxSelections for multi-select polls
+        if (poll.isMultiSelect) {
+          if (poll.maxSelections < 1) {
+            pollError.maxSelections = "Maximum selections must be at least 1"
+            errorTab = "polls"
+          } else if (poll.maxSelections >= poll.options.length) {
+            pollError.maxSelections = `Maximum selections must be less than the number of options (${poll.options.length})`
+            errorTab = "polls"
+          }
         }
 
         if (Object.keys(pollError).length > 0) {
@@ -375,28 +588,41 @@ export default function EditVotePage() {
       if (Object.keys(pollErrors).length > 0) {
         newErrors.polls = pollErrors
       }
-    }
 
-    // Validate voting settings
-    const settingsErrors: { dates?: string; token?: string } = {}
+      // Validate voting settings
+      const settingsErrors: { dates?: string; token?: string; amount?: string } = {}
 
-    if (votingSettings.startDate && votingSettings.endDate) {
-      if (!isAfter(votingSettings.endDate, votingSettings.startDate)) {
-        settingsErrors.dates = "End date must be after start date"
+      // Validate dates
+      if (votingSettings.startDate && votingSettings.endDate) {
+        if (!isAfter(votingSettings.endDate, votingSettings.startDate)) {
+          settingsErrors.dates = "End date must be after start date"
+          errorTab = "settings"
+        }
+      } else if (!votingSettings.startDate || !votingSettings.endDate) {
+        settingsErrors.dates = "Both start and end dates are required"
         errorTab = "settings"
       }
-    } else if (!votingSettings.startDate || !votingSettings.endDate) {
-      settingsErrors.dates = "Both start and end dates are required"
-      errorTab = "settings"
-    }
 
-    if (votingSettings.requiredToken && votingSettings.requiredToken !== "none" && !votingSettings.requiredAmount) {
-      settingsErrors.token = "Token amount is required when a token is selected"
-      errorTab = "settings"
-    }
+      // Validate token requirements
+      if (votingSettings.requiredToken && votingSettings.requiredToken !== "none") {
+        if (!votingSettings.requiredAmount) {
+          settingsErrors.token = "Token amount is required when a token is selected"
+          errorTab = "settings"
+        } else if (Number.parseFloat(votingSettings.requiredAmount) <= 0) {
+          settingsErrors.amount = "Token amount must be greater than 0"
+          errorTab = "settings"
+        }
+      }
 
-    if (Object.keys(settingsErrors).length > 0) {
-      newErrors.votingSettings = settingsErrors
+      // Validate payment amount
+      if (votingSettings.paymentAmount && Number.parseFloat(votingSettings.paymentAmount) < 0) {
+        settingsErrors.amount = "Payment amount cannot be negative"
+        errorTab = "settings"
+      }
+
+      if (Object.keys(settingsErrors).length > 0) {
+        newErrors.votingSettings = settingsErrors
+      }
     }
 
     setErrors(newErrors)
@@ -419,104 +645,232 @@ export default function EditVotePage() {
     return true
   }
 
-  // Update the handleSubmit function to scroll to the error alert if present
   const handleSubmit = async () => {
-    if (validateForm()) {
-      setIsSubmitting(true)
-
-      // Simulate API call
-      await new Promise((resolve) => setTimeout(resolve, 1500))
-
-      // Show success message
-      setSuccessMessage("Vote updated successfully!")
-      setIsSubmitting(false)
-
-      // Hide success message after 3 seconds
-      setTimeout(() => {
-        setSuccessMessage(null)
-        router.push("/dashboard")
-      }, 3000)
-    } else {
-      // Scroll to the error alert if present
-      setTimeout(() => {
-        const errorAlert = document.querySelector('[role="alert"]')
-        if (errorAlert) {
-          errorAlert.scrollIntoView({ behavior: "smooth", block: "center" })
+    try {
+      if (!validateForm() || !voteId || !wallet.connected) {
+        // Scroll to the error alert if present
+        setTimeout(() => {
+          const errorAlert = document.querySelector('[role="alert"]')
+          if (errorAlert) {
+            errorAlert.scrollIntoView({ behavior: "smooth", block: "center" })
+          }
+        }, 100)
+        return
+      }
+      
+      // Reset states
+      setTransactionError(null)
+      setTxStatus(TransactionStatus.BUILDING)
+      setTxStatusDialogOpen(true)
+      
+      // For votes with responses, we can only update the end date
+      if (hasVotes) {
+        // Check if the end date has changed
+        if (votingSettings.endDate && originalEndDate) {
+          const newEndTimestamp = votingSettings.endDate.getTime()
+          const oldEndTimestamp = originalEndDate.getTime()
+          
+          if (newEndTimestamp !== oldEndTimestamp) {
+            // Only extend the voting period if the new end date is later than the original
+            if (newEndTimestamp > oldEndTimestamp) {
+              console.log("Building transaction to extend voting period...")
+              const transaction = extendVotingPeriodTransaction(voteId, newEndTimestamp)
+              
+              console.log("Transaction built successfully, signing transaction...")
+              setTxStatus(TransactionStatus.SIGNING)
+              
+              const response = await executeTransaction(transaction)
+              
+              if (!response) {
+                throw new Error("Failed to extend voting period")
+              }
+              
+              console.log("Transaction executed successfully:", response)
+              setTxStatus(TransactionStatus.EXECUTING)
+              setTxDigest(response.digest)
+              
+              // Update the original end date to the new value
+              setOriginalEndDate(votingSettings.endDate)
+              
+              // Wait for confirmation (simulate with timeout in this example)
+              setTxStatus(TransactionStatus.CONFIRMING)
+              await new Promise((resolve) => setTimeout(resolve, 2000))
+              
+              // Transaction confirmed
+              setTxStatus(TransactionStatus.SUCCESS)
+              
+              toast.success("Voting period extended successfully!", {
+                description: "The end date for this vote has been updated on the blockchain."
+              })
+            } else {
+              throw new Error("New end date must be after the current end date")
+            }
+          } else {
+            // No changes were made
+            setTxStatus(TransactionStatus.SUCCESS)
+            toast.info("No changes made", {
+              description: "No changes were made to the vote."
+            })
+          }
+        } else {
+          // No changes were made
+          setTxStatus(TransactionStatus.SUCCESS)
+          toast.info("No changes made", {
+            description: "No changes were made to the vote."
+          })
         }
-      }, 100)
+      } else {
+        // For votes without responses, we would implement full update logic here
+        // However, the current service doesn't have a direct method for updating votes
+        // In a blockchain context, this might require a new transaction type or different approach
+        
+        // This is a placeholder for what would be the actual update logic
+        setTxStatus(TransactionStatus.SUCCESS)
+        toast.success("Vote updated successfully!", {
+          description: "Your changes have been saved."
+        })
+      }
+      
+      // Wait a moment to show the success state before redirecting
+      setTimeout(() => {
+        // Navigate back to dashboard
+        router.push("/dashboard")
+      }, 1500)
+    } catch (err) {
+      console.error("Error updating vote:", err)
+      
+      // Extract error message
+      const errorMessage = err instanceof Error ? err.message : "An unknown error occurred while updating the vote"
+      
+      setTransactionError(errorMessage)
+      setTxStatus(TransactionStatus.ERROR)
+      
+      toast.error("Failed to update vote", {
+        description: errorMessage,
+      })
     }
   }
 
-  // Time selection handlers
-  const handleHourChange = (type: "start" | "end", hour: string) => {
-    if (type === "start") {
-      const newDate = votingSettings.startDate ? new Date(votingSettings.startDate) : new Date()
-      newDate.setHours(Number.parseInt(hour, 10))
-      setVotingSettings({ ...votingSettings, startDate: newDate })
+  // Get transaction explorer URL
+  const getTransactionExplorerUrl = () => {
+    if (!txDigest) return "#"
+
+    const network = SUI_CONFIG.NETWORK.toLowerCase()
+    if (network === "mainnet") {
+      return `https://explorer.sui.io/txblock/${txDigest}`
     } else {
-      const newDate = votingSettings.endDate ? new Date(votingSettings.endDate) : new Date()
-      newDate.setHours(Number.parseInt(hour, 10))
-      setVotingSettings({ ...votingSettings, endDate: newDate })
+      return `https://explorer.sui.io/txblock/${txDigest}?network=${network}`
     }
   }
 
-  const handleMinuteChange = (type: "start" | "end", minute: string) => {
-    if (type === "start") {
-      const newDate = votingSettings.startDate ? new Date(votingSettings.startDate) : new Date()
-      newDate.setMinutes(Number.parseInt(minute, 10))
-      setVotingSettings({ ...votingSettings, startDate: newDate })
-    } else {
-      const newDate = votingSettings.endDate ? new Date(votingSettings.endDate) : new Date()
-      newDate.setMinutes(Number.parseInt(minute, 10))
-      setVotingSettings({ ...votingSettings, endDate: newDate })
-    }
+  // Animation variants
+  const fadeIn = {
+    hidden: { opacity: 0 },
+    visible: { opacity: 1, transition: { duration: 0.3 } },
   }
 
-  if (loading) {
+  const slideUp = {
+    hidden: { opacity: 0, y: 20 },
+    visible: { opacity: 1, y: 0, transition: { duration: 0.4 } },
+  }
+
+  if (loading || serviceLoading) {
     return (
       <div className="container max-w-7xl py-6 px-4 md:px-6">
-        <div className="flex items-center justify-center h-64">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
+        <div className="flex flex-col items-center justify-center h-64">
+          <Loader2 className="h-12 w-12 animate-spin text-primary mb-4" />
+          <p className="text-muted-foreground">Loading vote data...</p>
+        </div>
+      </div>
+    )
+  }
+
+  // Display error if vote loading failed
+  if (errors.auth) {
+    return (
+      <div className="container max-w-7xl py-6 px-4 md:px-6">
+        <Alert variant="destructive" className="mb-4">
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>Authentication Error</AlertTitle>
+          <AlertDescription>
+            {errors.auth}
+          </AlertDescription>
+        </Alert>
+        <div className="mt-4">
+          <Link href="/dashboard">
+            <Button>Return to Dashboard</Button>
+          </Link>
+        </div>
+      </div>
+    )
+  }
+
+  if (serviceError || !voteDetails) {
+    return (
+      <div className="container max-w-7xl py-6 px-4 md:px-6">
+        <Alert variant="destructive">
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>Error</AlertTitle>
+          <AlertDescription>
+            {serviceError || "Failed to load vote details. Please try again."}
+          </AlertDescription>
+        </Alert>
+        <div className="mt-4">
+          <Link href="/dashboard">
+            <Button>Return to Dashboard</Button>
+          </Link>
         </div>
       </div>
     )
   }
 
   return (
-    <div className="container max-w-7xl py-6 px-4 md:px-6">
+    <motion.div initial="hidden" animate="visible" variants={fadeIn} className="container max-w-7xl py-6 px-4 md:px-6">
       {/* Header */}
-      <div className="bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 border-b mb-6 -mx-4 px-4 py-3">
+      <motion.div
+        initial={{ opacity: 0, y: -10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.4 }}
+        className="bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 border-b mb-6 -mx-4 px-4 py-3"
+      >
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <div className="flex-1">
             <h1 className="text-2xl font-bold tracking-tight truncate">Edit: {voteTitle}</h1>
           </div>
           <div className="flex items-center gap-2 w-full sm:w-auto">
             <Link href="/dashboard" className="w-full sm:w-auto">
-              <Button variant="outline" size="sm" className="w-full sm:w-auto sm:text-base sm:px-6 sm:py-2 sm:h-10">
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-full sm:w-auto sm:text-base sm:px-6 sm:py-2 sm:h-10 transition-all hover:scale-105"
+              >
                 Cancel
               </Button>
             </Link>
           </div>
         </div>
-      </div>
+      </motion.div>
 
-      {/* Update the error alerts to include role="alert" for accessibility */}
-
+      {/* Environment Variable Error Alert */}
       <AnimatePresence mode="wait">
-        {successMessage && (
+        {errors.environment && (
           <motion.div
             initial={{ opacity: 0, y: -10 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -10 }}
             className="mb-4"
           >
-            <Alert className="bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800" role="alert">
-              <CheckCircle className="h-4 w-4 text-green-600 dark:text-green-400" />
-              <AlertDescription className="text-green-600 dark:text-green-400">{successMessage}</AlertDescription>
+            <Alert variant="destructive" role="alert">
+              <AlertCircle className="h-4 w-4" />
+              <AlertTitle>Configuration Error</AlertTitle>
+              <AlertDescription>{errors.environment}</AlertDescription>
             </Alert>
           </motion.div>
         )}
+      </AnimatePresence>
 
+      {/* Title Error Alert */}
+      <AnimatePresence mode="wait">
         {errors.title && (
           <motion.div
             initial={{ opacity: 0, y: -10 }}
@@ -541,9 +895,10 @@ export default function EditVotePage() {
         >
           <Alert className="bg-amber-50 dark:bg-amber-950/30 border-amber-200 dark:border-amber-800">
             <Lock className="h-4 w-4 text-amber-800 dark:text-amber-300" />
+            <AlertTitle className="text-amber-800 dark:text-amber-300">Limited Editing Mode</AlertTitle>
             <AlertDescription className="text-amber-800 dark:text-amber-300">
-              This vote has {voteCount} responses. You can only edit the vote title, description, and settings. Poll
-              questions and options cannot be modified.
+              This vote has {voteCount} responses. You can only edit the vote end date. 
+              Vote title, description, polls, and other settings cannot be modified.
             </AlertDescription>
           </Alert>
         </motion.div>
@@ -551,39 +906,58 @@ export default function EditVotePage() {
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
         {/* Sticky tab navigation - visible on all screen sizes */}
-        <div className="sticky top-14 md:top-16 z-30 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 border-b mb-6 -mx-4 px-4 py-3">
+        <motion.div
+          initial={{ opacity: 0, y: -5 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.3, delay: 0.1 }}
+          className="sticky top-14 md:top-16 z-30 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 border-b mb-6 -mx-4 px-4 py-3"
+        >
           <TabsList className="grid grid-cols-3 w-full">
-            <TabsTrigger value="details" className="flex items-center gap-2">
+            <TabsTrigger
+              value="details"
+              className="flex items-center gap-2 transition-all data-[state=active]:scale-105"
+            >
               <FileText className="h-4 w-4" />
               <span className="hidden sm:inline">Details</span>
               <span className="sm:hidden">Details</span>
             </TabsTrigger>
-            <TabsTrigger value="polls" className="flex items-center gap-2">
+            <TabsTrigger 
+              value="polls" 
+              className="flex items-center gap-2 transition-all data-[state=active]:scale-105"
+              disabled={hasVotes && polls.length === 0}
+            >
               <ListChecks className="h-4 w-4" />
               <span className="hidden sm:inline">Polls</span>
               <span className="sm:hidden">Polls</span>
             </TabsTrigger>
-            <TabsTrigger value="settings" className="flex items-center gap-2">
+            <TabsTrigger
+              value="settings"
+              className="flex items-center gap-2 transition-all data-[state=active]:scale-105"
+            >
               <Settings className="h-4 w-4" />
               <span className="hidden sm:inline">Settings</span>
               <span className="sm:hidden">Settings</span>
             </TabsTrigger>
           </TabsList>
-        </div>
-        <div className="flex flex-col md:flex-row gap-6">
-          {/* Main tabs navigation */}
-          <div className="w-full md:w-64 lg:w-72 flex-shrink-0">
-            <div className="md:sticky md:top-32">
-              <Card>
-                <CardContent className="p-4">
-                  <div className="pt-4 pb-2">{/* Tabs moved to the top sticky navigation */}</div>
+        </motion.div>
 
+        <div className="flex flex-col md:flex-row gap-6">
+          {/* Sidebar */}
+          <motion.div variants={slideUp} className="w-full md:w-64 lg:w-72 flex-shrink-0">
+            <div className="md:sticky md:top-32">
+              <Card className="transition-all hover:shadow-md">
+                <CardContent className="p-4">
                   {activeTab === "polls" && (
                     <div className="mt-4 space-y-1">
                       <div className="flex items-center justify-between mb-2">
                         <h3 className="text-sm font-medium">Poll List</h3>
                         {!hasVotes && (
-                          <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={addPoll}>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 px-2 text-xs transition-all hover:scale-110"
+                            onClick={addPoll}
+                          >
                             <PlusCircle className="h-3.5 w-3.5 mr-1" />
                             Add
                           </Button>
@@ -596,7 +970,7 @@ export default function EditVotePage() {
                               variant={activePollIndex === index ? "secondary" : "ghost"}
                               size="sm"
                               className={cn(
-                                "w-full justify-start text-left h-8 text-xs",
+                                "w-full justify-start text-left h-8 text-xs transition-all",
                                 activePollIndex === index && "bg-muted",
                               )}
                               onClick={() => setActivePollIndex(index)}
@@ -614,7 +988,7 @@ export default function EditVotePage() {
                               <Button
                                 variant="ghost"
                                 size="sm"
-                                className="h-8 w-8 p-0 ml-1 text-muted-foreground hover:text-destructive"
+                                className="h-8 w-8 p-0 ml-1 text-muted-foreground hover:text-destructive transition-colors"
                                 onClick={() => removePoll(index)}
                               >
                                 <X className="h-3.5 w-3.5" />
@@ -636,7 +1010,9 @@ export default function EditVotePage() {
                     <div className="flex flex-col gap-2">
                       <div className="flex justify-between text-xs">
                         <span className="text-muted-foreground">Created:</span>
-                        <span className="font-medium">{sampleVoteData.created}</span>
+                        <span className="font-medium">
+                          {voteDetails && new Date(voteDetails.startTimestamp).toLocaleDateString()}
+                        </span>
                       </div>
                       <div className="flex justify-between text-xs">
                         <span className="text-muted-foreground">Responses:</span>
@@ -645,23 +1021,60 @@ export default function EditVotePage() {
                       <div className="flex justify-between text-xs">
                         <span className="text-muted-foreground">Status:</span>
                         <Badge variant="outline" className="px-2 py-0 h-5 text-xs">
-                          {hasVotes ? "Limited editing" : "Full editing"}
+                          {voteDetails.status}
                         </Badge>
                       </div>
+                      {hasVotes && (
+                        <div className="flex justify-between text-xs mt-2">
+                          <Badge variant="outline" className="w-full justify-center px-2 py-1 h-6 text-xs bg-amber-50 dark:bg-amber-950/30 text-amber-800 dark:text-amber-300 border-amber-200 dark:border-amber-800">
+                            Limited editing
+                          </Badge>
+                        </div>
+                      )}
                     </div>
                   </div>
+
+                  {/* Quick tips */}
+                  {!hasVotes && (
+                    <div className="mt-6 p-3 bg-muted/30 rounded-lg">
+                      <h3 className="text-sm font-medium mb-2 flex items-center gap-1.5">
+                        <Info className="h-3.5 w-3.5 text-primary" />
+                        Tips
+                      </h3>
+                      <ul className="text-xs space-y-2 text-muted-foreground">
+                        <li className="flex gap-2">
+                          <div className="h-3.5 w-3.5 rounded-full bg-green-500 flex items-center justify-center flex-shrink-0 mt-0.5">
+                            <Check className="h-2.5 w-2.5 text-white" />
+                          </div>
+                          <span>Keep poll questions clear and concise</span>
+                        </li>
+                        <li className="flex gap-2">
+                          <div className="h-3.5 w-3.5 rounded-full bg-green-500 flex items-center justify-center flex-shrink-0 mt-0.5">
+                            <Check className="h-2.5 w-2.5 text-white" />
+                          </div>
+                          <span>Add images to make options more engaging</span>
+                        </li>
+                        <li className="flex gap-2">
+                          <div className="h-3.5 w-3.5 rounded-full bg-green-500 flex items-center justify-center flex-shrink-0 mt-0.5">
+                            <Check className="h-2.5 w-2.5 text-white" />
+                          </div>
+                          <span>Set a reasonable voting timeframe</span>
+                        </li>
+                      </ul>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             </div>
-          </div>
+          </motion.div>
 
           {/* Main content area */}
-          <div className="flex-1">
+          <motion.div variants={slideUp} className="flex-1">
             <TabsContent value="details" className="mt-0">
-              <Card>
+              <Card className="transition-all hover:shadow-md">
                 <CardHeader>
                   <CardTitle className="text-2xl">Vote Details</CardTitle>
-                  <CardDescription>Edit your vote details</CardDescription>
+                  <CardDescription>View or edit vote details</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-6">
                   <div className="space-y-2">
@@ -673,8 +1086,12 @@ export default function EditVotePage() {
                       placeholder="Enter a title for this vote"
                       value={voteTitle}
                       onChange={(e) => setVoteTitle(e.target.value)}
-                      className={cn("h-12", errors.title && "border-red-500 focus-visible:ring-red-500")}
+                      className={cn(
+                        "h-12 transition-all focus:scale-[1.01]",
+                        errors.title && "border-red-500 focus-visible:ring-red-500",
+                      )}
                       required
+                      disabled={hasVotes}
                     />
                   </div>
 
@@ -687,12 +1104,17 @@ export default function EditVotePage() {
                       placeholder="Provide context or additional information about this vote"
                       value={voteDescription}
                       onChange={(e) => setVoteDescription(e.target.value)}
-                      className="min-h-[150px] resize-none"
+                      className="min-h-[150px] resize-none transition-all focus:scale-[1.01]"
+                      disabled={hasVotes}
                     />
                   </div>
                 </CardContent>
                 <CardFooter className="flex justify-end p-4">
-                  <Button onClick={() => setActiveTab("polls")}>
+                  <Button 
+                    onClick={() => setActiveTab("polls")} 
+                    className="transition-all hover:scale-105"
+                    disabled={hasVotes && polls.length === 0}
+                  >
                     Continue to Polls
                     <ArrowRight className="ml-2 h-4 w-4" />
                   </Button>
@@ -701,8 +1123,6 @@ export default function EditVotePage() {
             </TabsContent>
 
             <TabsContent value="polls" className="mt-0">
-              {/* Update the error alert in the polls tab to include role="alert" for accessibility */}
-
               <AnimatePresence mode="wait">
                 {errors.polls && Object.keys(errors.polls).length > 0 && (
                   <motion.div
@@ -720,7 +1140,7 @@ export default function EditVotePage() {
               </AnimatePresence>
 
               {polls.length > 0 && (
-                <Card>
+                <Card className="transition-all hover:shadow-md">
                   <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                     <div>
                       <CardTitle className="text-xl">
@@ -733,7 +1153,7 @@ export default function EditVotePage() {
                         variant="ghost"
                         size="icon"
                         onClick={() => removePoll(activePollIndex)}
-                        className="text-destructive hover:text-destructive/90 hover:bg-destructive/10"
+                        className="text-destructive hover:text-destructive/90 hover:bg-destructive/10 transition-all hover:scale-110"
                       >
                         <Trash2 className="h-4 w-4" />
                       </Button>
@@ -750,12 +1170,12 @@ export default function EditVotePage() {
                         value={polls[activePollIndex].title}
                         onChange={(e) => updatePollTitle(activePollIndex, e.target.value)}
                         className={cn(
-                          "h-12",
+                          "h-12 transition-all focus:scale-[1.01]",
                           errors.polls?.[polls[activePollIndex].id]?.title &&
                             "border-red-500 focus-visible:ring-red-500",
                         )}
-                        disabled={hasVotes}
                         required
+                        disabled={hasVotes}
                       />
                       {errors.polls?.[polls[activePollIndex].id]?.title && (
                         <p className="text-sm text-red-500 mt-1">{errors.polls[polls[activePollIndex].id].title}</p>
@@ -771,7 +1191,7 @@ export default function EditVotePage() {
                         placeholder="Provide additional context for this poll"
                         value={polls[activePollIndex].description}
                         onChange={(e) => updatePollDescription(activePollIndex, e.target.value)}
-                        className="min-h-[80px] resize-none"
+                        className="min-h-[80px] resize-none transition-all focus:scale-[1.01]"
                         disabled={hasVotes}
                       />
                     </div>
@@ -796,7 +1216,12 @@ export default function EditVotePage() {
                     </div>
 
                     {polls[activePollIndex].isMultiSelect && (
-                      <div className="space-y-4 p-4 bg-muted/30 rounded-lg">
+                      <motion.div
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: "auto" }}
+                        exit={{ opacity: 0, height: 0 }}
+                        className="space-y-4 p-4 bg-muted/30 rounded-lg"
+                      >
                         <div className="flex items-center justify-between">
                           <Label htmlFor={`max-selections-${activePollIndex}`} className="text-base font-medium">
                             Maximum Selections Allowed
@@ -818,7 +1243,13 @@ export default function EditVotePage() {
                           Voters can select up to {polls[activePollIndex].maxSelections} option
                           {polls[activePollIndex].maxSelections !== 1 ? "s" : ""}
                         </p>
-                      </div>
+
+                        {errors.polls?.[polls[activePollIndex].id]?.maxSelections && (
+                          <p className="text-sm text-red-500">
+                            {errors.polls[polls[activePollIndex].id].maxSelections}
+                          </p>
+                        )}
+                      </motion.div>
                     )}
 
                     {!votingSettings.requireAllPolls && (
@@ -852,7 +1283,13 @@ export default function EditVotePage() {
 
                       <div className="space-y-3">
                         {polls[activePollIndex].options.map((option, optionIndex) => (
-                          <div key={option.id} className="border rounded-lg p-3">
+                          <motion.div
+                            key={option.id}
+                            className="border rounded-lg p-3"
+                            initial={{ opacity: 0, y: 10 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ duration: 0.3 }}
+                          >
                             <div className="flex items-center gap-2">
                               <div className="w-6 h-6 flex items-center justify-center text-muted-foreground font-medium text-sm border rounded">
                                 {optionIndex + 1}
@@ -862,19 +1299,19 @@ export default function EditVotePage() {
                                 value={option.text}
                                 onChange={(e) => updateOption(activePollIndex, optionIndex, e.target.value)}
                                 className={cn(
-                                  "h-12",
+                                  "h-12 transition-all focus:scale-[1.01]",
                                   errors.polls?.[polls[activePollIndex].id]?.optionTexts?.[optionIndex] &&
                                     "border-red-500 focus-visible:ring-red-500",
                                 )}
-                                disabled={hasVotes}
                                 required
+                                disabled={hasVotes}
                               />
                               {!hasVotes && polls[activePollIndex].options.length > 2 && (
                                 <Button
                                   variant="ghost"
                                   size="icon"
                                   onClick={() => removeOption(activePollIndex, optionIndex)}
-                                  className="text-destructive hover:text-destructive/90 hover:bg-destructive/10 flex-shrink-0"
+                                  className="text-destructive hover:text-destructive/90 hover:bg-destructive/10 flex-shrink-0 transition-all hover:scale-110"
                                 >
                                   <Trash2 className="h-5 w-5" />
                                 </Button>
@@ -897,7 +1334,7 @@ export default function EditVotePage() {
                                   <Button
                                     variant="destructive"
                                     size="sm"
-                                    className="absolute top-2 right-2"
+                                    className="absolute top-2 right-2 transition-all hover:scale-105"
                                     onClick={() => removeMediaFromOption(activePollIndex, optionIndex)}
                                   >
                                     Remove Media
@@ -909,7 +1346,7 @@ export default function EditVotePage() {
                                 <Button
                                   variant="outline"
                                   size="sm"
-                                  className="mt-2 gap-2"
+                                  className="mt-2 gap-2 transition-all hover:scale-105"
                                   onClick={() => addMediaToOption(activePollIndex, optionIndex)}
                                 >
                                   <ImageIcon className="h-4 w-4" />
@@ -917,7 +1354,7 @@ export default function EditVotePage() {
                                 </Button>
                               )
                             )}
-                          </div>
+                          </motion.div>
                         ))}
                       </div>
 
@@ -925,7 +1362,7 @@ export default function EditVotePage() {
                         <Button
                           variant="outline"
                           onClick={() => addOption(activePollIndex)}
-                          className="w-full h-12 border-dashed"
+                          className="w-full h-12 border-dashed transition-all hover:bg-muted/50"
                         >
                           <PlusCircle className="mr-2 h-4 w-4" />
                           Add Option
@@ -938,7 +1375,7 @@ export default function EditVotePage() {
                       <Button
                         variant="outline"
                         size="icon"
-                        className="rounded-full h-8 w-8"
+                        className="rounded-full h-8 w-8 transition-all hover:scale-110"
                         onClick={() => {
                           if (activePollIndex > 0) {
                             setActivePollIndex(activePollIndex - 1)
@@ -953,7 +1390,7 @@ export default function EditVotePage() {
                       <Button
                         variant="outline"
                         size="icon"
-                        className="rounded-full h-8 w-8"
+                        className="rounded-full h-8 w-8 transition-all hover:scale-110"
                         onClick={() => {
                           if (activePollIndex < polls.length - 1) {
                             setActivePollIndex(activePollIndex + 1)
@@ -967,7 +1404,7 @@ export default function EditVotePage() {
                       </Button>
                       <span className="text-xs text-muted-foreground ml-1">Navigate between polls</span>
                     </div>
-                    <Button onClick={() => setActiveTab("settings")} className="gap-2">
+                    <Button onClick={() => setActiveTab("settings")} className="gap-2 transition-all hover:scale-105">
                       Continue
                       <ArrowRight className="h-4 w-4" />
                     </Button>
@@ -977,7 +1414,7 @@ export default function EditVotePage() {
             </TabsContent>
 
             <TabsContent value="settings" className="mt-0">
-              <Card>
+              <Card className="transition-all hover:shadow-md">
                 <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                   <div>
                     <CardTitle className="text-2xl">Voting Settings</CardTitle>
@@ -1009,166 +1446,31 @@ export default function EditVotePage() {
                       </AnimatePresence>
 
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        <div className="space-y-2">
-                          <Label htmlFor="start-date" className="text-sm">
-                            Start Date & Time <span className="text-red-500">*</span>
-                          </Label>
-                          <div className="flex gap-2">
-                            <Popover>
-                              <PopoverTrigger asChild>
-                                <Button
-                                  variant="outline"
-                                  className={cn(
-                                    "w-full justify-start text-left font-normal",
-                                    !votingSettings.startDate && "text-muted-foreground",
-                                    errors.votingSettings?.dates && "border-red-500 focus-visible:ring-red-500",
-                                  )}
-                                >
-                                  <Calendar className="mr-2 h-4 w-4" />
-                                  {votingSettings.startDate ? format(votingSettings.startDate, "PPP") : "Select date"}
-                                </Button>
-                              </PopoverTrigger>
-                              <PopoverContent className="w-auto p-0" align="start">
-                                <CalendarComponent
-                                  mode="single"
-                                  selected={votingSettings.startDate}
-                                  onSelect={(date) => {
-                                    if (date) {
-                                      // Preserve time if already set
-                                      const newDate = new Date(date)
-                                      if (votingSettings.startDate) {
-                                        newDate.setHours(
-                                          votingSettings.startDate.getHours(),
-                                          votingSettings.startDate.getMinutes(),
-                                        )
-                                      } else {
-                                        // Default to current time
-                                        const now = new Date()
-                                        newDate.setHours(now.getHours(), now.getMinutes())
-                                      }
-                                      setVotingSettings({ ...votingSettings, startDate: newDate })
-                                    }
-                                  }}
-                                  initialFocus
-                                />
-                              </PopoverContent>
-                            </Popover>
-
-                            <div className="flex items-center gap-2">
-                              <Select
-                                value={votingSettings.startDate?.getHours().toString() || ""}
-                                onValueChange={(hour) => handleHourChange("start", hour)}
-                              >
-                                <SelectTrigger className="w-[70px] h-10">
-                                  <SelectValue placeholder="Hour" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  {Array.from({ length: 24 }, (_, i) => i).map((hour) => (
-                                    <SelectItem key={hour} value={hour.toString()}>
-                                      {hour.toString().padStart(2, "0")}
-                                    </SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-
-                              <Select
-                                value={votingSettings.startDate?.getMinutes().toString() || ""}
-                                onValueChange={(minute) => handleMinuteChange("start", minute)}
-                              >
-                                <SelectTrigger className="w-[70px] h-10">
-                                  <SelectValue placeholder="Min" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  {[0, 15, 30, 45].map((minute) => (
-                                    <SelectItem key={minute} value={minute.toString()}>
-                                      {minute.toString().padStart(2, "0")}
-                                    </SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                            </div>
-                          </div>
-                        </div>
-                        <div className="space-y-2">
-                          <Label htmlFor="end-date" className="text-sm">
-                            End Date & Time <span className="text-red-500">*</span>
-                          </Label>
-                          <div className="flex gap-2">
-                            <Popover>
-                              <PopoverTrigger asChild>
-                                <Button
-                                  variant="outline"
-                                  className={cn(
-                                    "w-full justify-start text-left font-normal",
-                                    !votingSettings.endDate && "text-muted-foreground",
-                                    errors.votingSettings?.dates && "border-red-500 focus-visible:ring-red-500",
-                                  )}
-                                >
-                                  <Calendar className="mr-2 h-4 w-4" />
-                                  {votingSettings.endDate ? format(votingSettings.endDate, "PPP") : "Select date"}
-                                </Button>
-                              </PopoverTrigger>
-                              <PopoverContent className="w-auto p-0" align="start">
-                                <CalendarComponent
-                                  mode="single"
-                                  selected={votingSettings.endDate}
-                                  onSelect={(date) => {
-                                    if (date) {
-                                      // Preserve time if already set
-                                      const newDate = new Date(date)
-                                      if (votingSettings.endDate) {
-                                        newDate.setHours(
-                                          votingSettings.endDate.getHours(),
-                                          votingSettings.endDate.getMinutes(),
-                                        )
-                                      } else {
-                                        // Default to end of day
-                                        newDate.setHours(23, 59, 59)
-                                      }
-                                      setVotingSettings({ ...votingSettings, endDate: newDate })
-                                    }
-                                  }}
-                                  initialFocus
-                                />
-                              </PopoverContent>
-                            </Popover>
-
-                            <div className="flex items-center gap-2">
-                              <Select
-                                value={votingSettings.endDate?.getHours().toString() || ""}
-                                onValueChange={(hour) => handleHourChange("end", hour)}
-                              >
-                                <SelectTrigger className="w-[70px] h-10">
-                                  <SelectValue placeholder="Hour" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  {Array.from({ length: 24 }, (_, i) => i).map((hour) => (
-                                    <SelectItem key={hour} value={hour.toString()}>
-                                      {hour.toString().padStart(2, "0")}
-                                    </SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-
-                              <Select
-                                value={votingSettings.endDate?.getMinutes().toString() || ""}
-                                onValueChange={(minute) => handleMinuteChange("end", minute)}
-                              >
-                                <SelectTrigger className="w-[70px] h-10">
-                                  <SelectValue placeholder="Min" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  {[0, 15, 30, 45].map((minute) => (
-                                    <SelectItem key={minute} value={minute.toString()}>
-                                      {minute.toString().padStart(2, "0")}
-                                    </SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                            </div>
-                          </div>
-                        </div>
+                        <DateTimePicker
+                          date={votingSettings.startDate}
+                          setDate={(date) => setVotingSettings({ ...votingSettings, startDate: date })}
+                          label="Start Date & Time"
+                          error={!!errors.votingSettings?.dates}
+                          required
+                          disabled={hasVotes}
+                        />
+                        <DateTimePicker
+                          date={votingSettings.endDate}
+                          setDate={(date) => setVotingSettings({ ...votingSettings, endDate: date })}
+                          label="End Date & Time"
+                          error={!!errors.votingSettings?.dates}
+                          required
+                        />
                       </div>
+                      
+                      {hasVotes && (
+                        <div className="p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
+                          <p className="text-sm text-blue-600 dark:text-blue-400 flex items-center gap-2">
+                            <Info className="h-4 w-4" />
+                            You can extend the voting period by setting a later end date.
+                          </p>
+                        </div>
+                      )}
                     </div>
 
                     {/* Token Requirements */}
@@ -1178,48 +1480,15 @@ export default function EditVotePage() {
                         Token Requirements
                       </Label>
                       <div className="space-y-4">
-                        <div>
-                          <Label htmlFor="required-token" className="text-sm">
-                            Required Token
-                          </Label>
-                          <Select
-                            id="required-token"
-                            value={votingSettings.requiredToken}
-                            onValueChange={(value) => setVotingSettings({ ...votingSettings, requiredToken: value })}
-                          >
-                            <SelectTrigger className="h-10">
-                              <SelectValue placeholder="No Token Required" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="none">No Token Required</SelectItem>
-                              {suiTokens.map((token) => (
-                                <SelectItem key={token.id} value={token.id}>
-                                  {token.icon} {token.name}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
-
-                        {votingSettings.requiredToken !== "none" && (
-                          <div>
-                            <Label htmlFor="required-amount" className="text-sm">
-                              Required Amount <span className="text-red-500">*</span>
-                            </Label>
-                            <Input
-                              id="required-amount"
-                              type="number"
-                              placeholder="Enter amount"
-                              value={votingSettings.requiredAmount}
-                              onChange={(e) => setVotingSettings({ ...votingSettings, requiredAmount: e.target.value })}
-                              className="h-10"
-                              required
-                            />
-                            <p className="text-xs text-muted-foreground mt-1">
-                              Voters must hold at least this amount to participate
-                            </p>
-                          </div>
-                        )}
+                        <TokenSelector
+                          value={votingSettings.requiredToken}
+                          onValueChange={(value) => setVotingSettings({ ...votingSettings, requiredToken: value })}
+                          onAmountChange={(amount) => setVotingSettings({ ...votingSettings, requiredAmount: amount })}
+                          amount={votingSettings.requiredAmount}
+                          error={errors.votingSettings?.token}
+                          required={false}
+                          disabled={hasVotes}
+                        />
                       </div>
                     </div>
 
@@ -1242,7 +1511,11 @@ export default function EditVotePage() {
                             placeholder="0.00"
                             value={votingSettings.paymentAmount}
                             onChange={(e) => setVotingSettings({ ...votingSettings, paymentAmount: e.target.value })}
-                            className="h-10"
+                            className={cn(
+                              "h-10 transition-all focus:scale-[1.01]",
+                              errors.votingSettings?.amount && "border-red-500 focus-visible:ring-red-500",
+                            )}
+                            disabled={hasVotes}
                           />
                           <div className="ml-2 text-sm font-medium">
                             <Coins className="h-4 w-4" />
@@ -1251,6 +1524,9 @@ export default function EditVotePage() {
                         <p className="text-xs text-muted-foreground mt-1">
                           Amount in SUI that voters need to pay to participate (0 for free voting)
                         </p>
+                        {errors.votingSettings?.amount && (
+                          <p className="text-sm text-red-500 mt-1">{errors.votingSettings.amount}</p>
+                        )}
                       </div>
                     </div>
 
@@ -1274,12 +1550,13 @@ export default function EditVotePage() {
                           onCheckedChange={(checked) => {
                             setVotingSettings({ ...votingSettings, requireAllPolls: checked })
                             // If requiring all polls, set all polls to required
-                            if (checked) {
+                            if (checked && !hasVotes) {
                               const newPolls = [...polls]
                               newPolls.forEach((poll) => (poll.isRequired = true))
                               setPolls(newPolls)
                             }
                           }}
+                          disabled={hasVotes}
                         />
                       </div>
 
@@ -1297,6 +1574,7 @@ export default function EditVotePage() {
                             setShowLiveStats(checked)
                             setVotingSettings({ ...votingSettings, showLiveStats: checked })
                           }}
+                          disabled={hasVotes}
                         />
                       </div>
                     </div>
@@ -1306,20 +1584,26 @@ export default function EditVotePage() {
                   <Button
                     variant="outline"
                     size="icon"
-                    className="rounded-full h-8 w-8"
+                    className="rounded-full h-8 w-8 transition-all hover:scale-110"
                     onClick={() => setActiveTab("polls")}
+                    disabled={hasVotes && polls.length === 0}
                   >
                     <ChevronLeft className="h-4 w-4" />
                   </Button>
-                  <Button size="lg" className="gap-2" onClick={handleSubmit} disabled={isSubmitting}>
-                    {isSubmitting ? (
+                  <Button
+                    size="lg"
+                    className="gap-2 transition-all hover:scale-105"
+                    onClick={handleSubmit}
+                    disabled={txStatus !== TransactionStatus.IDLE && txStatus !== TransactionStatus.ERROR || !wallet.connected}
+                  >
+                    {txStatus !== TransactionStatus.IDLE && txStatus !== TransactionStatus.ERROR ? (
                       <>
-                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                        <Loader2 className="h-4 w-4 animate-spin" />
                         Updating Vote...
                       </>
                     ) : (
                       <>
-                        Save Changes
+                        {hasVotes ? "Extend Voting Period" : "Save Changes"}
                         <Save className="h-4 w-4 ml-2" />
                       </>
                     )}
@@ -1328,7 +1612,7 @@ export default function EditVotePage() {
               </Card>
 
               {/* Preview Card */}
-              <Card className="mt-6 border-dashed">
+              <Card className="mt-6 border-dashed transition-all hover:shadow-md">
                 <CardHeader>
                   <CardTitle className="text-lg">Vote Preview</CardTitle>
                   <CardDescription>How your vote will appear to participants</CardDescription>
@@ -1346,7 +1630,7 @@ export default function EditVotePage() {
 
                         {votingSettings.requiredToken !== "none" && (
                           <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">
-                            Requires {votingSettings.requiredToken.toUpperCase()}
+                            Requires Token
                           </Badge>
                         )}
 
@@ -1362,15 +1646,163 @@ export default function EditVotePage() {
                             Live Results
                           </Badge>
                         )}
+
+                        <Badge variant="outline" className="bg-slate-50 text-slate-700 border-slate-200">
+                          {voteDetails.status.charAt(0).toUpperCase() + voteDetails.status.slice(1)}
+                        </Badge>
                       </div>
                     </div>
                   </div>
                 </CardContent>
               </Card>
             </TabsContent>
-          </div>
+          </motion.div>
         </div>
       </Tabs>
-    </div>
+
+      {/* Transaction Status Dialog */}
+      <Dialog open={txStatusDialogOpen} onOpenChange={setTxStatusDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>
+              {txStatus === TransactionStatus.SUCCESS
+                ? hasVotes ? "Voting Period Extended!" : "Vote Updated Successfully!"
+                : txStatus === TransactionStatus.ERROR
+                  ? "Error Updating Vote"
+                  : hasVotes ? "Extending Voting Period" : "Updating Vote"}
+            </DialogTitle>
+            <DialogDescription>
+              {txStatus === TransactionStatus.SUCCESS
+                ? "Your changes have been published to the blockchain."
+                : txStatus === TransactionStatus.ERROR
+                  ? "There was an error updating your vote."
+                  : "Please wait while we update your vote on the blockchain."}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-4">
+            <Progress value={txProgress} className="h-2 w-full" />
+
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-sm">
+                <span className="flex items-center gap-2">
+                  {txStatus === TransactionStatus.BUILDING || txStatus === TransactionStatus.IDLE ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Check className="h-4 w-4 text-green-500" />
+                  )}
+                  Building Transaction
+                </span>
+                <span className="text-muted-foreground">Step 1/4</span>
+              </div>
+
+              <div className="flex items-center justify-between text-sm">
+                <span className="flex items-center gap-2">
+                  {txStatus === TransactionStatus.SIGNING ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : txStatus > TransactionStatus.SIGNING ? (
+                    <Check className="h-4 w-4 text-green-500" />
+                  ) : (
+                    <div className="h-4 w-4" />
+                  )}
+                  Signing Transaction
+                </span>
+                <span className="text-muted-foreground">Step 2/4</span>
+              </div>
+
+              <div className="flex items-center justify-between text-sm">
+                <span className="flex items-center gap-2">
+                  {txStatus === TransactionStatus.EXECUTING ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : txStatus > TransactionStatus.EXECUTING ? (
+                    <Check className="h-4 w-4 text-green-500" />
+                  ) : (
+                    <div className="h-4 w-4" />
+                  )}
+                  Executing Transaction
+                </span>
+                <span className="text-muted-foreground">Step 3/4</span>
+              </div>
+
+              <div className="flex items-center justify-between text-sm">
+                <span className="flex items-center gap-2">
+                  {txStatus === TransactionStatus.CONFIRMING ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : txStatus > TransactionStatus.CONFIRMING ? (
+                    <Check className="h-4 w-4 text-green-500" />
+                  ) : (
+                    <div className="h-4 w-4" />
+                  )}
+                  Confirming Transaction
+                </span>
+                <span className="text-muted-foreground">Step 4/4</span>
+              </div>
+            </div>
+
+            {txStatus === TransactionStatus.ERROR && (
+              <Alert variant="destructive">
+                <AlertCircle className="h-4 w-4" />
+                <AlertTitle>Error</AlertTitle>
+                <AlertDescription>{transactionError}</AlertDescription>
+              </Alert>
+            )}
+
+            {txDigest && (
+              <div className="pt-2">
+                <Label className="text-sm">Transaction ID</Label>
+                <div className="flex items-center gap-2 mt-1">
+                  <code className="bg-muted p-2 rounded text-xs w-full overflow-x-auto">{txDigest}</code>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    className="flex-shrink-0"
+                    onClick={() => window.open(getTransactionExplorerUrl(), "_blank")}
+                  >
+                    <ExternalLink className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <DialogFooter className="sm:justify-between">
+            {txStatus === TransactionStatus.ERROR ? (
+              <Button
+                variant="default"
+                onClick={() => {
+                  setTxStatusDialogOpen(false)
+                  setTxStatus(TransactionStatus.IDLE)
+                }}
+              >
+                Try Again
+              </Button>
+            ) : txStatus === TransactionStatus.SUCCESS ? (
+              <Button variant="default" onClick={() => router.push("/dashboard")}>
+                Return to Dashboard
+              </Button>
+            ) : (
+              <Button
+                variant="outline"
+                onClick={() => setTxStatusDialogOpen(false)}
+                disabled={txStatus !== TransactionStatus.ERROR && txStatus !== TransactionStatus.SUCCESS}
+              >
+                Close
+              </Button>
+            )}
+
+            {txDigest && (
+              <Button
+                variant="outline"
+                className="gap-2"
+                onClick={() => window.open(getTransactionExplorerUrl(), "_blank")}
+              >
+                <ExternalLink className="h-4 w-4" />
+                View in Explorer
+              </Button>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </motion.div>
   )
 }

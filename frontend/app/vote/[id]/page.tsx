@@ -2,75 +2,118 @@
 
 import { useState, useEffect } from "react"
 import { useParams, useRouter } from "next/navigation"
-import { ArrowRight, CheckCircle, Clock, Users, Share2, AlertCircle } from "lucide-react"
+import { motion } from "framer-motion"
+import { toast } from "sonner"
+import {
+  Calendar,
+  Clock,
+  Users,
+  CheckCircle2,
+  AlertCircle,
+  ArrowLeft,
+  Share2,
+  Wallet,
+  Loader2,
+  ExternalLink,
+  Info,
+} from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Separator } from "@/components/ui/separator"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Label } from "@/components/ui/label"
-import { Separator } from "@/components/ui/separator"
 import { Badge } from "@/components/ui/badge"
-import { Alert, AlertDescription } from "@/components/ui/alert"
+import { Progress } from "@/components/ui/progress"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 import { ShareDialog } from "@/components/share-dialog"
 import { WalletConnectButton } from "@/components/wallet-connect-button"
-import { motion, AnimatePresence } from "framer-motion"
 import { useWallet } from "@suiet/wallet-kit"
 import { useSuiVote } from "@/hooks/use-suivote"
-import type { VoteDetails, PollDetails, PollOptionDetails } from "@/services/suivote-service"
+import { cn } from "@/lib/utils"
+import Link from "next/link"
+import { format } from "date-fns"
+import { SUI_CONFIG } from "@/config/sui-config"
+
+// Transaction status enum
+enum TransactionStatus {
+  IDLE = "idle",
+  BUILDING = "building",
+  SIGNING = "signing",
+  EXECUTING = "executing",
+  CONFIRMING = "confirming",
+  SUCCESS = "success",
+  ERROR = "error",
+}
 
 export default function VotePage() {
   const params = useParams()
   const router = useRouter()
-  const { id } = params
   const wallet = useWallet()
   const suivote = useSuiVote()
 
-  const [vote, setVote] = useState<VoteDetails | null>(null)
-  const [polls, setPolls] = useState<PollDetails[]>([])
+  const [vote, setVote] = useState(null)
+  const [polls, setPolls] = useState([])
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [submitted, setSubmitted] = useState(false)
   const [shareDialogOpen, setShareDialogOpen] = useState(false)
-  const [validationError, setValidationError] = useState<string | null>(null)
+  const [validationErrors, setValidationErrors] = useState({})
   const [hasUserVoted, setHasUserVoted] = useState(false)
+  const [userHasRequiredTokens, setUserHasRequiredTokens] = useState(true)
+  const [showingResults, setShowingResults] = useState(false)
+
+  // New state for transaction status tracking
+  const [txStatus, setTxStatus] = useState(TransactionStatus.IDLE)
+  const [txDigest, setTxDigest] = useState(null)
 
   // State to track selections for each poll
-  const [selections, setSelections] = useState<Record<string, string | string[]>>({})
+  const [selections, setSelections] = useState({})
 
   // Function to fetch vote details and polls
   const fetchVoteData = async () => {
     try {
       setLoading(true)
 
-      if (!id) {
+      if (!params.id) {
         throw new Error("Vote ID is required")
       }
 
       // Get vote details
-      const voteDetails = await suivote.getVoteDetails(id as string)
+      const voteDetails = await suivote.getVoteDetails(params.id)
       if (!voteDetails) {
         throw new Error("Vote not found")
       }
 
-      setVote(voteDetails)
-
       // If the vote is closed, redirect to the closed page
-      if (voteDetails.status === "closed") {
-        router.push(`/vote/${id}/closed`)
+      // Only redirect if showLiveStats is false
+      if (voteDetails.status === "closed" && !voteDetails.showLiveStats) {
+        router.push(`/vote/${params.id}/closed`)
         return
       }
 
+      setVote(voteDetails)
+
       // Get polls for the vote
-      const pollsData = await suivote.getVotePolls(id as string)
+      const pollsData = await suivote.getVotePolls(params.id)
       
       // Fetch options for each poll
       const pollsWithOptions = await Promise.all(
         pollsData.map(async (poll, index) => {
           // Get options for this poll (index + 1 because poll indices are 1-based)
-          const options = await suivote.getPollOptions(id as string, index + 1)
+          const options = await suivote.getPollOptions(params.id, index + 1)
+          
+          // Calculate percentage for each option based on votes
+          const totalVotesForPoll = options.reduce((sum, option) => sum + option.votes, 0)
+          const optionsWithPercentage = options.map(option => ({
+            ...option,
+            percentage: totalVotesForPoll > 0 ? (option.votes / totalVotesForPoll) * 100 : 0
+          }))
+          
           return {
             ...poll,
-            options: options || []
+            options: optionsWithPercentage || []
           }
         })
       )
@@ -78,7 +121,7 @@ export default function VotePage() {
       setPolls(pollsWithOptions || [])
 
       // Initialize selections
-      const initialSelections: Record<string, string | string[]> = {}
+      const initialSelections = {}
       pollsWithOptions.forEach((poll) => {
         initialSelections[poll.id] = poll.isMultiSelect ? [] : ""
       })
@@ -86,11 +129,30 @@ export default function VotePage() {
 
       // Check if user has already voted
       if (wallet.connected && wallet.address) {
-        const votedStatus = await suivote.hasVoted(wallet.address, id as string)
+        const votedStatus = await suivote.hasVoted(wallet.address, params.id)
         setHasUserVoted(votedStatus)
-        if (votedStatus) {
-          setSubmitted(true)
+        setSubmitted(votedStatus)
+        
+        // If user has voted and showLiveStats is false, redirect to success page
+        if (votedStatus && !voteDetails.showLiveStats && voteDetails.status === "active") {
+          router.push(`/vote/${params.id}/success`)
+          return
         }
+        
+        // If user has voted and showLiveStats is true, show results
+        if (votedStatus && voteDetails.showLiveStats) {
+          setShowingResults(true)
+        }
+      }
+
+      // Check if user has required tokens
+      if (wallet.connected && wallet.address && voteDetails.requiredToken) {
+        const hasTokens = await suivote.checkTokenBalance(
+          wallet.address, 
+          voteDetails.requiredToken, 
+          voteDetails.requiredAmount
+        )
+        setUserHasRequiredTokens(hasTokens)
       }
 
       // Update document title and metadata
@@ -129,7 +191,13 @@ export default function VotePage() {
       }
     } catch (error) {
       console.error("Error fetching vote data:", error)
-      setValidationError(error instanceof Error ? error.message : "Failed to load vote data")
+      toast.error("Error loading vote", {
+        description: error instanceof Error ? error.message : "Failed to load vote data"
+      })
+      
+      setValidationErrors({
+        general: error instanceof Error ? error.message : "Failed to load vote data"
+      })
     } finally {
       setLoading(false)
     }
@@ -137,414 +205,1124 @@ export default function VotePage() {
 
   useEffect(() => {
     fetchVoteData()
-  }, [id, router])
+  }, [params.id, router])
 
   // Re-check if user has voted when wallet changes
   useEffect(() => {
-    if (wallet.connected && wallet.address && id) {
-      suivote.hasVoted(wallet.address, id as string).then(voted => {
+    if (wallet.connected && wallet.address && params.id && vote) {
+      // Check if user has already voted
+      suivote.hasVoted(wallet.address, params.id).then(voted => {
         setHasUserVoted(voted)
-        if (voted) {
-          setSubmitted(true)
+        setSubmitted(voted)
+        
+        // If user has voted and showLiveStats is false, redirect to success page
+        if (voted && !vote.showLiveStats && vote.status === "active") {
+          router.push(`/vote/${params.id}/success`)
+        }
+        
+        // If user has voted and showLiveStats is true, show results
+        if (voted && vote.showLiveStats) {
+          setShowingResults(true)
         }
       })
+      
+      // Check if user has required tokens
+      if (vote.requiredToken) {
+        suivote.checkTokenBalance(
+          wallet.address, 
+          vote.requiredToken, 
+          vote.requiredAmount
+        ).then(hasTokens => {
+          setUserHasRequiredTokens(hasTokens)
+        })
+      }
     } else {
       setHasUserVoted(false)
+      setShowingResults(false)
     }
-  }, [wallet.connected, wallet.address, id])
+  }, [wallet.connected, wallet.address, params.id, vote])
 
-  const handleSingleSelect = (pollId: string, optionId: string) => {
-    setSelections({
-      ...selections,
-      [pollId]: optionId,
+  // Handle option selection
+  const handleOptionSelect = (pollId, optionId, isMultiSelect) => {
+    setSelections(prev => {
+      const newSelections = { ...prev }
+      
+      if (isMultiSelect) {
+        // For multi-select polls
+        const currentSelections = newSelections[pollId] || []
+        
+        if (currentSelections.includes(optionId)) {
+          // If already selected, remove it
+          newSelections[pollId] = currentSelections.filter(id => id !== optionId)
+        } else {
+          // If not selected, add it (respecting maxSelections)
+          const poll = polls.find(p => p.id === pollId)
+          if (poll && currentSelections.length < poll.maxSelections) {
+            newSelections[pollId] = [...currentSelections, optionId]
+          }
+        }
+      } else {
+        // For single-select polls
+        newSelections[pollId] = [optionId]
+      }
+      
+      return newSelections
     })
-    setValidationError(null)
-  }
-
-  const handleMultiSelect = (pollId: string, optionId: string, maxSelections: number) => {
-    const currentSelections = (selections[pollId] as string[]) || []
-
-    if (currentSelections.includes(optionId)) {
-      setSelections({
-        ...selections,
-        [pollId]: currentSelections.filter((id) => id !== optionId),
-      })
-    } else if (currentSelections.length < maxSelections) {
-      setSelections({
-        ...selections,
-        [pollId]: [...currentSelections, optionId],
+    
+    // Clear validation error for this poll if it exists
+    if (validationErrors[pollId]) {
+      setValidationErrors(prev => {
+        const newErrors = { ...prev }
+        delete newErrors[pollId]
+        return newErrors
       })
     }
-    setValidationError(null)
   }
 
-  const isOptionSelected = (pollId: string, optionId: string) => {
-    const selection = selections[pollId]
-    if (Array.isArray(selection)) {
-      return selection.includes(optionId)
-    }
-    return selection === optionId
-  }
-
-  const validateVote = (): boolean => {
+  // Validate vote submission
+  const validateVote = () => {
     if (!vote) return false
 
-    // Check if wallet is connected
+    const newErrors = {}
+    let isValid = true
+
+    // Check if user is connected
     if (!wallet.connected) {
-      setValidationError("Please connect your wallet to vote")
-      return false
+      newErrors.wallet = "Please connect your wallet to vote"
+      isValid = false
+    }
+
+    // Check if user has required tokens
+    if (!userHasRequiredTokens && vote.requiredToken) {
+      newErrors.tokens = `You need at least ${vote.requiredAmount} ${vote.requiredToken.split("::").pop()} to vote`
+      isValid = false
+    }
+
+    // Check if vote is active
+    if (vote.status !== "active") {
+      newErrors.status = vote.status === "upcoming" ? "This vote has not started yet" : "This vote has ended"
+      isValid = false
     }
 
     // Check if all required polls have selections
-    const requiredPolls = vote.requireAllPolls ? polls : polls.filter((poll) => poll.isRequired)
-
-    for (const poll of requiredPolls) {
-      const selection = selections[poll.id]
-
-      if (poll.isMultiSelect) {
-        if (!Array.isArray(selection) || selection.length === 0) {
-          setValidationError(`Please answer the required poll: "${poll.title}"`)
-          return false
-        }
-      } else {
-        if (!selection) {
-          setValidationError(`Please answer the required poll: "${poll.title}"`)
-          return false
-        }
+    polls.forEach(poll => {
+      if (poll.isRequired && (!selections[poll.id] || selections[poll.id].length === 0)) {
+        newErrors[poll.id] = "This poll requires a response"
+        isValid = false
       }
-    }
+    })
 
-    return true
+    setValidationErrors(newErrors)
+    return isValid
   }
 
-  const handleSubmit = async () => {
-    if (!validateVote() || !vote || !id) return
+  // Handle vote submission
+  const handleSubmitVote = async () => {
+    if (!validateVote()) return
 
     try {
       setSubmitting(true)
-      setValidationError(null)
+      setTxStatus(TransactionStatus.BUILDING)
 
       // Prepare the poll indices and option selections
-      const pollIndices: number[] = []
-      const optionIndicesPerPoll: number[][] = []
+      const pollIndices = []
+      const optionIndicesPerPoll = []
 
       for (let i = 0; i < polls.length; i++) {
         const poll = polls[i]
         const selection = selections[poll.id]
 
-        if (selection) {
+        if (selection && selection.length > 0) {
           // Add the poll index (1-based index)
           pollIndices.push(i + 1)
 
-          if (Array.isArray(selection)) {
-            // For multi-select polls, convert option IDs to indices
-            const optionIndices = selection.map(optionId => {
-              // Find the index of this option
-              const optionIndex = poll.options?.findIndex(opt => opt.id === optionId)
-              // Return 1-based index
-              return optionIndex !== undefined && optionIndex >= 0 ? optionIndex + 1 : 0
-            }).filter(idx => idx > 0)
-            
-            optionIndicesPerPoll.push(optionIndices)
-          } else {
-            // For single-select polls, find the option index
-            const optionIndex = poll.options?.findIndex(opt => opt.id === selection)
-            // Push as an array with a single 1-based index
-            optionIndicesPerPoll.push(optionIndex !== undefined && optionIndex >= 0 ? [optionIndex + 1] : [])
-          }
+          // Get option indices (convert from IDs to indices)
+          const optionIndices = selection.map(optionId => {
+            // Find the index of this option
+            const optionIndex = poll.options?.findIndex(opt => opt.id === optionId)
+            // Return 1-based index
+            return optionIndex !== undefined && optionIndex >= 0 ? optionIndex + 1 : 0
+          }).filter(idx => idx > 0)
+          
+          optionIndicesPerPoll.push(optionIndices)
         }
       }
 
+      let transaction;
       // If we have only one poll to vote on, use castVoteTransaction
       if (pollIndices.length === 1) {
-        const transaction = suivote.castVoteTransaction(
-          id as string, 
+        transaction = suivote.castVoteTransaction(
+          params.id, 
           pollIndices[0], 
           optionIndicesPerPoll[0],
           vote.paymentAmount
         )
-        
-        const response = await suivote.executeTransaction(transaction)
-        console.log("Vote transaction response:", response)
       } else {
         // Use castMultipleVotesTransaction for multiple polls
-        const transaction = suivote.castMultipleVotesTransaction(
-          id as string,
+        transaction = suivote.castMultipleVotesTransaction(
+          params.id,
           pollIndices,
           optionIndicesPerPoll,
           vote.paymentAmount
         )
-        
-        const response = await suivote.executeTransaction(transaction)
-        console.log("Multiple votes transaction response:", response)
       }
-
+      
+      setTxStatus(TransactionStatus.SIGNING)
+      
+      // Execute the transaction
+      const response = await suivote.executeTransaction(transaction)
+      console.log("Vote transaction response:", response)
+      
+      // Update transaction status
+      setTxStatus(TransactionStatus.EXECUTING)
+      setTxDigest(response.digest)
+      
+      // Wait a bit to simulate confirmation
+      setTxStatus(TransactionStatus.CONFIRMING)
+      await new Promise(resolve => setTimeout(resolve, 1000))
+      
+      // Mark transaction as successful
+      setTxStatus(TransactionStatus.SUCCESS)
+      
+      // Update local state
       setSubmitted(true)
       setHasUserVoted(true)
+      
+      toast.success("Vote submitted successfully!", {
+        description: "Thank you for participating in this vote."
+      })
+      
+      // Refresh polls data to get updated results
+      if (vote.showLiveStats) {
+        setShowingResults(true)
+        // Refetch vote data to get updated results
+        fetchVoteData()
+      } else {
+        // Redirect to success page if showLiveStats is false
+        router.push(`/vote/${params.id}/success`)
+      }
     } catch (error) {
       console.error("Error submitting vote:", error)
-      setValidationError(error instanceof Error ? error.message : "Failed to submit vote")
+      setTxStatus(TransactionStatus.ERROR)
+      
+      toast.error("Error submitting vote", {
+        description: error instanceof Error ? error.message : "Failed to submit vote"
+      })
+      
+      setValidationErrors({
+        ...validationErrors,
+        submit: error instanceof Error ? error.message : "Failed to submit vote"
+      })
     } finally {
       setSubmitting(false)
     }
   }
 
+  // Helper functions for UI
+  
+  // Format date
+  const formatDate = (timestamp) => {
+    try {
+      return format(new Date(timestamp), "PPP")
+    } catch (e) {
+      console.error("Error formatting date:", e)
+      return "Date unavailable" 
+    }
+  }
+
+  // Format time
+  const formatTime = (timestamp) => {
+    try {
+      return format(new Date(timestamp), "p")
+    } catch (e) {
+      console.error("Error formatting time:", e)
+      return "Time unavailable"
+    }
+  }
+
+  // Calculate time remaining
+  const getTimeRemaining = () => {
+    if (!vote) return ""
+
+    const now = Date.now()
+    const endDate = vote.endTimestamp
+
+    if (now > endDate) return "Ended"
+
+    const remainingMs = endDate - now
+    const days = Math.floor(remainingMs / (1000 * 60 * 60 * 24))
+    const hours = Math.floor((remainingMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60))
+    const minutes = Math.floor((remainingMs % (1000 * 60 * 60)) / (1000 * 60))
+
+    if (days > 0) {
+      return `${days}d ${hours}h remaining`
+    } else if (hours > 0) {
+      return `${hours}h ${minutes}m remaining`
+    } else {
+      return `${minutes}m remaining`
+    }
+  }
+
+  // Get vote status badge
+  const getStatusBadge = () => {
+    if (!vote) return null
+
+    switch (vote.status) {
+      case "active":
+        return <Badge className="bg-sui-500">Active</Badge>
+      case "upcoming":
+        return <Badge className="bg-blue-500">Upcoming</Badge>
+      case "ended":
+      case "closed":
+        return <Badge className="bg-gray-500">Ended</Badge>
+      default:
+        return null
+    }
+  }
+
+  // Truncate address for display
+  const truncateAddress = (address) => {
+    if (!address) return ""
+    return `${address.substring(0, 6)}...${address.substring(address.length - 4)}`
+  }
+
+  // Get transaction explorer URL
+  const getTransactionExplorerUrl = () => {
+    if (!txDigest) return "#"
+
+    const network = SUI_CONFIG.NETWORK.toLowerCase()
+    if (network === "mainnet") {
+      return `https://explorer.sui.io/txblock/${txDigest}`
+    } else {
+      return `https://explorer.sui.io/txblock/${txDigest}?network=${network}`
+    }
+  }
+
+  // Handle share dialog
   const handleShare = () => {
     setShareDialogOpen(true)
   }
 
+  // Loading state
   if (loading) {
     return (
-      <div className="container max-w-3xl py-10 px-4 md:px-6">
-        <div className="flex items-center justify-center h-64">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
+      <div className="container max-w-4xl py-8 px-4">
+        <div className="flex flex-col items-center justify-center min-h-[50vh] gap-4">
+          <Loader2 className="h-12 w-12 animate-spin text-sui-500" />
+          <p className="text-lg font-medium">Loading vote data...</p>
         </div>
       </div>
     )
   }
 
-  if (!vote) {
+  // Error state
+  if (validationErrors.general || !vote) {
     return (
-      <div className="container max-w-3xl py-10 px-4 md:px-6">
-        <Alert variant="destructive">
+      <div className="container max-w-4xl py-8 px-4">
+        <Alert variant="destructive" className="mb-6">
           <AlertCircle className="h-4 w-4" />
-          <AlertDescription>Vote not found or failed to load</AlertDescription>
+          <AlertTitle>Error</AlertTitle>
+          <AlertDescription>{validationErrors.general || "Failed to load vote data. Please try again later."}</AlertDescription>
         </Alert>
+
+        <Button asChild variant="outline">
+          <Link href="/dashboard">
+            <ArrowLeft className="mr-2 h-4 w-4" />
+            Back to Dashboard
+          </Link>
+        </Button>
       </div>
     )
   }
 
-  return (
-    <div className="container max-w-3xl py-10 px-4 md:px-6">
-      <div className="mb-6 flex justify-between items-center">
-        <h1 className="text-2xl font-bold">{vote.title}</h1>
-        <WalletConnectButton />
-      </div>
+  // Upcoming vote state
+  if (vote && vote.status === "upcoming") {
+    return (
+      <div className="container max-w-4xl py-8 px-4">
+        {/* Back button */}
+        <div className="mb-6">
+          <Button asChild variant="outline" size="sm">
+            <Link href="/dashboard">
+              <ArrowLeft className="mr-2 h-4 w-4" />
+              Back to Dashboard
+            </Link>
+          </Button>
+        </div>
 
-      <Card className="border-2 shadow-lg mb-8">
-        <CardHeader>
-          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+        {/* Vote header */}
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.3 }}
+          className="mb-6"
+        >
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
             <div>
-              <CardDescription className="mt-1">{vote.description}</CardDescription>
+              <h1 className="text-3xl font-bold tracking-tight">{vote.title}</h1>
+              <div className="flex items-center gap-2 mt-2">
+                <Badge className="bg-blue-500">Upcoming</Badge>
+                <Badge variant="outline" className="gap-1">
+                  <Calendar className="h-3 w-3" />
+                  Starts {formatDate(vote.startTimestamp)}
+                </Badge>
+              </div>
             </div>
-            <Badge variant={vote.status === "active" ? "success" : "secondary"} className="text-sm px-3 py-1">
-              {vote.status === "active" ? "Active" : vote.status === "upcoming" ? "Upcoming" : "Closed"}
-            </Badge>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <div className="flex flex-col sm:flex-row justify-between gap-4 text-sm">
+
             <div className="flex items-center gap-2">
-              <Users className="h-4 w-4 text-muted-foreground" />
-              <span>{vote.totalVotes} votes</span>
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button variant="outline" size="icon" onClick={handleShare}>
+                      <Share2 className="h-4 w-4" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Share this vote</TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            </div>
+          </div>
+
+          {vote.description && <p className="text-muted-foreground">{vote.description}</p>}
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+            <div className="flex items-center gap-2">
+              <Calendar className="h-4 w-4 text-muted-foreground" />
+              <span className="text-sm">
+                {formatDate(vote.startTimestamp)} - {formatDate(vote.endTimestamp)}
+              </span>
             </div>
             <div className="flex items-center gap-2">
               <Clock className="h-4 w-4 text-muted-foreground" />
-              <span>Ends: {new Date(vote.endTimestamp).toLocaleDateString()}</span>
+              <span className="text-sm">
+                {formatTime(vote.startTimestamp)} - {formatTime(vote.endTimestamp)}
+              </span>
             </div>
           </div>
+        </motion.div>
 
-          {vote.paymentAmount > 0 && (
-            <div className="bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-lg p-4 mt-4">
-              <p className="text-sm text-amber-800 dark:text-amber-300">
-                <span className="font-medium">Payment Required:</span> {vote.paymentAmount}
-                <span className="inline-flex items-center ml-1">
-                  <img src="/images/sui-logo.png" alt="SUI" className="h-4 w-4 mr-1" />
-                  SUI
-                </span>{" "}
-                per vote
-              </p>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+        {/* Upcoming vote alert */}
+        <Alert className="mb-6 bg-blue-50 dark:bg-blue-950 border-blue-200 dark:border-blue-800">
+          <Calendar className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+          <AlertTitle>This vote has not started yet</AlertTitle>
+          <AlertDescription>
+            This vote will be available for participation starting on {formatDate(vote.startTimestamp)} at{" "}
+            {formatTime(vote.startTimestamp)}.
+          </AlertDescription>
+        </Alert>
 
-      <AnimatePresence mode="wait">
-        {validationError && (
-          <motion.div
-            initial={{ opacity: 0, y: -10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -10 }}
-            className="mb-4"
-          >
-            <Alert variant="destructive">
-              <AlertCircle className="h-4 w-4" />
-              <AlertDescription>{validationError}</AlertDescription>
-            </Alert>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {submitted || hasUserVoted ? (
-        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
-          <Card className="border-2 shadow-lg mb-8 bg-green-50 dark:bg-green-900/20">
-            <CardContent className="pt-6">
-              <div className="flex flex-col items-center justify-center py-6 text-center">
-                <div className="rounded-full bg-green-100 dark:bg-green-900/30 p-3 mb-4">
-                  <CheckCircle className="h-8 w-8 text-green-600 dark:text-green-400" />
+        {/* Creator info card */}
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.3, delay: 0.15 }}
+          className="mb-6"
+        >
+          <Card>
+            <CardContent className="p-4">
+              <div className="flex items-center gap-3">
+                <div className="h-8 w-8 rounded-full bg-sui-100 flex items-center justify-center">
+                  <Users className="h-4 w-4 text-sui-500" />
                 </div>
-                <h3 className="text-xl font-semibold mb-2">Vote Submitted Successfully!</h3>
-                <p className="text-muted-foreground mb-6">Thank you for participating in this vote.</p>
-
-                <div className="flex flex-col sm:flex-row gap-3">
-                  <Button variant="outline" onClick={handleShare}>
-                    <Share2 className="mr-2 h-4 w-4" />
-                    Share this vote
-                  </Button>
+                <div>
+                  <p className="text-sm font-medium">Created by</p>
+                  <p className="text-xs text-muted-foreground">
+                    {vote.creatorName || truncateAddress(vote.creator)}
+                  </p>
                 </div>
               </div>
             </CardContent>
           </Card>
         </motion.div>
-      ) : (
-        <div className="space-y-8">
+
+        {/* Requirements card */}
+        {(vote.requiredToken || vote.paymentAmount > 0) && (
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.3, delay: 0.1 }}
+            className="mb-6"
+          >
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-lg">Voting Requirements</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {vote.requiredToken && (
+                    <div className="flex items-center gap-3">
+                      <div className="h-8 w-8 rounded-full bg-sui-100 flex items-center justify-center">
+                        <Wallet className="h-4 w-4 text-sui-500" />
+                      </div>
+                      <div>
+                        <p className="text-sm font-medium">Token Requirement</p>
+                        <p className="text-xs text-muted-foreground">
+                          Minimum {vote.requiredAmount} {vote.requiredToken.split("::").pop()}
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {vote.paymentAmount > 0 && (
+                    <div className="flex items-center gap-3">
+                      <div className="h-8 w-8 rounded-full bg-sui-100 flex items-center justify-center">
+                        <Wallet className="h-4 w-4 text-sui-500" />
+                      </div>
+                      <div>
+                        <p className="text-sm font-medium">Payment Required</p>
+                        <p className="text-xs text-muted-foreground">{vote.paymentAmount} SUI per vote</p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          </motion.div>
+        )}
+
+        {/* Polls preview */}
+        <div className="space-y-6">
           {polls.map((poll, index) => (
             <motion.div
               key={poll.id}
-              initial={{ opacity: 0, y: 20 }}
+              initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.3, delay: index * 0.1 }}
+              transition={{ duration: 0.3, delay: 0.2 + index * 0.1 }}
             >
-              <Card className="border shadow-sm">
-                <CardHeader>
-                  <div className="flex items-center justify-between">
-                    <CardTitle className="text-xl">
-                      {index + 1}. {poll.title}
-                      {poll.isRequired && <span className="ml-2 text-sm text-red-500">*</span>}
-                    </CardTitle>
-                    {!vote.requireAllPolls && poll.isRequired && (
-                      <Badge variant="outline" className="text-red-500 border-red-200">
+              <Card>
+                <CardHeader className="pb-2">
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <CardTitle className="text-xl">{poll.title}</CardTitle>
+                      {poll.description && <CardDescription className="mt-1">{poll.description}</CardDescription>}
+                    </div>
+                    {poll.isRequired && (
+                      <Badge variant="outline" className="text-xs">
                         Required
                       </Badge>
                     )}
                   </div>
-                  {poll.description && <CardDescription>{poll.description}</CardDescription>}
                   {poll.isMultiSelect && (
                     <p className="text-sm text-muted-foreground mt-1">
-                      Select up to {poll.maxSelections || (poll.options?.length || 1)} option
-                      {(poll.maxSelections || (poll.options?.length || 1)) !== 1 ? "s" : ""}
+                      Select up to {poll.maxSelections} option{poll.maxSelections !== 1 ? "s" : ""}
                     </p>
                   )}
                 </CardHeader>
+
                 <CardContent>
-                  {poll.isMultiSelect ? (
-                    <div className="space-y-4">
-                      {poll.options?.map((option) => (
-                        <div
-                          key={option.id}
-                          className="flex items-start space-x-3 p-3 rounded-md hover:bg-muted/50 border border-transparent hover:border-border"
-                        >
-                          <Checkbox
-                            id={option.id}
-                            checked={isOptionSelected(poll.id, option.id)}
-                            onCheckedChange={() =>
-                              handleMultiSelect(poll.id, option.id, poll.maxSelections || (poll.options?.length || 1))
-                            }
-                            disabled={
-                              (selections[poll.id] as string[])?.length >=
-                                (poll.maxSelections || (poll.options?.length || 1)) && 
-                                !isOptionSelected(poll.id, option.id)
-                            }
-                            className="mt-1"
-                          />
-                          <div className="space-y-2 w-full">
-                            <Label htmlFor={option.id} className="text-base cursor-pointer">
-                              {option.text}
-                            </Label>
-                            {option.mediaUrl && (
-                              <div className="rounded-md overflow-hidden mt-2">
-                                <img
-                                  src={option.mediaUrl || "/placeholder.svg"}
-                                  alt={`Media for ${option.text}`}
-                                  className="w-full h-auto max-h-[200px] object-cover rounded-md"
-                                />
-                              </div>
-                            )}
-                          </div>
+                  <div className="space-y-4 opacity-70">
+                    {poll.options.map((option) => (
+                      <div key={option.id} className="flex items-center gap-3">
+                        <div className="h-5 w-5 rounded-full border border-muted-foreground flex items-center justify-center">
+                          {poll.isMultiSelect ? (
+                            <div className="h-3 w-3 rounded-sm border border-muted-foreground" />
+                          ) : (
+                            <div className="h-3 w-3 rounded-full border border-muted-foreground" />
+                          )}
                         </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <RadioGroup value={selections[poll.id] as string} className="space-y-4">
-                      {poll.options?.map((option) => (
-                        <div
-                          key={option.id}
-                          className="flex items-start space-x-3 p-3 rounded-md hover:bg-muted/50 border border-transparent hover:border-border"
-                        >
-                          <RadioGroupItem
-                            value={option.id}
-                            id={option.id}
-                            onClick={() => handleSingleSelect(poll.id, option.id)}
-                            className="mt-1"
-                          />
-                          <div className="space-y-2 w-full">
-                            <Label htmlFor={option.id} className="text-base cursor-pointer">
-                              {option.text}
-                            </Label>
-                            {option.mediaUrl && (
-                              <div className="rounded-md overflow-hidden mt-2">
-                                <img
-                                  src={option.mediaUrl || "/placeholder.svg"}
-                                  alt={`Media for ${option.text}`}
-                                  className="w-full h-auto max-h-[200px] object-cover rounded-md"
-                                />
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      ))}
-                    </RadioGroup>
-                  )}
+                        <div className="text-base">{option.text}</div>
+                      </div>
+                    ))}
+                  </div>
                 </CardContent>
-                {index < polls.length - 1 && (
-                  <CardFooter className="border-t px-6 py-4">
-                    <Separator />
-                  </CardFooter>
-                )}
               </Card>
             </motion.div>
           ))}
         </div>
+
+        {/* Vote metadata */}
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.3, delay: 0.5 }}
+          className="mt-8"
+        >
+          <Separator className="my-4" />
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 text-sm text-muted-foreground">
+            <div className="flex items-center gap-2">
+              <span>Created by:</span>
+              <a
+                href={`https://explorer.sui.io/address/${vote.creator}?network=${SUI_CONFIG.NETWORK.toLowerCase()}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-1 hover:text-sui-500 transition-colors"
+              >
+                {vote.creatorName || truncateAddress(vote.creator)}
+                <ExternalLink className="h-3 w-3" />
+              </a>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <span>Vote ID:</span>
+              <a
+                href={`https://explorer.sui.io/object/${params.id}?network=${SUI_CONFIG.NETWORK.toLowerCase()}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-1 hover:text-sui-500 transition-colors"
+              >
+                {truncateAddress(params.id)}
+                <ExternalLink className="h-3 w-3" />
+              </a>
+            </div>
+          </div>
+        </motion.div>
+
+        {/* Share dialog */}
+        <ShareDialog
+          open={shareDialogOpen}
+          onOpenChange={setShareDialogOpen}
+          title={vote.title}
+          url={typeof window !== "undefined" ? window.location.href : ""}
+        />
+      </div>
+    )
+  }
+
+  return (
+    <div className="container max-w-4xl py-8 px-4">
+      {/* Back button */}
+      <div className="mb-6">
+        <Button asChild variant="outline" size="sm">
+          <Link href="/dashboard">
+            <ArrowLeft className="mr-2 h-4 w-4" />
+            Back to Dashboard
+          </Link>
+        </Button>
+      </div>
+
+      {/* Vote header */}
+      <motion.div
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.3 }}
+        className="mb-6"
+      >
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
+          <div>
+            <h1 className="text-3xl font-bold tracking-tight">{vote.title}</h1>
+            <div className="flex items-center gap-2 mt-2">
+              {getStatusBadge()}
+              <Badge variant="outline" className="gap-1">
+                <Users className="h-3 w-3" />
+                {vote.totalVotes} votes
+              </Badge>
+              <Badge variant="outline" className="gap-1">
+                <Clock className="h-3 w-3" />
+                {getTimeRemaining()}
+              </Badge>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button variant="outline" size="icon" onClick={handleShare}>
+                    <Share2 className="h-4 w-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Share this vote</TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          </div>
+        </div>
+
+        {vote.description && <p className="text-muted-foreground">{vote.description}</p>}
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+          <div className="flex items-center gap-2">
+            <Calendar className="h-4 w-4 text-muted-foreground" />
+            <span className="text-sm">
+              {formatDate(vote.startTimestamp)} - {formatDate(vote.endTimestamp)}
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <Clock className="h-4 w-4 text-muted-foreground" />
+            <span className="text-sm">
+              {formatTime(vote.startTimestamp)} - {formatTime(vote.endTimestamp)}
+            </span>
+          </div>
+        </div>
+      </motion.div>
+
+      {/* Requirements card */}
+      {(vote.requiredToken || vote.paymentAmount > 0) && (
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.3, delay: 0.1 }}
+          className="mb-6"
+        >
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-lg">Voting Requirements</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {vote.requiredToken && (
+                  <div className="flex items-center gap-3">
+                    <div className="h-8 w-8 rounded-full bg-sui-100 flex items-center justify-center">
+                      <Wallet className="h-4 w-4 text-sui-500" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium">Token Requirement</p>
+                      <p className="text-xs text-muted-foreground">
+                        Minimum {vote.requiredAmount} {vote.requiredToken.split("::").pop()}
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {vote.paymentAmount > 0 && (
+                  <div className="flex items-center gap-3">
+                    <div className="h-8 w-8 rounded-full bg-sui-100 flex items-center justify-center">
+                      <Wallet className="h-4 w-4 text-sui-500" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium">Payment Required</p>
+                      <p className="text-xs text-muted-foreground">{vote.paymentAmount} SUI per vote</p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        </motion.div>
       )}
 
-      {!submitted && !hasUserVoted && (
+      {/* Creator info card */}
+      <motion.div
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.3, delay: 0.15 }}
+        className="mb-6"
+      >
+        <Card>
+          <CardContent className="p-4">
+            <div className="flex items-center gap-3">
+              <div className="h-8 w-8 rounded-full bg-sui-100 flex items-center justify-center">
+                <Users className="h-4 w-4 text-sui-500" />
+              </div>
+              <div>
+                <p className="text-sm font-medium">Created by</p>
+                <p className="text-xs text-muted-foreground">
+                  {vote.creatorName || truncateAddress(vote.creator)}
+                </p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </motion.div>
+
+      {/* Wallet connection alert */}
+      {!wallet.connected && vote.status === "active" && (
         <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.5 }}
-          className="mt-8 flex justify-end"
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.3, delay: 0.2 }}
+          className="mb-6"
         >
-          <Button 
-            size="lg" 
-            className="gap-2" 
-            onClick={handleSubmit} 
-            disabled={submitting || !wallet.connected}
+          <Alert>
+            <Wallet className="h-4 w-4" />
+            <AlertTitle>Wallet connection required</AlertTitle>
+            <AlertDescription className="flex flex-col sm:flex-row sm:items-center gap-4">
+              <span>Connect your wallet to participate in this vote.</span>
+              <WalletConnectButton />
+            </AlertDescription>
+          </Alert>
+        </motion.div>
+      )}
+
+      {/* Token requirement alert */}
+      {wallet.connected && !userHasRequiredTokens && vote.requiredToken && vote.status === "active" && (
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.3, delay: 0.2 }}
+          className="mb-6"
+        >
+          <Alert variant="destructive">
+            <AlertCircle className="h-4 w-4" />
+            <AlertTitle>Insufficient token balance</AlertTitle>
+            <AlertDescription>
+              You need at least {vote.requiredAmount} {vote.requiredToken.split("::").pop()} to participate in
+              this vote.
+            </AlertDescription>
+          </Alert>
+        </motion.div>
+      )}
+
+      {/* Already voted alert */}
+      {hasUserVoted && (
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.3, delay: 0.2 }}
+          className="mb-6"
+        >
+          <Alert className="bg-green-50 dark:bg-green-950 border-green-200 dark:border-green-800">
+            <CheckCircle2 className="h-4 w-4 text-green-600 dark:text-green-400" />
+            <AlertTitle>You've already voted</AlertTitle>
+            <AlertDescription>
+              Thank you for participating in this vote. 
+              {vote.showLiveStats ? " You can see the live results below." : ""}
+            </AlertDescription>
+          </Alert>
+        </motion.div>
+      )}
+
+      {/* Validation error alert */}
+      {validationErrors.submit && (
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.3, delay: 0.2 }}
+          className="mb-6"
+        >
+          <Alert variant="destructive">
+            <AlertCircle className="h-4 w-4" />
+            <AlertTitle>Error submitting vote</AlertTitle>
+            <AlertDescription>{validationErrors.submit}</AlertDescription>
+          </Alert>
+        </motion.div>
+      )}
+
+      {/* Transaction Status Section */}
+      {txStatus !== TransactionStatus.IDLE && txStatus !== TransactionStatus.SUCCESS && (
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.3, delay: 0.2 }}
+          className="mb-6"
+        >
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg">
+                {txStatus === TransactionStatus.ERROR ? "Transaction Failed" : "Processing Transaction"}
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <Progress 
+                value={
+                  txStatus === TransactionStatus.BUILDING ? 20 :
+                  txStatus === TransactionStatus.SIGNING ? 40 :
+                  txStatus === TransactionStatus.EXECUTING ? 60 :
+                  txStatus === TransactionStatus.CONFIRMING ? 80 : 0
+                }  
+                className="h-2"
+              />
+              
+              <div className="space-y-2">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="flex items-center gap-2">
+                    {txStatus === TransactionStatus.BUILDING ? 
+                      <Loader2 className="h-4 w-4 animate-spin" /> : 
+                      txStatus > TransactionStatus.BUILDING ? 
+                        <CheckCircle2 className="h-4 w-4 text-green-500" /> : 
+                        <div className="h-4 w-4" />
+                    }
+                    Building Transaction
+                  </span>
+                </div>
+                
+                <div className="flex items-center justify-between text-sm">
+                  <span className="flex items-center gap-2">
+                    {txStatus === TransactionStatus.SIGNING ? 
+                      <Loader2 className="h-4 w-4 animate-spin" /> : 
+                      txStatus > TransactionStatus.SIGNING ? 
+                        <CheckCircle2 className="h-4 w-4 text-green-500" /> : 
+                        <div className="h-4 w-4" />
+                    }
+                    Signing Transaction
+                  </span>
+                </div>
+                
+                <div className="flex items-center justify-between text-sm">
+                  <span className="flex items-center gap-2">
+                    {txStatus === TransactionStatus.EXECUTING ? 
+                      <Loader2 className="h-4 w-4 animate-spin" /> : 
+                      txStatus > TransactionStatus.EXECUTING ? 
+                        <CheckCircle2 className="h-4 w-4 text-green-500" /> : 
+                        <div className="h-4 w-4" />
+                    }
+                    Executing Transaction
+                  </span>
+                </div>
+                
+                <div className="flex items-center justify-between text-sm">
+                  <span className="flex items-center gap-2">
+                    {txStatus === TransactionStatus.CONFIRMING ? 
+                      <Loader2 className="h-4 w-4 animate-spin" /> : 
+                      txStatus > TransactionStatus.CONFIRMING ? 
+                        <CheckCircle2 className="h-4 w-4 text-green-500" /> : 
+                        <div className="h-4 w-4" />
+                    }
+                    Confirming Transaction
+                  </span>
+                </div>
+              </div>
+              
+              {txDigest && (
+                <div className="text-sm flex items-center gap-2 mt-2">
+                  <span className="font-medium">Transaction ID:</span>
+                  <code className="bg-muted p-1 rounded text-xs">{truncateAddress(txDigest)}</code>
+                  <a 
+                    href={getTransactionExplorerUrl()} 
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-sui-500 hover:underline flex items-center gap-1"
+                  >
+                    View <ExternalLink className="h-3 w-3" />
+                  </a>
+                </div>
+              )}
+              
+              {txStatus === TransactionStatus.ERROR && (
+                <Alert variant="destructive" className="mt-2">
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertDescription>{validationErrors.submit || "Transaction failed. Please try again."}</AlertDescription>
+                </Alert>
+              )}
+            </CardContent>
+          </Card>
+        </motion.div>
+      )}
+
+      {/* Polls */}
+      <div className="space-y-6">
+        {polls.map((poll, index) => (
+          <motion.div
+            key={poll.id}
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.3, delay: 0.2 + index * 0.1 }}
+          >
+            <Card className={cn(validationErrors[poll.id] && "border-red-500")}>
+              <CardHeader className="pb-2">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <CardTitle className="text-xl">{poll.title}</CardTitle>
+                    {poll.description && <CardDescription className="mt-1">{poll.description}</CardDescription>}
+                  </div>
+                  {poll.isRequired && (
+                    <Badge variant="outline" className="text-xs">
+                      Required
+                    </Badge>
+                  )}
+                </div>
+                {poll.isMultiSelect && (
+                  <p className="text-sm text-muted-foreground mt-1">
+                    Select up to {poll.maxSelections} option{poll.maxSelections !== 1 ? "s" : ""}
+                  </p>
+                )}
+              </CardHeader>
+
+              <CardContent>
+                {validationErrors[poll.id] && (
+                  <Alert variant="destructive" className="mb-4">
+                    <AlertCircle className="h-4 w-4" />
+                    <AlertDescription>{validationErrors[poll.id]}</AlertDescription>
+                  </Alert>
+                )}
+
+                {poll.isMultiSelect ? (
+                  // Multi-select poll (checkboxes)
+                  <div className="space-y-4">
+                    {poll.options?.map((option) => {
+                      const isSelected = (selections[poll.id] || []).includes(option.id)
+                      const isDisabled =
+                        hasUserVoted ||
+                        vote.status !== "active" ||
+                        (!isSelected && (selections[poll.id] || []).length >= poll.maxSelections)
+
+                      return (
+                        <div key={option.id} className="space-y-2">
+                          <div className="flex items-start space-x-2">
+                            <Checkbox
+                              id={option.id}
+                              checked={isSelected}
+                              onCheckedChange={() => handleOptionSelect(poll.id, option.id, true)}
+                              disabled={isDisabled || !wallet.connected || !userHasRequiredTokens}
+                              className="mt-1"
+                            />
+                            <div className="grid gap-1.5 leading-none w-full">
+                              <Label
+                                htmlFor={option.id}
+                                className={cn("text-base font-normal", isDisabled && "opacity-70")}
+                              >
+                                {option.text}
+                              </Label>
+
+                              {/* Show results if user has voted or vote has ended or showLiveStats is true */}
+                              {(showingResults || vote.status === "ended" || vote.status === "closed" || vote.showLiveStats) && (
+                                <div className="mt-2 space-y-1">
+                                  <div className="flex items-center justify-between text-sm">
+                                    <span className="text-muted-foreground">{option.votes} votes</span>
+                                    <span className="font-medium">{option.percentage.toFixed(1)}%</span>
+                                  </div>
+                                  <Progress value={option.percentage} className="h-2 bg-sui-100">
+                                    <div className="h-full bg-sui-500" style={{ width: `${option.percentage}%` }} />
+                                  </Progress>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+
+                          {option.mediaUrl && (
+                            <div className="ml-6 mt-2">
+                              <img
+                                src={option.mediaUrl || "/placeholder.svg"}
+                                alt={option.text}
+                                className="rounded-md max-h-48 object-cover"
+                              />
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                ) : (
+                  // Single-select poll (radio buttons)
+                  <RadioGroup
+                    value={(selections[poll.id] || [])[0] || ""}
+                    onValueChange={(value) => handleOptionSelect(poll.id, value, false)}
+                    className="space-y-4"
+                    disabled={hasUserVoted || vote.status !== "active" || !wallet.connected || !userHasRequiredTokens}
+                  >
+                    {poll.options?.map((option) => (
+                      <div key={option.id} className="space-y-2">
+                        <div className="flex items-start space-x-2">
+                          <RadioGroupItem
+                            value={option.id}
+                            id={option.id}
+                            disabled={hasUserVoted || vote.status !== "active" || !wallet.connected || !userHasRequiredTokens}
+                            className="mt-1"
+                          />
+                          <div className="grid gap-1.5 leading-none w-full">
+                            <Label
+                              htmlFor={option.id}
+                              className={cn(
+                                "text-base font-normal",
+                                (hasUserVoted || vote.status !== "active" || !wallet.connected || !userHasRequiredTokens) &&
+                                  "opacity-70"
+                              )}
+                            >
+                              {option.text}
+                            </Label>
+
+                            {/* Show results if user has voted or vote has ended or showLiveStats is true */}
+                            {(showingResults || vote.status === "ended" || vote.status === "closed" || vote.showLiveStats) && (
+                              <div className="mt-2 space-y-1">
+                                <div className="flex items-center justify-between text-sm">
+                                  <span className="text-muted-foreground">{option.votes} votes</span>
+                                  <span className="font-medium">{option.percentage.toFixed(1)}%</span>
+                                </div>
+                                <Progress value={option.percentage} className="h-2 bg-sui-100">
+                                  <div className="h-full bg-sui-500" style={{ width: `${option.percentage}%` }} />
+                                </Progress>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        {option.mediaUrl && (
+                          <div className="ml-6 mt-2">
+                            <img
+                              src={option.mediaUrl || "/placeholder.svg"}
+                              alt={option.text}
+                              className="rounded-md max-h-48 object-cover"
+                            />
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </RadioGroup>
+                )}
+              </CardContent>
+            </Card>
+          </motion.div>
+        ))}
+      </div>
+
+      {/* Vote actions */}
+      {vote.status === "active" && !hasUserVoted && !showingResults && (
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.3, delay: 0.4 }}
+          className="mt-8 flex flex-col sm:flex-row items-center justify-between gap-4 p-4 border rounded-lg bg-muted/30"
+        >
+          <div className="flex items-center gap-2">
+            <Info className="h-5 w-5 text-muted-foreground" />
+            <p className="text-sm text-muted-foreground">
+              {vote.requireAllPolls
+                ? "All polls must be answered to submit your vote."
+                : "Required polls must be answered to submit your vote."}
+            </p>
+          </div>
+
+          <Button
+            onClick={handleSubmitVote}
+            disabled={submitting || !wallet.connected || !userHasRequiredTokens || txStatus !== TransactionStatus.IDLE}
+            className="w-full sm:w-auto gap-2 bg-sui-500 hover:bg-sui-600"
           >
             {submitting ? (
               <>
-                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                <Loader2 className="h-4 w-4 animate-spin" />
                 Submitting...
-              </>
-            ) : !wallet.connected ? (
-              <>
-                Connect Wallet to Vote
-                <ArrowRight className="h-4 w-4" />
               </>
             ) : (
               <>
+                <CheckCircle2 className="h-4 w-4" />
                 Submit Vote
-                <ArrowRight className="h-4 w-4" />
               </>
             )}
           </Button>
         </motion.div>
       )}
 
+      {/* Vote metadata */}
+      <motion.div
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.3, delay: 0.5 }}
+        className="mt-8"
+      >
+        <Separator className="my-4" />
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 text-sm text-muted-foreground">
+          <div className="flex items-center gap-2">
+            <span>Created by:</span>
+            <a
+              href={`https://explorer.sui.io/address/${vote.creator}?network=${SUI_CONFIG.NETWORK.toLowerCase()}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-1 hover:text-sui-500 transition-colors"
+            >
+              {vote.creatorName || truncateAddress(vote.creator)}
+              <ExternalLink className="h-3 w-3" />
+            </a>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span>Vote ID:</span>
+            <a
+              href={`https://explorer.sui.io/object/${params.id}?network=${SUI_CONFIG.NETWORK.toLowerCase()}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-1 hover:text-sui-500 transition-colors"
+            >
+              {truncateAddress(params.id)}
+              <ExternalLink className="h-3 w-3" />
+            </a>
+          </div>
+        </div>
+      </motion.div>
+
+      {/* Share dialog */}
       <ShareDialog
         open={shareDialogOpen}
         onOpenChange={setShareDialogOpen}
         title={vote.title}
-        url={`${typeof window !== "undefined" ? window.location.origin : ""}/vote/${id}`}
+        url={typeof window !== "undefined" ? window.location.href : ""}
       />
     </div>
   )
