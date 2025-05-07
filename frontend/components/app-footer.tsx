@@ -20,7 +20,7 @@ export function AppFooter() {
 
         <div className="flex items-center gap-4">
           <Link
-            href="https://github.com/yourusername/suivote"
+            href="https://github.com/abdxl-cloud/suiVote"
             target="_blank"
             rel="noopener noreferrer"
             className="text-muted-foreground hover:text-foreground transition-colors"
