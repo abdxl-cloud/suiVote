@@ -16,6 +16,9 @@ module contracts::voting {
     use std::option::{Self, Option};
     use std::vector;
 
+    // ===== Constants =====
+    const SUI_DECIMALS: u64 = 1_000_000_000; // 1 SUI = 10^9 MIST
+
     // ===== Error codes =====
     const EInvalidTimestamp: u64 = 0;
     const ENotAuthorized: u64 = 1;
@@ -163,7 +166,7 @@ module contracts::voting {
         description: String,
         start_timestamp: u64,
         end_timestamp: u64,
-        payment_amount: u64,
+        payment_amount: u64,         // Payment amount in SUI (will be converted to MIST)
         require_all_polls: bool,
         token_requirement: vector<u8>,     // New: Optional token identifier as bytes
         token_amount: u64,                 // New: Optional token amount
@@ -189,6 +192,13 @@ module contracts::voting {
             option::none()
         };
 
+        // Convert payment_amount from SUI to MIST for internal storage
+        let payment_in_mist = if (payment_amount > 0) {
+            payment_amount * SUI_DECIMALS
+        } else {
+            0
+        };
+
         // Create the vote object
         let vote = Vote {
             id: object::new(ctx),
@@ -197,7 +207,7 @@ module contracts::voting {
             description,
             start_timestamp,
             end_timestamp,
-            payment_amount,
+            payment_amount: payment_in_mist,  // Store amount in MIST
             require_all_polls,
             polls_count: 0,
             total_votes: 0,
@@ -393,7 +403,7 @@ module contracts::voting {
         description: String,
         start_timestamp: u64,
         end_timestamp: u64,
-        payment_amount: u64,
+        payment_amount: u64,         // Payment amount in SUI (will be converted to MIST)
         require_all_polls: bool,
         token_requirement: vector<u8>,     // New: Optional token identifier as bytes
         token_amount: u64,                 // New: Optional token amount
@@ -436,6 +446,13 @@ module contracts::voting {
             option::none()
         };
 
+        // Convert payment_amount from SUI to MIST for internal storage
+        let payment_in_mist = if (payment_amount > 0) {
+            payment_amount * SUI_DECIMALS
+        } else {
+            0
+        };
+
         // Create the vote object
         let mut vote = Vote {
             id: object::new(ctx),
@@ -444,7 +461,7 @@ module contracts::voting {
             description,
             start_timestamp,
             end_timestamp,
-            payment_amount,
+            payment_amount: payment_in_mist,  // Store amount in MIST
             require_all_polls,
             polls_count: 0,
             total_votes: 0,
@@ -607,16 +624,27 @@ module contracts::voting {
             let payment_value = coin::value(&payment);
             assert!(payment_value >= vote.payment_amount, EInsufficientPayment);
             
+            // Improved payment handling to avoid precision issues
             if (payment_value == vote.payment_amount) {
                 // Exact payment - send the whole coin to vote creator
                 transfer::public_transfer(payment, vote.creator);
             } else {
-                // Split the payment
-                let paid = coin::split(&mut payment, vote.payment_amount, ctx);
+                // Split the payment - using a temporary variable to ensure proper handling
+                let paid_amount = vote.payment_amount;
+                let paid = coin::split(&mut payment, paid_amount, ctx);
+                
                 // Send exact amount to vote creator
                 transfer::public_transfer(paid, vote.creator);
-                // Return any excess to sender
-                transfer::public_transfer(payment, sender);
+                
+                // Check if there's any remaining value in the payment coin
+                let remaining = coin::value(&payment);
+                if (remaining > 0) {
+                    // Return any excess to sender
+                    transfer::public_transfer(payment, sender);
+                } else {
+                    // Destroy the zero-value coin
+                    coin::destroy_zero(payment);
+                }
             }
         } else {
             // No payment required, return the whole coin
@@ -703,16 +731,27 @@ module contracts::voting {
             let payment_value = coin::value(&payment);
             assert!(payment_value >= vote.payment_amount, EInsufficientPayment);
             
+            // Improved payment handling to avoid precision issues
             if (payment_value == vote.payment_amount) {
                 // Exact payment - send the whole coin to vote creator
                 transfer::public_transfer(payment, vote.creator);
             } else {
-                // Split the payment
-                let paid = coin::split(&mut payment, vote.payment_amount, ctx);
+                // Split the payment - using a temporary variable to ensure proper handling
+                let paid_amount = vote.payment_amount;
+                let paid = coin::split(&mut payment, paid_amount, ctx);
+                
                 // Send exact amount to vote creator
                 transfer::public_transfer(paid, vote.creator);
-                // Return any excess to sender
-                transfer::public_transfer(payment, sender);
+                
+                // Check if there's any remaining value in the payment coin
+                let remaining = coin::value(&payment);
+                if (remaining > 0) {
+                    // Return any excess to sender
+                    transfer::public_transfer(payment, sender);
+                } else {
+                    // Destroy the zero-value coin
+                    coin::destroy_zero(payment);
+                }
             }
         } else {
             // No payment required, return the whole coin

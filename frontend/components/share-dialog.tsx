@@ -10,9 +10,10 @@ interface ShareDialogProps {
   onOpenChange: (open: boolean) => void
   title: string
   url: string
+  className?: string
 }
 
-export function ShareDialog({ open, onOpenChange, title, url }: ShareDialogProps) {
+export function ShareDialog({ open, onOpenChange, title, url, className }: ShareDialogProps) {
   const [copied, setCopied] = useState(false)
 
   const handleCopy = async () => {
@@ -48,45 +49,45 @@ export function ShareDialog({ open, onOpenChange, title, url }: ShareDialogProps
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle>Share this vote</DialogTitle>
-          <DialogDescription>Share this vote with your friends and colleagues</DialogDescription>
+      <DialogContent className={`sm:max-w-md ${className || ''}`}>
+        <DialogHeader className="pb-2 sm:pb-4">
+          <DialogTitle className="text-lg sm:text-xl">Share this vote</DialogTitle>
+          <DialogDescription className="text-sm">Share this vote with your friends and colleagues</DialogDescription>
         </DialogHeader>
-        <div className="flex flex-col gap-4 py-4">
-          <div className="flex items-center gap-4 justify-between">
-            <div className="grid grid-cols-3 gap-2 w-full">
+        <div className="flex flex-col gap-3 sm:gap-4 py-3 sm:py-4">
+          <div className="flex items-center justify-between">
+            <div className="grid grid-cols-3 gap-1.5 sm:gap-2 w-full">
               {shareLinks.map((link) => (
                 <a
                   key={link.name}
                   href={link.url}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className={`${link.color} text-white rounded-md p-3 flex items-center justify-center transition-colors`}
+                  className={`${link.color} text-white rounded-md p-2 sm:p-3 flex items-center justify-center transition-colors`}
                   title={link.name}
                 >
-                  <link.icon className="h-5 w-5" />
+                  <link.icon className="h-4 w-4 sm:h-5 sm:w-5" />
                   <span className="sr-only">{link.name}</span>
                 </a>
               ))}
             </div>
           </div>
 
-          <div className="relative flex items-center">
+          <div className="relative flex items-center mt-1">
             <input
               type="text"
               readOnly
               value={url}
-              className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 pr-10"
+              className="flex h-9 sm:h-10 w-full rounded-md border border-input bg-background px-2 sm:px-3 py-1 sm:py-2 text-xs sm:text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 pr-9 sm:pr-10 truncate"
             />
             <Button
               type="button"
               variant="ghost"
               size="icon"
-              className="absolute right-0 h-10 w-10"
+              className="absolute right-0 h-9 sm:h-10 w-9 sm:w-10"
               onClick={handleCopy}
             >
-              {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+              {copied ? <Check className="h-3.5 w-3.5 sm:h-4 sm:w-4" /> : <Copy className="h-3.5 w-3.5 sm:h-4 sm:w-4" />}
               <span className="sr-only">Copy</span>
             </Button>
           </div>

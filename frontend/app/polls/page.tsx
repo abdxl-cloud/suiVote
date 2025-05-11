@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
+import { useSearchParams } from "next/navigation"
 import {
   Eye,
   Share2,
@@ -40,10 +41,25 @@ import { motion, AnimatePresence } from "framer-motion"
 import Link from "next/link"
 import { useSuiVote } from "@/hooks/use-suivote"
 import { useWallet } from "@suiet/wallet-kit"
-import { formatDistanceToNow, format, formatDistance, addDays } from "date-fns"
+import { format, formatDistance } from "date-fns"
 import { ShareDialog } from "@/components/share-dialog"
 
+// Safe wrapper for formatDistanceToNow
+const safeFormatDistanceToNow = (date: Date | number | string) => {
+  try {
+    if (!date) return "soon";
+    
+    const dateObj = new Date(date);
+    if (isNaN(dateObj.getTime())) return "soon";
+    
+    return formatDistance(dateObj, new Date(), { addSuffix: true });
+  } catch (e) {
+    return "soon";
+  }
+}
+
 export default function PollsPage() {
+  const searchParams = useSearchParams()
   const [searchQuery, setSearchQuery] = useState("")
   const [shareDialogOpen, setShareDialogOpen] = useState(false)
   const [selectedVote, setSelectedVote] = useState<any | null>(null)
@@ -51,10 +67,16 @@ export default function PollsPage() {
   const [filterStatus, setFilterStatus] = useState("all")
   const [filterDate, setFilterDate] = useState("newest")
   const [now, setNow] = useState(new Date())
+  const [isClient, setIsClient] = useState(false)
 
   const wallet = useWallet()
   const { getMyVotes, loading, error } = useSuiVote()
   const [votes, setVotes] = useState<any[]>([])
+  
+  // Check if we're running on the client side
+  useEffect(() => {
+    setIsClient(true)
+  }, [])
 
   // Update the current time every minute to keep countdowns accurate
   useEffect(() => {
@@ -63,6 +85,25 @@ export default function PollsPage() {
     }, 60000)
     return () => clearInterval(interval)
   }, [])
+
+  // We need to use useEffect to access the search params
+  useEffect(() => {
+    // Only run on client side
+    if (!isClient) return;
+    
+    // Check if we're coming from a successful vote creation
+    const created = searchParams?.get("created")
+    if (created === "true") {
+      setShowSuccess(true);
+
+      // Hide the success message after 5 seconds
+      const timer = setTimeout(() => {
+        setShowSuccess(false);
+      }, 5000);
+
+      return () => clearTimeout(timer);
+    }
+  }, [searchParams, isClient]);
 
   useEffect(() => {
     if (wallet.connected && wallet.address) {
@@ -78,7 +119,6 @@ export default function PollsPage() {
     }
   }, [wallet.connected, wallet.address, getMyVotes])
 
-
   const handleShare = (vote: any) => {
     setSelectedVote(vote)
     setShareDialogOpen(true)
@@ -86,26 +126,30 @@ export default function PollsPage() {
 
   const formatTimeRemaining = (endTimestamp: number) => {
     try {
-      const end = new Date(endTimestamp)
-      const timeRemaining = end.getTime() - now.getTime()
+      if (!isClient) {
+        return "Calculating...";
+      }
+      
+      const end = new Date(endTimestamp);
+      const timeRemaining = end.getTime() - now.getTime();
       
       if (timeRemaining <= 0) {
-        return "Ended"
+        return "Ended";
       }
       
-      const days = Math.floor(timeRemaining / (1000 * 60 * 60 * 24))
-      const hours = Math.floor((timeRemaining % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60))
-      const minutes = Math.floor((timeRemaining % (1000 * 60 * 60)) / (1000 * 60))
+      const days = Math.floor(timeRemaining / (1000 * 60 * 60 * 24));
+      const hours = Math.floor((timeRemaining % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+      const minutes = Math.floor((timeRemaining % (1000 * 60 * 60)) / (1000 * 60));
       
       if (days > 0) {
-        return `${days}d ${hours}h remaining`
+        return `${days}d ${hours}h remaining`;
       } else if (hours > 0) {
-        return `${hours}h ${minutes}m remaining`
+        return `${hours}h ${minutes}m remaining`;
       } else {
-        return `${minutes}m remaining`
+        return `${minutes}m remaining`;
       }
     } catch (e) {
-      return "Unknown time"
+      return "Unknown time";
     }
   }
 
@@ -373,7 +417,7 @@ export default function PollsPage() {
                       {renderStatusBadge(vote.status)}
                     </div>
                     <CardDescription className="line-clamp-2 min-h-[40px]">
-                      {vote.description || "No description provided"}
+                      {vote.description || ""}
                     </CardDescription>
                     {renderFeatureBadges(vote)}
                   </CardHeader>
@@ -392,7 +436,7 @@ export default function PollsPage() {
                       </div>
                       
                       {/* Time remaining for active/pending/upcoming votes */}
-                      {(vote.status === "active" || vote.status === "pending") && (
+                      {(vote.status === "active" || vote.status === "pending") && isClient && (
                         <div className="mt-3">
                           <div className="flex justify-between items-center mb-1 text-sm">
                             <span className="text-muted-foreground flex items-center gap-1">
@@ -401,19 +445,33 @@ export default function PollsPage() {
                             </span>
                           </div>
                           <Progress 
-                            value={100 - calculatePercentage(
-                              vote.endTimestamp - now.getTime(),
-                              vote.endTimestamp - new Date(vote.created || vote.startTimestamp).getTime()
-                            )} 
+                            value={(() => {
+                              try {
+                                const endTime = vote.endTimestamp || 0;
+                                const startTime = new Date(vote.created || vote.startTimestamp || Date.now()).getTime();
+                                const remaining = endTime - now.getTime();
+                                const total = endTime - startTime;
+                                
+                                if (isNaN(remaining) || isNaN(total) || total <= 0) {
+                                  return 0;
+                                }
+                                
+                                return 100 - calculatePercentage(remaining, total);
+                              } catch (e) {
+                                return 0;
+                              }
+                            })()} 
                             className="h-1.5"
                           />
                         </div>
                       )}
 
-                      {vote.status === "upcoming" && (
+                      {vote.status === "upcoming" && isClient && (
                         <div className="mt-2 text-sm text-muted-foreground flex items-center gap-1">
                           <Clock className="h-4 w-4" />
-                          <span>Starts {formatDistanceToNow(new Date(vote.startTimestamp), { addSuffix: true })}</span>
+                          <span>
+                            Starts {safeFormatDistanceToNow(vote.startTimestamp)}
+                          </span>
                         </div>
                       )}
 
@@ -435,13 +493,13 @@ export default function PollsPage() {
                   <CardFooter className="flex justify-between border-t p-4 mt-auto">
                     <Link href={`/vote/${vote.id}`} className="w-1/2">
                       <Button 
-                        variant={vote.status === "active" || vote.status === "pending" ? "default" : "ghost"} 
+                        variant={"ghost"} 
                         size="sm" 
                         className="gap-1 w-full"
                       >
                         <Eye className="h-4 w-4" />
                         {vote.status === "active" || vote.status === "pending" 
-                          ? "Vote Now" 
+                          ? "Vote" 
                           : vote.status === "voted" 
                           ? "My Vote" 
                           : "View"}
@@ -520,7 +578,7 @@ export default function PollsPage() {
         ) : null}
       </motion.div>
 
-      {selectedVote && typeof window !== 'undefined' && (
+      {selectedVote && isClient && (
         <ShareDialog
           open={shareDialogOpen}
           onOpenChange={setShareDialogOpen}

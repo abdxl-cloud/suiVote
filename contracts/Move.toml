@@ -1,8 +1,9 @@
 [package]
 name = "contracts"
-edition = "2024.beta" # edition = "legacy" to use legacy (pre-2024) Move
-# license = ""           # e.g., "MIT", "GPL", "Apache 2.0"
-# authors = ["..."]      # e.g., ["Joe Smith (joesmith@noemail.com)", "John Snow (johnsnow@noemail.com)"]
+edition = "2024.beta"
+published-at = "0x8e8ca0f4b135cc0e569dd3d9e1caccaba6508f76e1b8a341295e0e80882e6d5c"  # Add this line
+# license = ""
+# authors = ["..."]
 
 [dependencies]
 

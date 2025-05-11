@@ -604,6 +604,7 @@ const disabledDates = [
       // Create the combined transaction
       console.log("Creating vote transaction with media...");
       setTxStatus(TransactionStatus.BUILDING);
+      console.log(votingSettings.paymentAmount);
       
       const transaction = await mediaHandlers.createVoteWithMedia({
         voteTitle,
@@ -1264,14 +1265,26 @@ const disabledDates = [
                       <DateTimePicker
         id="start-date"
         value={startDate}
-        onChange={setStartDate}
+        onChange={(date) => {
+          setStartDate(date);
+          setVotingSettings(prev => ({
+            ...prev,
+            startDate: date
+          }));
+        }}
         label="Start date and time"
       />
       
       <DateTimePicker
         id="end-date"
         value={endDate}
-        onChange={setEndDate}
+        onChange={(date) => {
+          setEndDate(date);
+          setVotingSettings(prev => ({
+            ...prev,
+            endDate: date
+          }));
+        }}
         label="End date and time"
       />
                       </div>

@@ -245,6 +245,7 @@ export function VoteMediaHandler({ children }: { children: (handlers: MediaHandl
       const paymentAmount = parseInt(params.paymentAmount || "0", 10)
       const requireAllPolls = params.requireAllPolls !== undefined ? params.requireAllPolls : true
       
+      console.log(pollData)
       // Create transaction using the SuiVoteService
       const transaction = createCompleteVoteTransaction(
         params.voteTitle,
