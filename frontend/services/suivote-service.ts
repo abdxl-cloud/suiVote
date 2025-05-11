@@ -21,7 +21,10 @@ export interface VoteDetails {
   pollsCount: number
   totalVotes: number
   isCancelled: boolean
-  status: "upcoming" | "active" | "closed"
+  status: "active" | "pending" | "upcoming" | "closed" | "voted"
+  tokenRequirement?: string    // Token type identifier
+  tokenAmount?: number         // Token amount required
+  hasWhitelist: boolean        // Indicates if vote has address restrictions
 }
 
 /**
@@ -69,6 +72,17 @@ export interface VoteCreatedEvent {
   start_timestamp: number
   end_timestamp: number
   polls_count: number
+  token_requirement?: string    // New field
+  token_amount?: number         // New field
+  has_whitelist: boolean        // New field
+}
+
+/**
+ * New interface: Voter whitelisted event
+ */
+export interface VoterWhitelistedEvent {
+  vote_id: string
+  voter_address: string
 }
 
 /**
@@ -87,16 +101,21 @@ export interface PollData {
 }
 
 /**
- * Dashboard vote interface for display
+ * Vote list interface for display
  */
-export interface DashboardVote {
+export interface VoteList {
   id: string
   title: string
   description: string
-  status: "active" | "upcoming" | "closed"
+  status: "active" | "pending" | "upcoming" | "closed" | "voted"
   created: string
   votes: number
   pollCount: number
+  endTimestamp: number
+  tokenRequirement?: string
+  tokenAmount?: number
+  hasWhitelist: boolean
+  isWhitelisted?: boolean      // Indicates if user is whitelisted for this vote
 }
 
 export class SuiVoteService {
@@ -289,12 +308,12 @@ async getVotesCreatedByAddress(
   }
 
   /**
-   * Get all votes for a user (created and participated)
+   * Get all votes for a user (created, participated, and whitelisted)
    * @param address User address
    * @param limit Maximum number of votes to return
-   * @returns Array of dashboard vote objects
+   * @returns Array of vote list objects
    */
-  async getMyVotes(address: string, limit = 20): Promise<{ data: DashboardVote[] }> {
+  async getMyVotes(address: string, limit = 20): Promise<{ data: VoteList[] }> {
     try {
       this.checkInitialization()
 
@@ -307,6 +326,26 @@ async getVotesCreatedByAddress(
 
       // Get votes the user participated in
       const { data: participatedVotes } = await this.getVotesParticipatedByAddress(address, limit)
+
+      // Get votes where the user is whitelisted
+      const { data: whitelistedVotes } = await this.getVotesWhitelistedForAddress(address, limit)
+
+      // Check which votes the user has already voted in
+      const votedPromises = Array.from(new Set([
+        ...createdVotes.map(vote => vote.id),
+        ...participatedVotes.map(vote => vote.id),
+        ...whitelistedVotes.map(vote => vote.id)
+      ])).map(async (voteId) => {
+        const hasVoted = await this.hasVoted(address, voteId)
+        return { voteId, hasVoted }
+      })
+      
+      const votedResults = await Promise.all(votedPromises)
+      const votedVoteIds = new Set(
+        votedResults
+          .filter(result => result.hasVoted)
+          .map(result => result.voteId)
+      )
 
       // Combine and deduplicate votes
       const allVoteMap = new Map<string, VoteDetails>()
@@ -323,24 +362,68 @@ async getVotesCreatedByAddress(
         }
       })
 
-      // Convert to dashboard format
-      const dashboardVotes: DashboardVote[] = Array.from(allVoteMap.values()).map((vote) => ({
-        id: vote.id,
-        title: vote.title,
-        description: vote.description,
-        status: vote.status,
-        created: new Date(vote.startTimestamp).toLocaleDateString(),
-        votes: vote.totalVotes,
-        pollCount: vote.pollsCount,
-      }))
+      // Add whitelisted votes to map (if not already added)
+      whitelistedVotes.forEach((vote) => {
+        if (!allVoteMap.has(vote.id)) {
+          allVoteMap.set(vote.id, vote)
+        }
+      })
+
+      // Create a Set of whitelisted vote IDs for easy lookups
+      const whitelistedVoteIds = new Set(whitelistedVotes.map(vote => vote.id))
+
+      // Get current time for status determination
+      const currentTime = Date.now()
+
+      // Convert to VoteList format with adjusted status
+      const voteList: VoteList[] = Array.from(allVoteMap.values()).map((vote) => {
+        // Determine the correct status based on the requirements
+        let status: "active" | "pending" | "upcoming" | "closed" | "voted"
+        
+        // First, check if the user has already voted in this vote
+        if (votedVoteIds.has(vote.id)) {
+          status = "voted"
+        } 
+        // If it's an upcoming vote
+        else if (currentTime < vote.startTimestamp) {
+          status = "upcoming"
+        }
+        // If it's a closed vote
+        else if (currentTime > vote.endTimestamp || vote.isCancelled) {
+          status = "closed"
+        }
+        // If the user's wallet is whitelisted for this vote and it's active
+        else if (whitelistedVoteIds.has(vote.id)) {
+          status = "pending"
+        }
+        // Otherwise, it's an active vote the user hasn't participated in yet
+        else {
+          status = "active"
+        }
+
+        return {
+          id: vote.id,
+          title: vote.title,
+          description: vote.description,
+          status,
+          created: new Date(vote.startTimestamp).toLocaleDateString(),
+          votes: vote.totalVotes,
+          pollCount: vote.pollsCount,
+          endTimestamp: vote.endTimestamp,
+          tokenRequirement: vote.tokenRequirement,
+          tokenAmount: vote.tokenAmount,
+          hasWhitelist: vote.hasWhitelist,
+          isWhitelisted: whitelistedVoteIds.has(vote.id)
+        }
+      })
 
       // Sort by most recent first
-      dashboardVotes.sort((a, b) => {
+      voteList.sort((a, b) => {
         return new Date(b.created).getTime() - new Date(a.created).getTime()
       })
 
       return {
-        data: dashboardVotes.slice(0, limit),
+        data: voteList.slice(0, limit),
       }
     } catch (error) {
       console.error("Failed to fetch user votes:", error)
@@ -391,18 +474,25 @@ async getVotesCreatedByAddress(
       const endTimestamp = Number(fields.end_timestamp)
       const isCancelled = fields.is_cancelled
 
-      let status: "upcoming" | "active" | "closed"
+      // Default status - will be refined by the getMyVotes method
+      let status: "active" | "pending" | "upcoming" | "closed" | "voted"
       if (isCancelled) {
         status = "closed"
       } else if (currentTime < startTimestamp) {
         status = "upcoming"
       } else if (currentTime <= endTimestamp) {
-        status = "active"
+        status = "active" // Default to active, will be refined to "pending" or "voted" by getMyVotes if needed
       } else {
         status = "closed"
       }
 
-      // Build the vote details object
+      // Extract token requirement fields - these are Option types in Sui
+      const tokenRequirement = fields.token_requirement?.fields?.value || undefined
+      const tokenAmount = fields.token_amount?.fields?.value !== undefined 
+        ? Number(fields.token_amount.fields.value) 
+        : undefined
+
+      // Build the vote details object with new fields
       const voteDetails: VoteDetails = {
         id: voteId,
         creator: fields.creator,
@@ -416,6 +506,9 @@ async getVotesCreatedByAddress(
         totalVotes: Number(fields.total_votes || 0),
         isCancelled,
         status,
+        tokenRequirement,      // New field
+        tokenAmount,           // New field
+        hasWhitelist: !!fields.has_whitelist  // New field
       }
 
       return voteDetails
@@ -589,7 +682,7 @@ async getVotesCreatedByAddress(
     }
   }
 
-  /**
+/**
    * Create a complete vote with polls and options in a single transaction
    * @param title Vote title
    * @param description Vote description
@@ -600,112 +693,531 @@ async getVotesCreatedByAddress(
    * @param pollData Poll configuration data
    * @returns Transaction to be signed
    */
-  createCompleteVoteTransaction(
-    title: string,
-    description: string,
-    startTimestamp: number,
-    endTimestamp: number,
-    requiredToken = "",
-    requiredAmount = 0,
-    paymentAmount = 0,
-    requireAllPolls = true,
-    pollData: PollData[],
-  ): Transaction {
+createCompleteVoteTransaction(
+  title: string,
+  description: string,
+  startTimestamp: number,
+  endTimestamp: number,
+  requiredToken = "",
+  requiredAmount = 0,
+  paymentAmount = 0,
+  requireAllPolls = true,
+  pollData: PollData[],
+): Transaction {
+  try {
+    this.checkInitialization()
+
+    // Validate inputs
+    if (!title) {
+      throw new Error("Vote title is required")
+    }
+
+    if (startTimestamp >= endTimestamp) {
+      throw new Error("End timestamp must be after start timestamp")
+    }
+
+    if (!pollData || !Array.isArray(pollData) || pollData.length === 0) {
+      throw new Error("At least one poll is required")
+    }
+
+    console.log(`Creating complete vote: ${title} with ${pollData.length} polls`)
+
+    const tx = new Transaction()
+
+    // Get current timestamp from Clock object
+    const clockObj = tx.object(SUI_CLOCK_OBJECT_ID)
+
+    // Initialize arrays for poll data
+    const pollTitles: string[] = []
+    const pollDescriptions: string[] = []
+    const pollIsMultiSelect: boolean[] = []
+    const pollMaxSelections: number[] = []
+    const pollIsRequired: boolean[] = []
+    const pollOptionCounts: number[] = []
+    const pollOptionTexts: string[] = []
+    const pollOptionMediaUrls: number[][] = [] // Changed to number[][]
+
+    // Process each poll
+    for (const poll of pollData) {
+      pollTitles.push(poll.title || "")
+      pollDescriptions.push(poll.description || "")
+      pollIsMultiSelect.push(!!poll.isMultiSelect)
+      pollIsRequired.push(!!poll.isRequired)
+
+      // Handle maxSelections for single/multi-select polls
+      const maxSelections = poll.isMultiSelect
+        ? Math.min(Math.max(1, poll.maxSelections), poll.options.length - 1)
+        : 1
+      pollMaxSelections.push(maxSelections)
+
+      // Record option count for this poll
+      pollOptionCounts.push(poll.options.length)
+
+      // Process options for this poll
+      for (const option of poll.options) {
+        pollOptionTexts.push(option.text || "")
+
+        // Convert media URL to bytes (empty array if none)
+        if (option.mediaUrl) {
+          // Convert string to Uint8Array, then to regular array
+          const mediaUrlBytes = new TextEncoder().encode(option.mediaUrl)
+          // Convert Uint8Array to regular array
+          pollOptionMediaUrls.push(Array.from(mediaUrlBytes))
+        } else {
+          // Empty array if no media URL
+          pollOptionMediaUrls.push([])
+        }
+      }
+    }
+
+    // Convert token requirement to bytes
+    const tokenRequirementBytes = requiredToken 
+      ? Array.from(new TextEncoder().encode(requiredToken))
+      : []
+
+    // Build the transaction with proper arguments matching the contract
+    tx.moveCall({
+      target: `${PACKAGE_ID}::voting::create_complete_vote`,
+      arguments: [
+        tx.object(ADMIN_ID),
+        tx.pure.string(title),
+        tx.pure.string(description),
+        tx.pure.u64(startTimestamp),
+        tx.pure.u64(endTimestamp),
+        tx.pure.u64(paymentAmount),
+        tx.pure.bool(requireAllPolls),
+        tx.pure.vector("u8", tokenRequirementBytes),  // Token requirement as vector<u8>
+        tx.pure.u64(requiredAmount),                  // Token amount as u64
+        tx.pure.vector("string", pollTitles),
+        tx.pure.vector("string", pollDescriptions),
+        tx.pure.vector("bool", pollIsMultiSelect),
+        tx.pure.vector("u64", pollMaxSelections),
+        tx.pure.vector("bool", pollIsRequired),
+        tx.pure.vector("u64", pollOptionCounts),
+        tx.pure.vector("string", pollOptionTexts),
+        tx.pure.vector("vector<u8>", pollOptionMediaUrls),
+        clockObj,
+      ],
+    })
+
+    return tx
+  } catch (error) {
+    console.error("Failed to create complete vote transaction:", error)
+    throw new Error(
+      `Failed to create complete vote transaction: ${error instanceof Error ? error.message : String(error)}`,
+    )
+  }
+}
+
+  /**
+   * Create a combined transaction for uploading media to Walrus and creating a vote
+   */
+  createVoteWithMediaTransaction(
+  title: string,
+  description: string,
+  startTimestamp: number,
+  endTimestamp: number,
+  requiredToken = "",
+  requiredAmount = 0,
+  paymentAmount = 0,
+  requireAllPolls = true,
+  pollData: PollData[],
+  mediaFiles: Record<string, { data: Uint8Array, contentType: string }>
+): Transaction {
+  try {
+    this.checkInitialization()
+
+    // Validate inputs
+    if (!title) {
+      throw new Error("Vote title is required")
+    }
+
+    if (startTimestamp >= endTimestamp) {
+      throw new Error("End timestamp must be after start timestamp")
+    }
+
+    if (!pollData || !Array.isArray(pollData) || pollData.length === 0) {
+      throw new Error("At least one poll is required")
+    }
+
+    console.log(`Creating vote with media: ${title} with ${pollData.length} polls and ${Object.keys(mediaFiles).length} media files`)
+
+    const tx = new Transaction()
+
+    // Get current timestamp from Clock object
+    const clockObj = tx.object(SUI_CLOCK_OBJECT_ID)
+
+    // Map to store uploaded blob IDs
+    const blobIdMap = new Map<string, string>()
+    
+    // Walrus Testnet Package ID - This is the actual package ID for Walrus on Testnet
+    const WALRUS_PACKAGE_ID = "0xd12a1773839233ca208d9c956d41e81f0f5f93a2f3384ab3cf8ce916a0e434fa"
+    
+    // 1. First, upload all media files using Walrus contracts
+    if (Object.keys(mediaFiles).length > 0) {
+      for (const [fileId, fileData] of Object.entries(mediaFiles)) {
+        // Calculate storage epochs (default is 10 epochs)
+        const storageEpochs = 10
+        const epochsArg = tx.pure.u64(storageEpochs)
+        
+        // Calculate storage size needed
+        const encodedLength = tx.pure.u64(fileData.data.length)
+        
+        // Determine whether the blob is deletable (true in most cases)
+        const deletable = tx.pure.bool(true)
+        
+        // Split coins for storage payment - calculate based on size
+        const estimatedStorageCost = Math.ceil(fileData.data.length * 10) + 1000 // Simple estimation
+        const [storageCoin] = tx.splitCoins(tx.gas, [tx.pure.u64(estimatedStorageCost)])
+        
+        // Step 1: Create a new storage object
+        const storage = tx.moveCall({
+          target: `${WALRUS_PACKAGE_ID}::storage::new_storage`,
+          arguments: [
+            storageCoin,     // Payment for storage
+            encodedLength,   // Size in bytes
+            epochsArg,       // Number of epochs to store
+            deletable,       // Whether the blob can be deleted
+          ],
+        })
+        
+        // Step 2: Create the blob with the storage
+        const blobObj = tx.moveCall({
+          target: `${WALRUS_PACKAGE_ID}::storage::create_blob_with_storage`,
+          arguments: [
+            storage,               // Storage object from previous call
+            tx.pure(fileData.data) // The actual binary data
+          ],
+        })
+        
+        // Store placeholder blob ID to reference in media URLs
+        blobIdMap.set(fileId, `[BLOB_ID_${fileId}]`)
+      }
+    }
+    
+    // 2. Process poll data with media URLs
+    const pollTitles: string[] = []
+    const pollDescriptions: string[] = []
+    const pollIsMultiSelect: boolean[] = []
+    const pollMaxSelections: number[] = []
+    const pollIsRequired: boolean[] = []
+    const pollOptionCounts: number[] = []
+    const pollOptionTexts: string[] = []
+    const pollOptionMediaUrls: number[][] = []
+
+    // Process each poll
+    for (const poll of pollData) {
+      pollTitles.push(poll.title || "")
+      pollDescriptions.push(poll.description || "")
+      pollIsMultiSelect.push(!!poll.isMultiSelect)
+      pollIsRequired.push(!!poll.isRequired)
+
+      // Handle maxSelections for single/multi-select polls
+      const maxSelections = poll.isMultiSelect
+        ? Math.min(Math.max(1, poll.maxSelections), poll.options.length - 1)
+        : 1
+      pollMaxSelections.push(maxSelections)
+
+      // Record option count for this poll
+      pollOptionCounts.push(poll.options.length)
+
+      // Process options for this poll
+      for (const option of poll.options) {
+        pollOptionTexts.push(option.text || "")
+
+        // If option has mediaUrl and it references a blob ID placeholder
+        if (option.mediaUrl && option.mediaUrl.startsWith("[MEDIA_FILE_") && option.mediaUrl.endsWith("]")) {
+          // Extract file ID from reference
+          const fileId = option.mediaUrl.substring(12, option.mediaUrl.length - 1)
+          
+          // Check if we have this file in our map
+          if (blobIdMap.has(fileId)) {
+            // Create the Sui blob URL
+            const placeholderUrl = `sui://blob/${blobIdMap.get(fileId)}`
+            
+            // Convert to byte array for the Move call
+            const mediaUrlBytes = new TextEncoder().encode(placeholderUrl)
+            pollOptionMediaUrls.push(Array.from(mediaUrlBytes))
+          } else {
+            // File not found, use empty URL
+            pollOptionMediaUrls.push([])
+          }
+        } else if (option.mediaUrl) {
+          // Regular URL (external or previously uploaded)
+          const mediaUrlBytes = new TextEncoder().encode(option.mediaUrl)
+          pollOptionMediaUrls.push(Array.from(mediaUrlBytes))
+        } else {
+          // No media URL
+          pollOptionMediaUrls.push([])
+        }
+      }
+    }
+
+    // Convert token requirement to bytes
+    const tokenRequirementBytes = requiredToken 
+      ? Array.from(new TextEncoder().encode(requiredToken))
+      : []
+
+    // 3. Create the vote using the actual SuiVote package ID
+    const voteObj = tx.moveCall({
+      target: `${PACKAGE_ID}::voting::create_complete_vote`,
+      arguments: [
+        tx.object(ADMIN_ID),
+        tx.pure.string(title),
+        tx.pure.string(description),
+        tx.pure.u64(startTimestamp),
+        tx.pure.u64(endTimestamp),
+        tx.pure.u64(paymentAmount),
+        tx.pure.bool(requireAllPolls),
+        tx.pure.vector("u8", tokenRequirementBytes),  // Token requirement as vector<u8>
+        tx.pure.u64(requiredAmount),                  // Token amount as u64
+        tx.pure.vector("string", pollTitles),
+        tx.pure.vector("string", pollDescriptions),
+        tx.pure.vector("bool", pollIsMultiSelect),
+        tx.pure.vector("u64", pollMaxSelections),
+        tx.pure.vector("bool", pollIsRequired),
+        tx.pure.vector("u64", pollOptionCounts),
+        tx.pure.vector("string", pollOptionTexts),
+        tx.pure.vector("vector<u8>", pollOptionMediaUrls),
+        clockObj,
+      ],
+    })
+
+    // Return created vote object to the sender
+    tx.transferObjects([voteObj], tx.pure.address("$SENDER"))
+
+    return tx
+  } catch (error) {
+    console.error("Failed to create vote with media transaction:", error)
+    throw new Error(
+      `Failed to create vote with media: ${error instanceof Error ? error.message : String(error)}`
+    )
+  }
+}
+
+  /**
+   * Check if a voter is whitelisted for a vote
+   * @param voteId Vote object ID
+   * @param voterAddress Voter address
+   * @returns Boolean indicating if the voter is whitelisted
+   */
+  async isVoterWhitelisted(voteId: string, voterAddress: string): Promise<boolean> {
     try {
       this.checkInitialization()
 
-      // Validate inputs
-      if (!title) {
-        throw new Error("Vote title is required")
+      if (!voteId || !voterAddress) {
+        return false
       }
 
-      if (startTimestamp >= endTimestamp) {
-        throw new Error("End timestamp must be after start timestamp")
+      console.log(`Checking if ${voterAddress} is whitelisted for vote ${voteId}`)
+
+      // First get the vote details to check if it has a whitelist
+      const voteDetails = await this.getVoteDetails(voteId)
+      if (!voteDetails) return false
+
+      // If the vote doesn't have a whitelist, everyone is allowed
+      if (!voteDetails.hasWhitelist) {
+        return true
       }
 
-      if (!pollData || !Array.isArray(pollData) || pollData.length === 0) {
-        throw new Error("At least one poll is required")
+      // Check if the address is in the whitelist by checking if the dynamic field exists
+      try {
+        const response = await this.client.getDynamicFieldObject({
+          parentId: voteId,
+          name: {
+            type: "address",
+            value: voterAddress,
+          },
+        })
+
+        // If the field exists, the voter is whitelisted
+        return !!response.data
+      } catch (error) {
+        console.error(`Failed to check whitelist status for ${voterAddress}:`, error)
+        return false
+      }
+    } catch (error) {
+      console.error(`Failed to check if voter is whitelisted:`, error)
+      return false
+    }
+  }
+
+  /**
+   * Create a transaction to add allowed voters to a whitelist
+   * @param voteId Vote object ID
+   * @param voterAddresses Array of voter addresses to add to the whitelist
+   * @returns Transaction to be signed
+   */
+  addAllowedVotersTransaction(voteId: string, voterAddresses: string[]): Transaction {
+    try {
+      this.checkInitialization()
+
+      if (!voteId) {
+        throw new Error("Vote ID is required")
       }
 
-      console.log(`Creating complete vote: ${title} with ${pollData.length} polls`)
+      if (!voterAddresses || !Array.isArray(voterAddresses) || voterAddresses.length === 0) {
+        throw new Error("At least one voter address must be provided")
+      }
 
-      const tx = new Transaction()
-
-      // Get current timestamp from Clock object
-      const clockObj = tx.object(SUI_CLOCK_OBJECT_ID)
-
-      // Initialize arrays for poll data
-      const pollTitles: string[] = []
-      const pollDescriptions: string[] = []
-      const pollIsMultiSelect: boolean[] = []
-      const pollMaxSelections: number[] = []
-      const pollIsRequired: boolean[] = []
-      const pollOptionCounts: number[] = []
-      const pollOptionTexts: string[] = []
-      const pollOptionMediaUrls: number[][] = [] // Changed to number[][]
-
-      // Process each poll
-      for (const poll of pollData) {
-        pollTitles.push(poll.title || "")
-        pollDescriptions.push(poll.description || "")
-        pollIsMultiSelect.push(!!poll.isMultiSelect)
-        pollIsRequired.push(!!poll.isRequired)
-
-        // Handle maxSelections for single/multi-select polls
-        const maxSelections = poll.isMultiSelect
-          ? Math.min(Math.max(1, poll.maxSelections), poll.options.length - 1)
-          : 1
-        pollMaxSelections.push(maxSelections)
-
-        // Record option count for this poll
-        pollOptionCounts.push(poll.options.length)
-
-        // Process options for this poll
-        for (const option of poll.options) {
-          pollOptionTexts.push(option.text || "")
-
-          // Convert media URL to bytes (empty array if none)
-          if (option.mediaUrl) {
-            // Convert string to Uint8Array, then to regular array
-            const mediaUrlBytes = new TextEncoder().encode(option.mediaUrl)
-            // Convert Uint8Array to regular array
-            pollOptionMediaUrls.push(Array.from(mediaUrlBytes))
-          } else {
-            // Empty array if no media URL
-            pollOptionMediaUrls.push([])
-          }
+      // Validate addresses
+      for (const address of voterAddresses) {
+        if (!address) {
+          throw new Error("Invalid voter address")
         }
       }
 
-      // Build the transaction with proper arguments matching the contract
+      console.log(`Adding ${voterAddresses.length} voters to the whitelist for vote ${voteId}`)
+
+      const tx = new Transaction()
+
+      // Get the clock object
+      const clockObj = tx.object(SUI_CLOCK_OBJECT_ID)
+
+      // Convert addresses to Sui address objects
+      const addressObjects = voterAddresses.map(addr => tx.pure.address(addr))
+
       tx.moveCall({
-        target: `${PACKAGE_ID}::voting::create_complete_vote`,
+        target: `${PACKAGE_ID}::voting::add_allowed_voters`,
         arguments: [
-          tx.object(ADMIN_ID),
-          tx.pure.string(title),
-          tx.pure.string(description),
-          tx.pure.u64(startTimestamp),
-          tx.pure.u64(endTimestamp),
-          tx.pure.u64(paymentAmount),
-          tx.pure.bool(requireAllPolls),
-          tx.pure.vector("string", pollTitles),
-          tx.pure.vector("string", pollDescriptions),
-          tx.pure.vector("bool", pollIsMultiSelect),
-          tx.pure.vector("u64", pollMaxSelections),
-          tx.pure.vector("bool", pollIsRequired),
-          tx.pure.vector("u64", pollOptionCounts),
-          tx.pure.vector("string", pollOptionTexts),
-          tx.pure.vector("vector<u8>", pollOptionMediaUrls),
+          tx.object(voteId),
+          tx.pure.vector("address", voterAddresses),
           clockObj,
         ],
       })
 
       return tx
     } catch (error) {
-      console.error("Failed to create complete vote transaction:", error)
-      throw new Error(
-        `Failed to create complete vote transaction: ${error instanceof Error ? error.message : String(error)}`,
-      )
+      console.error(`Failed to create add allowed voters transaction:`, error)
+      throw new Error(`Failed to add allowed voters: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+
+  /**
+   * Get the whitelisted voters for a vote by querying the dynamic fields
+   * @param voteId Vote object ID
+   * @returns Array of whitelisted voter addresses
+   */
+  async getWhitelistedVoters(voteId: string): Promise<string[]> {
+    try {
+      this.checkInitialization()
+
+      if (!voteId) {
+        throw new Error("Vote ID is required")
+      }
+
+      console.log(`Getting whitelisted voters for vote ${voteId}`)
+
+      // First check if the vote has a whitelist
+      const voteDetails = await this.getVoteDetails(voteId)
+      if (!voteDetails || !voteDetails.hasWhitelist) {
+        return []
+      }
+
+      // We need to check VoterWhitelisted events since dynamic field queries 
+      // can't be easily filtered by type
+      const whitelistedVoters: string[] = []
+
+      // Query for VoterWhitelisted events
+      const { data } = await this.client.queryEvents({
+        query: {
+          MoveEventType: `${PACKAGE_ID}::voting::VoterWhitelisted`
+        },
+        limit: 1000, // Using a higher limit to get all events
+      })
+
+      // Filter events for the specific vote
+      const filteredEvents = data.filter(event => {
+        if (!event.parsedJson) return false
+        const whitelistEvent = event.parsedJson as VoterWhitelistedEvent
+        return whitelistEvent.vote_id === voteId
+      })
+
+      // Extract voter addresses without duplicates
+      const voterSet = new Set<string>()
+      for (const event of filteredEvents) {
+        if (!event.parsedJson) continue
+        const whitelistEvent = event.parsedJson as VoterWhitelistedEvent
+        voterSet.add(whitelistEvent.voter_address)
+      }
+
+      return Array.from(voterSet)
+    } catch (error) {
+      console.error(`Failed to get whitelisted voters:`, error)
+      return []
+    }
+  }
+  
+  /**
+   * Get votes where a user is whitelisted
+   * @param address User address
+   * @param limit Maximum number of votes to return
+   * @param cursor Pagination cursor
+   * @returns Array of vote details with pagination cursor
+   */
+  async getVotesWhitelistedForAddress(
+    address: string,
+    limit = 20,
+    cursor?: string,
+  ): Promise<{ data: VoteDetails[]; nextCursor?: string }> {
+    try {
+      this.checkInitialization()
+
+      if (!address) {
+        throw new Error("Address is required")
+      }
+
+      console.log(`Fetching votes where ${address} is whitelisted, limit: ${limit}`)
+
+      // Query for VoterWhitelisted events using MoveEventType filter
+      const eventsResponse = await this.client.queryEvents({
+        query: {
+          MoveEventType: `${PACKAGE_ID}::voting::VoterWhitelisted`
+        },
+        cursor,
+        limit: 100, // Using a higher limit initially since we'll filter manually
+        descending_order: true, // Get most recent first
+      })
+
+      console.log(`Found ${eventsResponse.data.length} whitelist events, filtering for voter: ${address}`)
+
+      // Manually filter the events for voter_address = address
+      const filteredEvents = eventsResponse.data.filter(event => {
+        if (!event.parsedJson) return false
+        const whitelistEvent = event.parsedJson as VoterWhitelistedEvent
+        return whitelistEvent.voter_address === address
+      })
+
+      console.log(`After filtering, found ${filteredEvents.length} events for voter ${address}`)
+
+      // Process events to extract unique vote IDs
+      const voteIds = new Set<string>()
+      for (const event of filteredEvents) {
+        if (!event.parsedJson) continue
+
+        const whitelistEvent = event.parsedJson as VoterWhitelistedEvent
+        voteIds.add(whitelistEvent.vote_id)
+      }
+
+      console.log(`Found ${voteIds.size} unique votes where user is whitelisted`)
+
+      // Fetch details for each unique vote in parallel
+      const votesPromises = Array.from(voteIds).map((voteId) => this.getVoteDetails(voteId))
+      const votesResults = await Promise.all(votesPromises)
+
+      // Filter out null results and respect the limit
+      const votes = votesResults.filter(Boolean) as VoteDetails[]
+      const limitedVotes = votes.slice(0, limit)
+
+      console.log(`Successfully processed ${limitedVotes.length} votes`)
+
+      return {
+        data: limitedVotes,
+        nextCursor: eventsResponse.nextCursor,
+      }
+    } catch (error) {
+      console.error("Failed to fetch whitelisted votes:", error)
+      throw new Error(`Failed to fetch whitelisted votes: ${error instanceof Error ? error.message : String(error)}`)
     }
   }
 

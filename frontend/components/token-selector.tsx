@@ -4,11 +4,9 @@ import { useState, useEffect } from "react"
 import {
   Wallet,
   Search,
-  Plus,
-  Check,
   X,
   Loader2,
-  ExternalLink,
+  Check,
   AlertCircle,
   TrendingUp,
   TrendingDown,
@@ -28,7 +26,6 @@ import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Separator } from "@/components/ui/separator"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Badge } from "@/components/ui/badge"
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { cn } from "@/lib/utils"
 import { type TokenInfo, tokenService } from "@/services/token-service"
@@ -53,24 +50,22 @@ export function TokenSelector({
   className,
 }: TokenSelectorProps) {
   const [isDialogOpen, setIsDialogOpen] = useState(false)
-  const [tokens, setTokens] = useState<TokenInfo[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [searchQuery, setSearchQuery] = useState("")
-  const [activeTab, setActiveTab] = useState<"popular" | "search" | "custom">("popular")
-  const [customTokenAddress, setCustomTokenAddress] = useState("")
-  const [customTokenError, setCustomTokenError] = useState<string | null>(null)
-  const [validatingToken, setValidatingToken] = useState(false)
-  const [selectedToken, setSelectedToken] = useState<TokenInfo | null>(null)
   const [searchResults, setSearchResults] = useState<TokenInfo[]>([])
   const [isSearching, setIsSearching] = useState(false)
+  const [validatingCustomToken, setValidatingCustomToken] = useState(false)
+  const [customTokenError, setCustomTokenError] = useState<string | null>(null)
+  const [selectedToken, setSelectedToken] = useState<TokenInfo | null>(null)
+  const [popularTokens, setPopularTokens] = useState<TokenInfo[]>([])
 
-  // Fetch tokens on mount
+  // Fetch popular tokens on mount for initial display
   useEffect(() => {
     const fetchTokens = async () => {
       try {
         setIsLoading(true)
-        const tokensList = await tokenService.getPopularTokens()
-        setTokens(tokensList)
+        const tokensList = await tokenService.getPopularTokens(10)
+        setPopularTokens(tokensList)
 
         // If a token is already selected, find it in the list
         if (value && value !== "none") {
@@ -91,25 +86,55 @@ export function TokenSelector({
 
   // Handle search query changes with debounce
   useEffect(() => {
+    // If empty query, show popular tokens
     if (!searchQuery.trim()) {
-      setSearchResults([])
+      setSearchResults(popularTokens)
       return
     }
 
     const timer = setTimeout(async () => {
       try {
         setIsSearching(true)
-        const results = await tokenService.searchTokens(searchQuery)
-        setSearchResults(results)
+        setCustomTokenError(null)
+
+        // Check if searchQuery looks like a token address (begins with 0x or contains ::)
+        const isTokenAddress = searchQuery.startsWith("0x") || searchQuery.includes("::")
+        
+        if (isTokenAddress) {
+          // Try to validate as a token address
+          const result = await tokenService.validateTokenAddress(searchQuery.trim())
+          
+          if (result.isValid && result.tokenInfo) {
+            setSearchResults([result.tokenInfo])
+            
+            // Show warning if there's a partial validation
+            if (result.error) {
+              setCustomTokenError(`Warning: ${result.error}`)
+            }
+          } else {
+            setSearchResults([])
+            setCustomTokenError(result.error || "Invalid token address")
+          }
+        } else {
+          // Normal search by name or symbol
+          const results = await tokenService.searchTokens(searchQuery)
+          setSearchResults(results.length > 0 ? results : [])
+          
+          if (results.length === 0) {
+            setCustomTokenError("No tokens found matching your search. Try a different name, symbol, or paste a valid token address.")
+          }
+        }
       } catch (error) {
         console.error("Search error:", error)
+        setSearchResults([])
+        setCustomTokenError(error instanceof Error ? error.message : "Search failed")
       } finally {
         setIsSearching(false)
       }
     }, 300)
 
     return () => clearTimeout(timer)
-  }, [searchQuery])
+  }, [searchQuery, popularTokens])
 
   // Handle token selection
   const handleSelectToken = (token: TokenInfo | null) => {
@@ -121,46 +146,6 @@ export function TokenSelector({
       onValueChange("none")
     }
     setIsDialogOpen(false)
-  }
-
-  // Validate custom token
-  const validateCustomToken = async () => {
-    if (!customTokenAddress.trim()) {
-      setCustomTokenError("Please enter a token address")
-      return
-    }
-
-    try {
-      setValidatingToken(true)
-      setCustomTokenError(null)
-
-      const result = await tokenService.validateTokenAddress(customTokenAddress)
-
-      if (!result.isValid) {
-        setCustomTokenError(result.error || "Invalid token address")
-        return
-      }
-
-      if (result.tokenInfo) {
-        // Add to tokens list if not already there
-        if (!tokens.some((t) => t.id === result.tokenInfo!.id)) {
-          setTokens((prev) => [...prev, result.tokenInfo!])
-        }
-
-        // Show warning if there was a partial validation
-        if (result.error) {
-          setCustomTokenError(`Warning: ${result.error}`)
-          // Still proceed with selection despite the warning
-        }
-
-        handleSelectToken(result.tokenInfo)
-      }
-    } catch (error) {
-      console.error("Error validating token:", error)
-      setCustomTokenError(error instanceof Error ? error.message : "Failed to validate token")
-    } finally {
-      setValidatingToken(false)
-    }
   }
 
   // Format price change with color
@@ -327,189 +312,97 @@ export function TokenSelector({
         </div>
       )}
 
-      {/* Token Selection Dialog */}
+      {/* Unified Token Selection Dialog */}
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Select Token</DialogTitle>
-            <DialogDescription>Choose a token or input a custom token address</DialogDescription>
+            <DialogDescription>
+              Search by name, symbol, or paste a token address
+            </DialogDescription>
           </DialogHeader>
 
-          <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as "popular" | "search" | "custom")}>
-            <TabsList className="grid w-full grid-cols-3">
-              <TabsTrigger value="popular">Popular</TabsTrigger>
-              <TabsTrigger value="search">Search</TabsTrigger>
-              <TabsTrigger value="custom">Custom</TabsTrigger>
-            </TabsList>
+          <div className="space-y-4 pt-2">
+            <div className="relative">
+              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Search by name, symbol or paste address (0x... or package::module::struct)"
+                className="pl-9"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                autoFocus
+              />
+              {searchQuery && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="absolute right-1 top-1 h-7 w-7 p-0"
+                  onClick={() => setSearchQuery("")}
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              )}
+            </div>
 
-            <TabsContent value="popular" className="space-y-4 pt-4">
-              <div className="rounded-md border">
-                <div className="flex items-center justify-between p-2 bg-muted/30">
-                  <Button
-                    variant="ghost"
-                    className="w-full justify-start font-normal h-9 px-2 text-muted-foreground hover:text-foreground"
-                    onClick={() => handleSelectToken(null)}
-                  >
-                    <Check className={cn("mr-2 h-4 w-4", value === "none" ? "opacity-100" : "opacity-0")} />
-                    No token required
-                  </Button>
-                </div>
+            {customTokenError && (
+              <Alert variant="destructive" className="py-2">
+                <AlertCircle className="h-4 w-4" />
+                <AlertDescription>{customTokenError}</AlertDescription>
+              </Alert>
+            )}
 
-                <Separator />
+            <div className="rounded-md border">
+              <div className="flex items-center justify-between p-2 bg-muted/30">
+                <Button
+                  variant="ghost"
+                  className="w-full justify-start font-normal h-9 px-2 text-muted-foreground hover:text-foreground"
+                  onClick={() => handleSelectToken(null)}
+                >
+                  <Check className={cn("mr-2 h-4 w-4", value === "none" ? "opacity-100" : "opacity-0")} />
+                  No token required
+                </Button>
+              </div>
 
-                <ScrollArea className="h-72">
-                  {isLoading ? (
-                    <div className="p-4 space-y-4">
-                      {[1, 2, 3, 4, 5].map((i) => (
-                        <div key={i} className="flex items-center gap-2">
-                          <Skeleton className="h-8 w-8 rounded-full" />
-                          <div className="space-y-2 flex-1">
-                            <Skeleton className="h-4 w-24" />
-                            <Skeleton className="h-3 w-32" />
-                          </div>
-                          <div className="space-y-2">
-                            <Skeleton className="h-4 w-16" />
-                            <Skeleton className="h-3 w-12" />
-                          </div>
+              <Separator />
+
+              <ScrollArea className="h-72">
+                {isLoading || isSearching ? (
+                  <div className="p-4 space-y-4">
+                    {[1, 2, 3, 4, 5].map((i) => (
+                      <div key={i} className="flex items-center gap-2">
+                        <Skeleton className="h-8 w-8 rounded-full" />
+                        <div className="space-y-2 flex-1">
+                          <Skeleton className="h-4 w-24" />
+                          <Skeleton className="h-3 w-32" />
                         </div>
-                      ))}
-                    </div>
-                  ) : tokens.length === 0 ? (
-                    <div className="p-4 text-center text-muted-foreground">
-                      No tokens found. Try searching or add a custom token.
-                    </div>
-                  ) : (
-                    <div className="divide-y">{tokens.map((token) => renderTokenItem(token, value === token.id))}</div>
-                  )}
-                </ScrollArea>
-              </div>
-            </TabsContent>
-
-            <TabsContent value="search" className="space-y-4 pt-4">
-              <div className="relative">
-                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                <Input
-                  placeholder="Search by name, symbol or address"
-                  className="pl-9"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                />
-                {searchQuery && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="absolute right-1 top-1 h-7 w-7 p-0"
-                    onClick={() => setSearchQuery("")}
-                  >
-                    <X className="h-4 w-4" />
-                  </Button>
-                )}
-              </div>
-
-              <div className="rounded-md border">
-                <ScrollArea className="h-72">
-                  {isSearching ? (
-                    <div className="p-4 space-y-4">
-                      {[1, 2, 3].map((i) => (
-                        <div key={i} className="flex items-center gap-2">
-                          <Skeleton className="h-8 w-8 rounded-full" />
-                          <div className="space-y-2 flex-1">
-                            <Skeleton className="h-4 w-24" />
-                            <Skeleton className="h-3 w-32" />
-                          </div>
-                          <div className="space-y-2">
-                            <Skeleton className="h-4 w-16" />
-                            <Skeleton className="h-3 w-12" />
-                          </div>
+                        <div className="space-y-2">
+                          <Skeleton className="h-4 w-16" />
+                          <Skeleton className="h-3 w-12" />
                         </div>
-                      ))}
-                    </div>
-                  ) : !searchQuery.trim() ? (
-                    <div className="p-8 text-center text-muted-foreground">
-                      Enter a token name, symbol, or address to search
-                    </div>
-                  ) : searchResults.length === 0 ? (
-                    <div className="p-8 text-center text-muted-foreground">
-                      No tokens found. Try a different search term or add a custom token.
-                    </div>
-                  ) : (
-                    <div className="divide-y">
-                      {searchResults.map((token) => renderTokenItem(token, value === token.id))}
-                    </div>
-                  )}
-                </ScrollArea>
-              </div>
-            </TabsContent>
-
-            <TabsContent value="custom" className="space-y-4 pt-4">
-              <div className="space-y-2">
-                <Label htmlFor="custom-token-address">Token Address</Label>
-                <div className="flex gap-2">
-                  <Input
-                    id="custom-token-address"
-                    placeholder="0x... or package::module::struct"
-                    value={customTokenAddress}
-                    onChange={(e) => setCustomTokenAddress(e.target.value)}
-                    className={cn(customTokenError && "border-red-500 focus-visible:ring-red-500")}
-                  />
-                  <Button
-                    onClick={validateCustomToken}
-                    disabled={validatingToken || !customTokenAddress.trim()}
-                    className="flex-shrink-0"
-                  >
-                    {validatingToken ? (
-                      <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                    ) : (
-                      <Plus className="h-4 w-4 mr-2" />
-                    )}
-                    Add
-                  </Button>
-                </div>
-
-                {customTokenError && (
-                  <Alert variant="destructive" className="py-2">
-                    <AlertCircle className="h-4 w-4" />
-                    <AlertDescription>{customTokenError}</AlertDescription>
-                  </Alert>
+                      </div>
+                    ))}
+                  </div>
+                ) : searchResults.length === 0 && !searchQuery.trim() ? (
+                  <div className="p-4 text-center text-muted-foreground">
+                    Enter a token name, symbol, or address to search
+                  </div>
+                ) : searchResults.length === 0 ? (
+                  <div className="p-8 text-center text-muted-foreground">
+                    No tokens found. Try a different search term.
+                  </div>
+                ) : (
+                  <div className="divide-y">
+                    {searchResults.map((token) => renderTokenItem(token, value === token.id))}
+                  </div>
                 )}
+              </ScrollArea>
+            </div>
 
-                <p className="text-xs text-muted-foreground">
-                  Enter a valid Sui token address in SuiVision format (0x...) or standard format
-                  (package::module::struct)
-                </p>
-              </div>
-
-              <div className="rounded-md border p-4 bg-muted/30">
-                <h4 className="text-sm font-medium mb-2">How to find a token address:</h4>
-                <ol className="text-xs space-y-2 text-muted-foreground list-decimal pl-4">
-                  <li>Go to SuiVision or Sui Explorer</li>
-                  <li>Search for the token by name or symbol</li>
-                  <li>Copy the token ID (0x... format) or full type path (package::module::struct)</li>
-                  <li>Paste the complete address here</li>
-                </ol>
-                <div className="flex gap-2 mt-4">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="text-xs h-8 flex-1"
-                    onClick={() => window.open("https://suivision.xyz/coins", "_blank")}
-                  >
-                    <ExternalLink className="h-3 w-3 mr-1" />
-                    SuiVision
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="text-xs h-8 flex-1"
-                    onClick={() => window.open("https://explorer.sui.io", "_blank")}
-                  >
-                    <ExternalLink className="h-3 w-3 mr-1" />
-                    Sui Explorer
-                  </Button>
-                </div>
-              </div>
-            </TabsContent>
-          </Tabs>
+            <p className="text-xs text-muted-foreground">
+              Enter a valid Sui token address in SuiVision format (0x...) or standard format
+              (package::module::struct) to add custom tokens.
+            </p>
+          </div>
 
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsDialogOpen(false)}>
