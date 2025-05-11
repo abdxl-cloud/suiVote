@@ -1,7 +1,6 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { useSearchParams } from "next/navigation"
 import {
   Eye,
   Share2,
@@ -59,7 +58,6 @@ const safeFormatDistanceToNow = (date: Date | number | string) => {
 }
 
 export default function PollsPage() {
-  const searchParams = useSearchParams()
   const [searchQuery, setSearchQuery] = useState("")
   const [shareDialogOpen, setShareDialogOpen] = useState(false)
   const [selectedVote, setSelectedVote] = useState<any | null>(null)
@@ -85,25 +83,6 @@ export default function PollsPage() {
     }, 60000)
     return () => clearInterval(interval)
   }, [])
-
-  // We need to use useEffect to access the search params
-  useEffect(() => {
-    // Only run on client side
-    if (!isClient) return;
-    
-    // Check if we're coming from a successful vote creation
-    const created = searchParams?.get("created")
-    if (created === "true") {
-      setShowSuccess(true);
-
-      // Hide the success message after 5 seconds
-      const timer = setTimeout(() => {
-        setShowSuccess(false);
-      }, 5000);
-
-      return () => clearTimeout(timer);
-    }
-  }, [searchParams, isClient]);
 
   useEffect(() => {
     if (wallet.connected && wallet.address) {
