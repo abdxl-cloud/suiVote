@@ -6,7 +6,7 @@ import type { Transaction } from "@mysten/sui/transactions"
 import {
   SuiVoteService,
   type PollData,
-  type DashboardVote,
+  type VoteList,
   type VoteDetails,
   type PollDetails,
   type PollOptionDetails,
@@ -22,9 +22,15 @@ export function useSuiVote() {
   const [error, setError] = useState<string | null>(null)
 
   /**
-   * Get votes created by the current user
+   * Get votes created by, participated in, or whitelisted for the current user
+   * This function categorizes votes into five statuses:
+   * - active: Votes that are open but user has not voted in
+   * - pending: Votes that user's wallet is whitelisted for, are open but has not voted in
+   * - upcoming: Votes that are scheduled but have not started yet
+   * - closed: Votes that have ended
+   * - voted: Any vote that the user has already voted in
    */
-  const getMyVotes = useCallback(async (address: string, limit = 20): Promise<{ data: DashboardVote[] }> => {
+  const getMyVotes = useCallback(async (address: string, limit = 20): Promise<{ data: VoteList[] }> => {
     try {
       setLoading(true)
       setError(null)
@@ -229,6 +235,71 @@ export function useSuiVote() {
   )
 
   /**
+   * Create a transaction to add allowed voters to a vote's whitelist
+   */
+  const addAllowedVotersTransaction = useCallback(
+    (voteId: string, voterAddresses: string[]): Transaction => {
+      try {
+        setLoading(true)
+        setError(null)
+
+        console.log(`Creating transaction to add ${voterAddresses.length} voters to whitelist for vote ${voteId}`)
+
+        const transaction = suiVoteService.addAllowedVotersTransaction(voteId, voterAddresses)
+        return transaction
+      } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : String(err)
+        setError(errorMessage)
+        console.error("Error creating add allowed voters transaction:", errorMessage)
+        throw err
+      } finally {
+        setLoading(false)
+      }
+    },
+    [],
+  )
+
+  /**
+   * Check if a voter is whitelisted for a vote
+   */
+  const isVoterWhitelisted = useCallback(async (voteId: string, voterAddress: string): Promise<boolean> => {
+    try {
+      setLoading(true)
+      setError(null)
+
+      const result = await suiVoteService.isVoterWhitelisted(voteId, voterAddress)
+      return result
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err)
+      setError(errorMessage)
+      console.error("Error checking if voter is whitelisted:", errorMessage)
+      return false
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  /**
+   * Get the whitelisted voters for a vote
+   */
+  const getWhitelistedVoters = useCallback(async (voteId: string): Promise<string[]> => {
+    try {
+      setLoading(true)
+      setError(null)
+
+      const result = await suiVoteService.getWhitelistedVoters(voteId)
+      return result
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err)
+      setError(errorMessage)
+      console.error("Error getting whitelisted voters:", errorMessage)
+      return []
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  /**
    * Create a transaction to cast a vote
    */
   const castVoteTransaction = useCallback(
@@ -405,12 +476,40 @@ export function useSuiVote() {
     [wallet],
   )
 
+  /**
+   * Get votes where a user is whitelisted
+   */
+  const getVotesWhitelistedForAddress = useCallback(
+    async (address: string, limit = 20, cursor?: string): Promise<{ data: VoteDetails[]; nextCursor?: string }> => {
+      try {
+        setLoading(true)
+        setError(null)
+
+        if (!address) {
+          throw new Error("Address is required")
+        }
+
+        const result = await suiVoteService.getVotesWhitelistedForAddress(address, limit, cursor)
+        return result
+      } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : String(err)
+        setError(errorMessage)
+        console.error("Error fetching whitelisted votes:", errorMessage)
+        return { data: [] }
+      } finally {
+        setLoading(false)
+      }
+    },
+    [],
+  )
+
   return {
     loading,
     error,
     getMyVotes,
     getVotesCreatedByAddress,
     getVotesParticipatedByAddress,
+    getVotesWhitelistedForAddress,
     getVoteDetails,
     getVotePolls,
     getPollOptions,
@@ -423,5 +522,9 @@ export function useSuiVote() {
     hasVoted,
     getVoteResults,
     executeTransaction,
+    // Whitelist functionality
+    addAllowedVotersTransaction,
+    isVoterWhitelisted,
+    getWhitelistedVoters,
   }
 }

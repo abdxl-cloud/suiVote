@@ -54,19 +54,11 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Progress } from "@/components/ui/progress"
-
 // Update the imports to include the new TokenSelector component
 import { TokenSelector } from "@/components/token-selector"
+import { VoteMediaHandler  } from "@/components/media-handler";
+import { MediaFileUploader } from "@/components/file-uploader";
 
-// Sample token data - in a real app, this would come from an API or config
-// Remove these lines:
-// Sample token data - in a real app, this would come from an API or config
-// const suiTokens = [
-//   { id: "0x2::sui::SUI", name: "SUI", icon: "🔷" },
-//   { id: "0x5d4b302506645c37ff133b98c4b50a5ae14841659738d6d733d59d0d217a93bf::coin::COIN", name: "USDC", icon: "💲" },
-//   { id: "0x5d4b302506645c37ff133b98c4b50a5ae14841659738d6d733d59d0d217a93bf::coin::ETH", name: "ETH", icon: "💠" },
-//   { id: "0x5d4b302506645c37ff133b98c4b50a5ae14841659738d6d733d59d0d217a93bf::coin::BTC", name: "BTC", icon: "🔶" },
-// ]
 
 // Transaction status enum
 enum TransactionStatus {
@@ -125,8 +117,11 @@ type ValidationErrors = {
 export default function CreateVotePage() {
   const router = useRouter()
   const wallet = useWallet()
-  const { createCompleteVoteTransaction, loading, error } = useSuiVote()
+  const { loading, error, executeTransaction } = useSuiVote()
   const { toast: uiToast } = useToast()
+
+  const [mediaUploadDialogOpen, setMediaUploadDialogOpen] = useState(false);
+  const [activeMediaOption, setActiveMediaOption] = useState({ poll: null, option: null });
 
   const [voteTitle, setVoteTitle] = useState("")
   const [voteDescription, setVoteDescription] = useState("")
@@ -170,6 +165,24 @@ export default function CreateVotePage() {
   // New state for environment variable checks
   const [envVarsChecked, setEnvVarsChecked] = useState(false)
   const [missingEnvVars, setMissingEnvVars] = useState<string[]>([])
+
+  
+    const [startDate, setStartDate] = useState(new Date());
+    const [endDate, setEndDate] = useState(
+      new Date(new Date().setDate(new Date().getDate() + 7))
+    );
+  
+    // Example available dates (next 14 days)
+    const availableDates = Array.from({ length: 14 }, (_, i) => {
+      const date = new Date();
+      date.setDate(date.getDate() + i);
+      return date;
+    });
+
+// Example disabled dates
+const disabledDates = [
+  new Date(new Date().setDate(new Date().getDate() + 3))
+]
 
   // Check environment variables on component mount
   useEffect(() => {
@@ -352,20 +365,7 @@ export default function CreateVotePage() {
     newPolls[pollIndex].options[optionIndex].text = text
     setPolls(newPolls)
   }
-
-  const addMediaToOption = (pollIndex: number, optionIndex: number) => {
-    // Simulate adding media - in a real app, this would open a file picker
-    const newPolls = [...polls]
-    newPolls[pollIndex].options[optionIndex].mediaUrl = "/placeholder.svg?height=200&width=200"
-    setPolls(newPolls)
-  }
-
-  const removeMediaFromOption = (pollIndex: number, optionIndex: number) => {
-    const newPolls = [...polls]
-    newPolls[pollIndex].options[optionIndex].mediaUrl = null
-    setPolls(newPolls)
-  }
-
+    
   // Enhanced validation function aligned with service validation
   const validateForm = (): boolean => {
     const newErrors: ValidationErrors = {}
@@ -503,8 +503,67 @@ export default function CreateVotePage() {
     return true
   }
 
-  // Enhanced handleSubmit with transaction status tracking
-  const handleSubmit = async () => {
+  const addMediaToOption = (mediaHandlers: any, pollIndex: number, optionIndex: number) => {
+    setActiveMediaOption({ poll: pollIndex, option: optionIndex });
+    setMediaUploadDialogOpen(true);
+  };
+
+  const handleMediaFileSelect = (mediaHandlers: any, file: File) => {
+    try {
+      // Add the file to the media handler and get the file ID
+      const fileId = mediaHandlers.addMediaFile(file);
+      
+      const { poll, option } = activeMediaOption;
+      if (poll !== null && option !== null) {
+        const newPolls = [...polls];
+        
+        // Use the dataUrl for preview, and store the fileId for reference
+        const mediaFile = mediaHandlers.mediaFiles.find((f: any) => f.id === fileId);
+        if (mediaFile && mediaFile.dataUrl) {
+          newPolls[poll].options[option].mediaUrl = mediaFile.dataUrl;
+          newPolls[poll].options[option].fileId = fileId;
+          setPolls(newPolls);
+          
+          // Close the dialog automatically after successful selection
+          setMediaUploadDialogOpen(false);
+          toast.success("Media added successfully");
+        } else {
+          toast.error("Failed to process media file");
+        }
+      } else {
+        toast.error("No poll option selected for media");
+        setMediaUploadDialogOpen(false);
+      }
+    } catch (error) {
+      console.error("Error adding media file:", error);
+      toast.error("Failed to add media file");
+    }
+  };
+
+  const removeMediaFromOption = (mediaHandlers: any, pollIndex: number, optionIndex: number) => {
+    try {
+      const newPolls = [...polls];
+      const fileId = newPolls[pollIndex].options[optionIndex].fileId;
+      
+      if (fileId) {
+        // Remove the file from the media handler
+        mediaHandlers.removeMediaFile(fileId);
+      }
+      
+      // Clear the media URL and file ID from the poll option
+      newPolls[pollIndex].options[optionIndex].mediaUrl = null;
+      newPolls[pollIndex].options[optionIndex].fileId = null;
+      setPolls(newPolls);
+      
+      toast.success("Media removed successfully");
+    } catch (error) {
+      console.error("Error removing media file:", error);
+      toast.error("Failed to remove media file");
+    }
+  };
+
+  // Update your handleSubmit function to use the media handler
+  const handleSubmit = async (mediaHandlers: any) => {
     try {
       if (!validateForm()) {
         // Scroll to the error alert if present
@@ -513,21 +572,21 @@ export default function CreateVotePage() {
           if (errorAlert) {
             errorAlert.scrollIntoView({ behavior: "smooth", block: "center" })
           }
-        }, 100)
-        return
+        }, 100);
+        return;
       }
 
       if (!wallet.connected) {
         toast.error("Wallet not connected", {
           description: "Please connect your wallet to create a vote",
-        })
-        return
+        });
+        return;
       }
 
       // Reset states
-      setTransactionError(null)
-      setTxStatus(TransactionStatus.BUILDING)
-      setTxStatusDialogOpen(true)
+      setTransactionError(null);
+      setTxStatus(TransactionStatus.BUILDING);
+      setTxStatusDialogOpen(true);
 
       // Convert poll data to the format expected by the service
       const pollData = polls.map((poll) => ({
@@ -540,73 +599,72 @@ export default function CreateVotePage() {
           text: option.text,
           mediaUrl: option.mediaUrl || undefined,
         })),
-      }))
+      }));
 
-      // Convert dates to timestamps (milliseconds)
-      const startTimestamp = votingSettings.startDate ? votingSettings.startDate.getTime() : Date.now()
-      const endTimestamp = votingSettings.endDate ? votingSettings.endDate.getTime() : Date.now() + 604800000 // Default 1 week
-
-      // Build the transaction
-      console.log("Creating vote transaction...")
-      const transaction = createCompleteVoteTransaction(
+      // Create the combined transaction
+      console.log("Creating vote transaction with media...");
+      setTxStatus(TransactionStatus.BUILDING);
+      
+      const transaction = await mediaHandlers.createVoteWithMedia({
         voteTitle,
         voteDescription,
-        startTimestamp,
-        endTimestamp,
-        votingSettings.requiredToken !== "none" ? votingSettings.requiredToken : "",
-        Number.parseInt(votingSettings.requiredAmount || "0"),
-        Number.parseInt(votingSettings.paymentAmount || "0"),
-        votingSettings.requireAllPolls,
-        pollData,
-      )
+        startDate: votingSettings.startDate,
+        endDate: votingSettings.endDate,
+        requiredToken: votingSettings.requiredToken !== "none" ? votingSettings.requiredToken : "",
+        requiredAmount: votingSettings.requiredAmount || "0",
+        paymentAmount: votingSettings.paymentAmount || "0",
+        requireAllPolls: votingSettings.requireAllPolls,
+        polls: pollData,
+        onSuccess: (voteId) => {
+          console.log("Vote created successfully with ID:", voteId);
+        }
+      });
 
-      console.log("Transaction built successfully, signing transaction...")
-      setTxStatus(TransactionStatus.SIGNING)
+      console.log("Transaction prepared successfully, executing transaction...");
+      setTxStatus(TransactionStatus.SIGNING);
 
-      // Sign and execute the transaction
-      const response = await wallet.signAndExecuteTransaction({
-        transaction,
-        chain: "sui", // or whichever network you're using
-      })
+      // Execute the transaction
+      const result = await transaction.execute();
 
-      console.log("Transaction executed successfully:", response)
-      setTxStatus(TransactionStatus.EXECUTING)
-      setTxDigest(response.digest)
+      console.log("Transaction executed successfully:", result);
+      setTxStatus(TransactionStatus.EXECUTING);
+      setTxDigest(result.digest);
 
       // Wait for confirmation (simulate with timeout in this example)
-      // In a real app, you would poll the blockchain for confirmation
-      setTxStatus(TransactionStatus.CONFIRMING)
+      setTxStatus(TransactionStatus.CONFIRMING);
 
       // Simulate waiting for confirmation
-      await new Promise((resolve) => setTimeout(resolve, 2000))
+      await new Promise((resolve) => setTimeout(resolve, 2000));
 
       // Transaction confirmed
-      setTxStatus(TransactionStatus.SUCCESS)
+      setTxStatus(TransactionStatus.SUCCESS);
 
       // Show success message
       toast.success("Vote created successfully!", {
         description: "Your vote has been published to the blockchain",
-      })
+      });
 
       // Wait a moment to show the success state before redirecting
       setTimeout(() => {
         // Navigate to success page with vote data
-        router.push(`/success?digest=${response.digest}`)
-      }, 1500)
+        router.push(`/success?digest=${result.digest}${result.voteId ? `&voteId=${result.voteId}` : ''}`);
+      }, 1500);
     } catch (err) {
-      console.error("Error creating vote:", err)
+      console.error("Error creating vote:", err);
 
       // Extract error message
-      const errorMessage = err instanceof Error ? err.message : "An unknown error occurred while creating the vote"
+      const errorMessage = err instanceof Error ? err.message : "An unknown error occurred while creating the vote";
 
-      setTransactionError(errorMessage)
-      setTxStatus(TransactionStatus.ERROR)
+      setTransactionError(errorMessage);
+      setTxStatus(TransactionStatus.ERROR);
 
       toast.error("Failed to create vote", {
         description: errorMessage,
-      })
+      });
     }
-  }
+  };
+
+  
 
   // Get transaction explorer URL
   const getTransactionExplorerUrl = () => {
@@ -632,6 +690,8 @@ export default function CreateVotePage() {
   }
 
   return (
+    <VoteMediaHandler>
+      {(mediaHandlers) => (
     <motion.div initial="hidden" animate="visible" variants={fadeIn} className="container max-w-7xl py-6 px-4 md:px-6">
       {/* Header */}
       <motion.div
@@ -645,7 +705,7 @@ export default function CreateVotePage() {
             <h1 className="text-2xl font-bold tracking-tight truncate">{voteTitle ? voteTitle : "Create New Vote"}</h1>
           </div>
           <div className="flex items-center gap-2 w-full sm:w-auto">
-            <Link href="/dashboard" className="w-full sm:w-auto">
+            <Link href="/polls" className="w-full sm:w-auto">
               <Button
                 variant="outline"
                 size="sm"
@@ -1077,33 +1137,40 @@ export default function CreateVotePage() {
                               </p>
                             )}
 
-                            {option.mediaUrl ? (
-                              <div className="relative mt-2 rounded-md overflow-hidden">
-                                <img
-                                  src={option.mediaUrl || "/placeholder.svg"}
-                                  alt={`Media for ${option.text || `Option ${optionIndex + 1}`}`}
-                                  className="w-full h-auto max-h-[200px] object-cover rounded-md"
-                                />
-                                <Button
-                                  variant="destructive"
-                                  size="sm"
-                                  className="absolute top-2 right-2 transition-all hover:scale-105"
-                                  onClick={() => removeMediaFromOption(activePollIndex, optionIndex)}
-                                >
-                                  Remove Media
-                                </Button>
-                              </div>
-                            ) : (
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                className="mt-2 gap-2 transition-all hover:scale-105"
-                                onClick={() => addMediaToOption(activePollIndex, optionIndex)}
-                              >
-                                <ImageIcon className="h-4 w-4" />
-                                Add Media
-                              </Button>
-                            )}
+{option.mediaUrl ? (
+            <div className="relative mt-2 rounded-md overflow-hidden">
+              <img
+                src={option.mediaUrl}
+                alt={`Media for ${option.text || `Option ${optionIndex + 1}`}`}
+                className="w-full h-auto max-h-[200px] object-contain rounded-md"
+              />
+              <Button
+                variant="destructive"
+                size="sm"
+                className="absolute top-2 right-2 transition-all hover:scale-105"
+                onClick={() => removeMediaFromOption(mediaHandlers, activePollIndex, optionIndex)}
+              >
+                Remove Media
+              </Button>
+              {option.fileId && mediaHandlers.uploadProgress[option.fileId] > 0 && mediaHandlers.uploadProgress[option.fileId] < 100 && (
+                <div className="absolute inset-0 bg-background/80 flex flex-col items-center justify-center">
+                  <Progress value={mediaHandlers.uploadProgress[option.fileId]} className="w-3/4 h-2" />
+                  <p className="text-xs mt-2">{mediaHandlers.uploadProgress[option.fileId]}% ready</p>
+                </div>
+              )}
+            </div>
+          ) : (
+            <Button
+              variant="outline"
+              size="sm"
+              className="mt-2 gap-2 transition-all hover:scale-105"
+              onClick={() => addMediaToOption(mediaHandlers, activePollIndex, optionIndex)}
+            >
+              <ImageIcon className="h-4 w-4" />
+              Add Media
+            </Button>
+          )}
+          
                           </motion.div>
                         ))}
                       </div>
@@ -1195,19 +1262,18 @@ export default function CreateVotePage() {
 
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                       <DateTimePicker
-                          date={votingSettings.startDate}
-                          setDate={(date) => setVotingSettings({ ...votingSettings, startDate: date })}
-                          label="Start Date & Time"
-                          error={!!errors.votingSettings?.dates}
-                          required
-                        />
-                        <DateTimePicker
-                          date={votingSettings.endDate}
-                          setDate={(date) => setVotingSettings({ ...votingSettings, endDate: date })}
-                          label="End Date & Time"
-                          error={!!errors.votingSettings?.dates}
-                          required
-                        />
+        id="start-date"
+        value={startDate}
+        onChange={setStartDate}
+        label="Start date and time"
+      />
+      
+      <DateTimePicker
+        id="end-date"
+        value={endDate}
+        onChange={setEndDate}
+        label="End date and time"
+      />
                       </div>
                     </div>
 
@@ -1323,24 +1389,26 @@ export default function CreateVotePage() {
                   >
                     <ChevronLeft className="h-4 w-4" />
                   </Button>
-                  <Button
-                    size="lg"
-                    className="gap-2 transition-all hover:scale-105"
-                    onClick={handleSubmit}
-                    disabled={txStatus !== TransactionStatus.IDLE && txStatus !== TransactionStatus.ERROR}
-                  >
-                    {txStatus !== TransactionStatus.IDLE && txStatus !== TransactionStatus.ERROR ? (
-                      <>
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                        Creating Vote...
-                      </>
-                    ) : (
-                      <>
-                        Create Vote
-                        <ArrowRight className="h-4 w-4" />
-                      </>
-                    )}
-                  </Button>
+                  {/* Update your submit button to use the media handlers */}
+          {/* Find the button that calls handleSubmit and replace with: */}
+          <Button 
+            size="lg" 
+            className="gap-2 transition-all hover:scale-105" 
+            onClick={() => handleSubmit(mediaHandlers)}
+            disabled={txStatus !== TransactionStatus.IDLE && txStatus !== TransactionStatus.ERROR}
+          >
+            {txStatus !== TransactionStatus.IDLE && txStatus !== TransactionStatus.ERROR ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Creating Vote...
+              </>
+            ) : (
+              <>
+                Create Vote
+                <ArrowRight className="h-4 w-4" />
+              </>
+            )}
+          </Button>
                 </CardFooter>
               </Card>
 
@@ -1532,6 +1600,34 @@ export default function CreateVotePage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      {/* Add this dialog for media upload */}
+      <Dialog open={mediaUploadDialogOpen} onOpenChange={setMediaUploadDialogOpen}>
+  <DialogContent className="sm:max-w-md">
+    <DialogHeader>
+      <DialogTitle>Upload Media</DialogTitle>
+      <DialogDescription>
+        Add an image to enhance your poll option.
+      </DialogDescription>
+    </DialogHeader>
+    <div className="py-4">
+      <MediaFileUploader 
+        onFileSelect={(file) => {
+          if (file) {
+            handleMediaFileSelect(mediaHandlers, file);
+          }
+        }}
+        disabled={mediaHandlers.loading}
+      />
+    </div>
+    <DialogFooter>
+      <Button variant="outline" onClick={() => setMediaUploadDialogOpen(false)}>
+        Cancel
+      </Button>
+    </DialogFooter>
+  </DialogContent>
+</Dialog>
     </motion.div>
+      )}
+    </VoteMediaHandler>
   )
 }

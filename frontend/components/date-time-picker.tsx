@@ -1,217 +1,311 @@
 "use client"
 
 import * as React from "react"
-import { format, addHours, isAfter, isBefore, addMinutes } from "date-fns"
-import { CalendarIcon, AlertCircle } from "lucide-react"
-import { cn } from "@/lib/utils"
-import { Button } from "@/components/ui/button"
-import { Calendar } from "@/components/ui/calendar"
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { Label } from "@/components/ui/label"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Alert, AlertDescription } from "@/components/ui/alert"
+import { ChevronLeft, ChevronRight, Clock, CalendarIcon } from "lucide-react"
+import { format, addMonths, isSameDay, isSameMonth, isToday, isAfter, addMinutes } from "date-fns"
 
-interface DateTimePickerProps {
-  date: Date | undefined
-  setDate: (date: Date | undefined) => void
-  label?: string
-  error?: boolean
-  required?: boolean
-  minDate?: Date
-  maxDate?: Date
-}
+// Generate unique IDs for components
+const generateId = () => `calendar-${Math.random().toString(36).substring(2, 9)}`;
 
 export function DateTimePicker({
-  date,
-  setDate,
-  label,
-  error,
-  required,
-  minDate: propMinDate,
-  maxDate,
-}: DateTimePickerProps) {
-  // Set minimum date to be at least 5 minutes from now
-  const defaultMinDate = React.useMemo(() => {
-    return addMinutes(new Date(), 5)
-  }, [])
-
-  const minDate = propMinDate || defaultMinDate
-
-  // Generate time options (every 15 minutes)
-  const timeOptions = React.useMemo(() => {
-    const options = []
-    for (let hour = 0; hour < 24; hour++) {
-      for (let minute = 0; minute < 60; minute += 15) {
-        const formattedHour = hour.toString().padStart(2, "0")
-        const formattedMinute = minute.toString().padStart(2, "0")
-        options.push(`${formattedHour}:${formattedMinute}`)
-      }
-    }
-    return options
-  }, [])
-
-  // Set default date to one hour ahead if not provided
+  id: externalId,
+  value,
+  onChange,
+  disabledDates = [],
+  className = "",
+  label = "Pick a date and time"
+}) {
+  // Create a unique ID for this calendar instance
+  const [instanceId] = React.useState(() => externalId || generateId());
+  
+  // Set default time 10 minutes ahead of current time
+  const getDefaultDateTime = () => {
+    const now = new Date();
+    return addMinutes(now, 10); // Handles day boundaries correctly
+  };
+  
+  // Local state for this specific calendar instance
+  const [isOpen, setIsOpen] = React.useState(false);
+  const [selectedDate, setSelectedDate] = React.useState(value || getDefaultDateTime());
+  const [hour, setHour] = React.useState(
+    value ? format(value, "HH") : format(getDefaultDateTime(), "HH")
+  );
+  const [minute, setMinute] = React.useState(
+    value ? format(value, "mm") : format(getDefaultDateTime(), "mm")
+  );
+  
+  // State for time validation
+  const [timeError, setTimeError] = React.useState("");
+  
+  // Refs specific to this calendar instance
+  const containerRef = React.useRef(null);
+  
+  // Effect to update the component when the external value changes
   React.useEffect(() => {
-    if (!date) {
-      const defaultDate = addHours(new Date(), 1)
-      // Round to nearest 15 minutes
-      const minutes = defaultDate.getMinutes()
-      const roundedMinutes = Math.ceil(minutes / 15) * 15
-      defaultDate.setMinutes(roundedMinutes % 60)
-      if (roundedMinutes === 60) {
-        defaultDate.setHours(defaultDate.getHours() + 1)
-      }
-      setDate(defaultDate)
+    if (value) {
+      // setSelectedDate(value);
+      setHour(format(value, "HH"));
+      setMinute(format(value, "mm"));
     }
-  }, [date, setDate])
-
-  // Update the time when the date changes
-  const [selectedTime, setSelectedTime] = React.useState<string>(() => {
-    return date ? format(date, "HH:mm") : format(addHours(new Date(), 1), "HH:mm")
-  })
-
+  }, [value]);
+  
+  // Close the dropdown when clicking outside
   React.useEffect(() => {
-    if (date) {
-      setSelectedTime(format(date, "HH:mm"))
+    function handleClickOutside(event) {
+      if (containerRef.current && !containerRef.current.contains(event.target)) {
+        setIsOpen(false);
+      }
     }
-  }, [date])
-
-  // Check if the selected date and time is valid (after minDate)
-  const isValidDateTime = React.useMemo(() => {
-    if (!date) return false
-
-    // Check if date is after minDate
-    return isAfter(date, minDate) && (!maxDate || isBefore(date, maxDate))
-  }, [date, minDate, maxDate])
-
-  // Error message for invalid date/time
-  const [timeError, setTimeError] = React.useState<string | null>(null)
-
-  // Update the date with the selected time
-  const handleTimeChange = React.useCallback(
-    (time: string) => {
-      setSelectedTime(time)
-      if (date) {
-        const [hours, minutes] = time.split(":").map(Number)
-        const newDate = new Date(date)
-        newDate.setHours(hours)
-        newDate.setMinutes(minutes)
-
-        // Validate the new date is after minDate
-        if (isBefore(newDate, minDate)) {
-          setTimeError(`Time must be at least ${format(minDate, "h:mm a")} today`)
-        } else if (maxDate && isAfter(newDate, maxDate)) {
-          setTimeError(`Time must be before ${format(maxDate, "h:mm a")}`)
-        } else {
-          setTimeError(null)
-          setDate(newDate)
-        }
-      }
-    },
-    [date, setDate, minDate, maxDate],
-  )
-
-  // Handle date selection from calendar
-  const handleSelect = React.useCallback(
-    (day: Date | undefined) => {
-      if (!day) {
-        setDate(undefined)
-        return
-      }
-
-      // If there's already a date, preserve the time
-      if (date) {
-        day.setHours(date.getHours())
-        day.setMinutes(date.getMinutes())
-      } else if (selectedTime) {
-        // If there's no date but there is a selected time, use it
-        const [hours, minutes] = selectedTime.split(":").map(Number)
-        day.setHours(hours)
-        day.setMinutes(minutes)
-      }
-
-      // Validate the new date
-      if (isBefore(day, minDate)) {
-        // If day is valid but time makes it invalid, adjust time to minDate's time
-        if (isBefore(new Date(day).setHours(0, 0, 0, 0), new Date(minDate).setHours(0, 0, 0, 0))) {
-          // Day is before minDate, don't allow selection
-          setTimeError(`Date must be today or later`)
-          return
-        } else {
-          // Day is valid but time is before minDate, adjust time
-          day.setHours(minDate.getHours())
-          day.setMinutes(minDate.getMinutes())
-          setSelectedTime(format(day, "HH:mm"))
-          setTimeError(null)
-        }
-      } else if (maxDate && isAfter(day, maxDate)) {
-        setTimeError(`Date must be before ${format(maxDate, "PPP")}`)
-        return
-      } else {
-        setTimeError(null)
-      }
-
-      setDate(day)
-    },
-    [date, setDate, selectedTime, minDate, maxDate],
-  )
-
+    
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    }
+  }, []);
+  
+  // Update parent component when selection changes
+  React.useEffect(() => {
+    validateTimeSelection(selectedDate, hour, minute);
+    // We validate on each change but don't auto-adjust here
+  }, [selectedDate, hour, minute]);
+  
+  // Check if a date is in the past (before today)
+  const isDateInPast = (date) => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    return date < today;
+  };
+  
+  // Check if a date is disabled
+  const isDateDisabled = (date) => {
+    return isDateInPast(date) || disabledDates.some(disabledDate => isSameDay(disabledDate, date));
+  };
+  
+  // Check if a date is selected
+  const isDateSelected = (date) => {
+    return selectedDate && isSameDay(date, selectedDate);
+  };
+  
+  // Handle hour change with validation
+  const handleHourChange = (e) => {
+    const newHour = e.target.value;
+    if (newHour >= 0 && newHour <= 23) {
+      setHour(newHour.padStart(2, '0'));
+      validateTimeSelection(selectedDate, newHour, minute);
+    }
+  };
+  
+  // Handle minute change with validation
+  const handleMinuteChange = (e) => {
+    const newMinute = e.target.value;
+    if (newMinute >= 0 && newMinute <= 59) {
+      setMinute(newMinute.padStart(2, '0'));
+      validateTimeSelection(selectedDate, hour, newMinute);
+    }
+  };
+  
+  // Validate time is at least 10 minutes in the future
+  const validateTimeSelection = (date, hrs, mins) => {
+    const now = new Date();
+    const selectedDateTime = new Date(date);
+    selectedDateTime.setHours(parseInt(hrs, 10), parseInt(mins, 10), 0, 0);
+    
+    // Check if the selected time is at least 10 minutes ahead
+    const minAllowedTime = addMinutes(now, 10);
+    
+    if (isAfter(selectedDateTime, minAllowedTime)) {
+      setTimeError("");
+      onChange?.(selectedDateTime);
+    } else {
+      setTimeError("Time must be at least 10 minutes from now");
+    }
+  };
+  
+  // Generate calendar grid
+  const generateCalendarDays = () => {
+    const result = [];
+    const year = selectedDate.getFullYear();
+    const month = selectedDate.getMonth();
+    
+    // First day of month
+    const firstDay = new Date(year, month, 1);
+    const firstDayOfWeek = firstDay.getDay();
+    
+    // Previous month days
+    for (let i = 0; i < firstDayOfWeek; i++) {
+      const prevMonthDay = new Date(year, month, -i);
+      result.unshift(prevMonthDay);
+    }
+    
+    // Current month days
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    for (let i = 1; i <= daysInMonth; i++) {
+      result.push(new Date(year, month, i));
+    }
+    
+    // Next month days to complete the grid (6 rows of 7 days)
+    const remainingDays = 42 - result.length;
+    for (let i = 1; i <= remainingDays; i++) {
+      result.push(new Date(year, month + 1, i));
+    }
+    
+    return result;
+  };
+  
+  // Days of the week header
+  const daysOfWeek = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
+  
+  // Calendar days
+  const calendarDays = generateCalendarDays();
+  
   return (
-    <div className="space-y-2">
-      {label && (
-        <Label className="text-sm">
-          {label} {required && <span className="text-red-500">*</span>}
-        </Label>
-      )}
-      <div className="flex gap-2">
-        <Popover>
-          <PopoverTrigger asChild>
-            <Button
-              variant="outline"
-              className={cn(
-                "w-full justify-start text-left font-normal",
-                !date && "text-muted-foreground",
-                (error || timeError) && "border-red-500 focus-visible:ring-red-500",
-              )}
+    <div className={`relative ${className}`} ref={containerRef} data-calendar-id={instanceId}>
+      {/* Label above the input */}
+      <label htmlFor={`datetime-input-${instanceId}`} className="block text-sm font-medium text-foreground mb-2">
+        {label}
+      </label>
+      
+      {/* Main trigger button */}
+      <button
+        id={`datetime-input-${instanceId}`}
+        type="button"
+        onClick={() => setIsOpen(!isOpen)}
+        className="w-full flex items-center justify-between px-4 py-2 bg-background text-foreground rounded-md border border-input hover:border-primary focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 transition-all btn-hover-effect"
+      >
+        <div className="flex items-center gap-2">
+          <CalendarIcon className="h-4 w-4 text-muted-foreground" />
+          <span>
+            {value 
+              ? format(value, "MMM d, yyyy 'at' h:mm a") 
+              : "Select date and time"}
+          </span>
+        </div>
+        <div className={`transition-transform duration-300 ${isOpen ? 'rotate-180' : ''}`}>
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" className="text-muted-foreground">
+            <path d="M4 6L8 10L12 6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </div>
+      </button>
+      
+      {/* Calendar dropdown */}
+      {isOpen && (
+        <div className="absolute z-50 mt-1 w-[320px] bg-popover border border-border rounded-md shadow-lg animate-fade-in">
+          {/* Calendar header */}
+          <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+            <button
+              type="button"
+              onClick={() => setSelectedDate(date => addMonths(date, -1))}
+              className="p-1 rounded-full text-muted-foreground hover:text-foreground hover:bg-muted focus:outline-none transition-all"
             >
-              <CalendarIcon className="mr-2 h-4 w-4" />
-              {date ? format(date, "PPP") : <span>Pick a date</span>}
-            </Button>
-          </PopoverTrigger>
-          <PopoverContent className="w-auto p-0">
-            <Calendar
-              mode="single"
-              selected={date}
-              onSelect={handleSelect}
-              initialFocus
-              disabled={(day) => isBefore(day, new Date().setHours(0, 0, 0, 0))}
-              fromDate={new Date()}
-            />
-          </PopoverContent>
-        </Popover>
-
-        <Select value={selectedTime} onValueChange={handleTimeChange} disabled={!date}>
-          <SelectTrigger
-            className={cn("w-[120px]", (error || timeError) && "border-red-500 focus-visible:ring-red-500")}
-          >
-            <SelectValue placeholder="Time" />
-          </SelectTrigger>
-          <SelectContent>
-            {timeOptions.map((time) => (
-              <SelectItem key={time} value={time}>
-                {time}
-              </SelectItem>
+              <ChevronLeft className="h-5 w-5" />
+            </button>
+            
+            <h2 className="text-sm font-medium text-foreground">
+              {format(selectedDate, "MMMM yyyy")}
+            </h2>
+            
+            <button
+              type="button"
+              onClick={() => setSelectedDate(date => addMonths(date, 1))}
+              className="p-1 rounded-full text-muted-foreground hover:text-foreground hover:bg-muted focus:outline-none transition-all"
+            >
+              <ChevronRight className="h-5 w-5" />
+            </button>
+          </div>
+          
+          {/* Days of week */}
+          <div className="grid grid-cols-7 text-center text-xs text-muted-foreground py-2 px-1">
+            {daysOfWeek.map(day => (
+              <div key={`${instanceId}-dow-${day}`}>{day}</div>
             ))}
-          </SelectContent>
-        </Select>
-      </div>
-
-      {timeError && (
-        <Alert variant="destructive" className="py-2 mt-1">
-          <AlertCircle className="h-4 w-4" />
-          <AlertDescription>{timeError}</AlertDescription>
-        </Alert>
+          </div>
+          
+          {/* Calendar grid */}
+          <div className="p-1 grid grid-cols-7 gap-1">
+            {calendarDays.map((day, index) => {
+              const isDayInCurrentMonth = isSameMonth(day, selectedDate);
+              const isDisabled = isDateDisabled(day);
+              const isSelected = isDateSelected(day);
+              const isTodayDate = isToday(day);
+              
+              return (
+                <button
+                  key={`${instanceId}-day-${index}`}
+                  type="button"
+                  onClick={() => {
+                    if (!isDisabled && isDayInCurrentMonth) {
+                      const newDate = new Date(day);
+                      // Preserve the current time when changing date
+                      newDate.setHours(
+                        selectedDate.getHours(),
+                        selectedDate.getMinutes(),
+                        0, 
+                        0
+                      );
+                      setSelectedDate(newDate);
+                      // Validate after date selection
+                      validateTimeSelection(newDate, hour, minute);
+                    }
+                  }}
+                  disabled={isDisabled || !isDayInCurrentMonth}
+                  className={`
+                    relative flex items-center justify-center h-10 w-10 text-sm rounded-full
+                    ${!isDayInCurrentMonth ? 'text-muted-foreground/40' : isDisabled ? 'text-muted-foreground/60 cursor-not-allowed' : 'cursor-pointer hover:bg-accent transition-colors'}
+                    ${isSelected ? 'bg-primary text-primary-foreground' : ''}
+                    ${!isSelected && isDayInCurrentMonth && !isDisabled ? 'text-foreground' : ''}
+                    ${isTodayDate && !isSelected ? 'font-bold' : ''}
+                    focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2
+                    transition-all
+                  `}
+                >
+                  <span>{format(day, "d")}</span>
+                </button>
+              );
+            })}
+          </div>
+          
+          {/* Time selection with number inputs */}
+          <div className="px-4 py-3 border-t border-border">
+            <div className="flex justify-between items-center mb-2">
+              <label className="text-sm font-medium text-foreground">Select Time</label>
+              <Clock className="h-4 w-4 text-muted-foreground" />
+            </div>
+            
+            {/* Hour and minute inputs */}
+            <div className="flex items-center space-x-2">
+              <div className="w-1/2">
+                <input
+                  id={`${instanceId}-hour-input`}
+                  type="number"
+                  min="0"
+                  max="23"
+                  value={hour}
+                  onChange={handleHourChange}
+                  className="w-full px-3 py-2 bg-background text-foreground rounded-md border border-input hover:border-primary focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 transition-all"
+                />
+              </div>
+              <div className="w-1/2">
+                <input
+                  id={`${instanceId}-minute-input`}
+                  type="number"
+                  min="0"
+                  max="59"
+                  value={minute}
+                  onChange={handleMinuteChange}
+                  className="w-full px-3 py-2 bg-background text-foreground rounded-md border border-input hover:border-primary focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 transition-all"
+                />
+              </div>
+            </div>
+            
+            {/* Time validation error */}
+            {timeError && (
+              <div className="mt-2 text-xs text-red-500">
+                {timeError}
+              </div>
+            )}
+          </div>
+        </div>
       )}
     </div>
-  )
+  );
 }

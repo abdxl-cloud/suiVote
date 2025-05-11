@@ -3,12 +3,18 @@
 /// @dev Functionality that can be handled by the frontend has been moved off-chain
 module contracts::voting {
     use sui::dynamic_object_field as dof;
+    use sui::dynamic_field;
     use sui::coin::{Self, Coin};
     use sui::balance::{Self, Balance};
     use sui::sui::SUI;
     use sui::event;
     use sui::clock::{Self, Clock};
+    use sui::object::{Self, ID, UID};
+    use sui::transfer;
+    use sui::tx_context::{Self, TxContext};
     use std::string::{Self, String};
+    use std::option::{Self, Option};
+    use std::vector;
 
     // ===== Error codes =====
     const EInvalidTimestamp: u64 = 0;
@@ -24,20 +30,20 @@ module contracts::voting {
     const EInvalidPollCount: u64 = 12;
     const EInvalidOptionCount: u64 = 13;
     const EInvalidInputLength: u64 = 14;
+    const ENotWhitelisted: u64 = 15; // New error code for non-whitelisted voters
 
     // ===== Capability objects =====
     
     /// Admin capability for the platform
     public struct VoteAdmin has key {
         id: UID,
-        fee_balance: Balance<SUI>,
         total_votes_created: u64,
         total_votes_cast: u64
     }
 
     // ===== Core data structures =====
     
-    /// Main vote container - simplified by removing redundant fields
+    /// Main vote container - with new token requirement fields and whitelist flag
     public struct Vote has key, store {
         id: UID,
         creator: address,
@@ -49,8 +55,14 @@ module contracts::voting {
         require_all_polls: bool,
         polls_count: u64,
         total_votes: u64,
-        is_cancelled: bool
+        is_cancelled: bool,
+        token_requirement: Option<String>,  // Optional token type identifier
+        token_amount: Option<u64>,          // Optional amount of custom token required
+        has_whitelist: bool                 // Indicates if vote has address restrictions
     }
+
+    /// Simple struct to mark addresses as whitelisted - no UID needed
+    public struct WhitelistMarker has store, copy, drop {}
 
     /// Individual poll in a vote
     public struct Poll has key, store {
@@ -81,7 +93,10 @@ module contracts::voting {
         title: String,
         start_timestamp: u64,
         end_timestamp: u64,
-        polls_count: u64
+        polls_count: u64,
+        token_requirement: Option<String>,  // New field
+        token_amount: Option<u64>,          // New field
+        has_whitelist: bool                 // New field
     }
 
     /// Emitted when a vote is cast
@@ -122,13 +137,18 @@ module contracts::voting {
         timestamp: u64
     }
 
+    /// New event: Emitted when an address is added to the allowed voters list
+    public struct VoterWhitelisted has copy, drop {
+        vote_id: ID,
+        voter_address: address
+    }
+
     // ===== Initialization =====
     
     /// Initialize the admin object
     fun init(ctx: &mut TxContext) {
         transfer::share_object(VoteAdmin {
             id: object::new(ctx),
-            fee_balance: balance::zero(),
             total_votes_created: 0,
             total_votes_cast: 0
         });
@@ -136,7 +156,7 @@ module contracts::voting {
 
     // ===== Vote creation and management =====
     
-    /// Create a new vote with its initial configuration
+    /// Create a new vote with its initial configuration, including token requirements
     public entry fun create_vote(
         admin: &mut VoteAdmin,
         title: String,
@@ -145,6 +165,8 @@ module contracts::voting {
         end_timestamp: u64,
         payment_amount: u64,
         require_all_polls: bool,
+        token_requirement: vector<u8>,     // New: Optional token identifier as bytes
+        token_amount: u64,                 // New: Optional token amount
         clock: &Clock,
         ctx: &mut TxContext
     ) {
@@ -152,6 +174,20 @@ module contracts::voting {
         let current_time = clock::timestamp_ms(clock);
         assert!(start_timestamp >= current_time, EInvalidTimestamp);
         assert!(end_timestamp > start_timestamp, EInvalidTimestamp);
+
+        // Convert token_requirement to Option<String>
+        let token_req = if (vector::length(&token_requirement) > 0) {
+            option::some(string::utf8(token_requirement))
+        } else {
+            option::none()
+        };
+
+        // Convert token_amount to Option<u64>
+        let token_amt = if (token_amount > 0 && option::is_some(&token_req)) {
+            option::some(token_amount)
+        } else {
+            option::none()
+        };
 
         // Create the vote object
         let vote = Vote {
@@ -165,7 +201,10 @@ module contracts::voting {
             require_all_polls,
             polls_count: 0,
             total_votes: 0,
-            is_cancelled: false
+            is_cancelled: false,
+            token_requirement: token_req,
+            token_amount: token_amt,
+            has_whitelist: false
         };
 
         let vote_id = object::id(&vote);
@@ -173,14 +212,17 @@ module contracts::voting {
         // Update admin stats
         admin.total_votes_created = admin.total_votes_created + 1;
         
-        // Emit event for frontend tracking
+        // Emit event for frontend tracking with new fields
         event::emit(VoteCreated {
             vote_id,
             creator: tx_context::sender(ctx),
             title,
             start_timestamp,
             end_timestamp,
-            polls_count: 0
+            polls_count: 0,
+            token_requirement: token_req,
+            token_amount: token_amt,
+            has_whitelist: false
         });
 
         // Share the vote object
@@ -295,7 +337,56 @@ module contracts::voting {
         });
     }
 
-    /// Create a complete vote with polls and options in a single transaction
+    /// New function: Add allowed voters to the whitelist
+    public entry fun add_allowed_voters(
+        vote: &mut Vote,
+        voters: vector<address>,
+        clock: &Clock,
+        ctx: &mut TxContext
+    ) {
+        // Only creator can add allowed voters
+        assert!(vote.creator == tx_context::sender(ctx), ENotAuthorized);
+        
+        // Can't modify after voting has started
+        let current_time = clock::timestamp_ms(clock);
+        assert!(current_time < vote.start_timestamp, EPollNotActive);
+        
+        // Can't modify if vote is cancelled
+        assert!(!vote.is_cancelled, EPollClosed);
+        
+        // Store vote_id before mutable borrows
+        let vote_id = object::id(vote);
+        
+        // Set the whitelist flag to true
+        vote.has_whitelist = true;
+        
+        // Add the allowed voters as dynamic fields
+        let mut i = 0;
+        let voter_count = vector::length(&voters);
+        
+        while (i < voter_count) {
+            let voter = *vector::borrow(&voters, i);
+            
+            // Only add if voter not already whitelisted
+            if (!dynamic_field::exists_(&vote.id, voter)) {
+                // Create a simple marker struct with proper abilities
+                let marker = WhitelistMarker {};
+                
+                // Add as a dynamic field with the voter address as the key
+                dynamic_field::add(&mut vote.id, voter, marker);
+                
+                // Emit event for each whitelisted voter for frontend tracking
+                event::emit(VoterWhitelisted {
+                    vote_id,
+                    voter_address: voter
+                });
+            };
+            
+            i = i + 1;
+        };
+    }
+
+    /// Create a complete vote with polls and options in a single transaction, including token requirements
     public entry fun create_complete_vote(
         admin: &mut VoteAdmin,
         title: String,
@@ -304,6 +395,8 @@ module contracts::voting {
         end_timestamp: u64,
         payment_amount: u64,
         require_all_polls: bool,
+        token_requirement: vector<u8>,     // New: Optional token identifier as bytes
+        token_amount: u64,                 // New: Optional token amount
         poll_titles: vector<String>,
         poll_descriptions: vector<String>,
         poll_is_multi_select: vector<bool>,
@@ -329,6 +422,20 @@ module contracts::voting {
         assert!(poll_count == vector::length(&poll_is_required), EInvalidInputLength);
         assert!(poll_count == vector::length(&poll_option_counts), EInvalidInputLength);
 
+        // Convert token_requirement to Option<String>
+        let token_req = if (vector::length(&token_requirement) > 0) {
+            option::some(string::utf8(token_requirement))
+        } else {
+            option::none()
+        };
+
+        // Convert token_amount to Option<u64>
+        let token_amt = if (token_amount > 0 && option::is_some(&token_req)) {
+            option::some(token_amount)
+        } else {
+            option::none()
+        };
+
         // Create the vote object
         let mut vote = Vote {
             id: object::new(ctx),
@@ -341,7 +448,10 @@ module contracts::voting {
             require_all_polls,
             polls_count: 0,
             total_votes: 0,
-            is_cancelled: false
+            is_cancelled: false,
+            token_requirement: token_req,
+            token_amount: token_amt,
+            has_whitelist: false
         };
 
         // Get all option texts and media_urls total counts
@@ -449,27 +559,30 @@ module contracts::voting {
         // Update admin stats
         admin.total_votes_created = admin.total_votes_created + 1;
         
-        // Emit event for frontend tracking
+        // Emit event for frontend tracking with new fields
         event::emit(VoteCreated {
             vote_id,
             creator: tx_context::sender(ctx),
             title,
             start_timestamp,
             end_timestamp,
-            polls_count: vote.polls_count
+            polls_count: vote.polls_count,
+            token_requirement: token_req,
+            token_amount: token_amt,
+            has_whitelist: false
         });
 
         // Share the vote object
         transfer::share_object(vote);
     }
 
-    /// Cast a vote on a poll - simplified without token verification
+    /// Cast a vote on a poll - with whitelist check
     public entry fun cast_vote(
         vote: &mut Vote,
         admin: &mut VoteAdmin,
         poll_index: u64,
         option_indices: vector<u64>,
-        payment: Coin<SUI>,
+        mut payment: Coin<SUI>,
         clock: &Clock,
         ctx: &mut TxContext
     ) {
@@ -481,25 +594,33 @@ module contracts::voting {
         assert!(current_time <= vote.end_timestamp, EPollClosed);
         assert!(!vote.is_cancelled, EPollClosed);
         
+        // Check if sender is in whitelist (if whitelist is enabled)
+        if (vote.has_whitelist) {
+            assert!(dynamic_field::exists_(&vote.id, sender), ENotWhitelisted);
+        };
+        
         // Store vote_id before any mutable borrows
         let vote_id = object::id(vote);
         
-        // Handle payment if required
-        let mut coin_to_return = payment;
+        // Handle payment if required - send to vote creator
         if (vote.payment_amount > 0) {
-            let payment_value = coin::value(&coin_to_return);
+            let payment_value = coin::value(&payment);
             assert!(payment_value >= vote.payment_amount, EInsufficientPayment);
             
-            // Add payment to admin balance
-            let paid = coin::split(&mut coin_to_return, vote.payment_amount, ctx);
-            balance::join(&mut admin.fee_balance, coin::into_balance(paid));
-        };
-        
-        // Return any excess payment
-        if (coin::value(&coin_to_return) > 0) {
-            transfer::public_transfer(coin_to_return, sender);
+            if (payment_value == vote.payment_amount) {
+                // Exact payment - send the whole coin to vote creator
+                transfer::public_transfer(payment, vote.creator);
+            } else {
+                // Split the payment
+                let paid = coin::split(&mut payment, vote.payment_amount, ctx);
+                // Send exact amount to vote creator
+                transfer::public_transfer(paid, vote.creator);
+                // Return any excess to sender
+                transfer::public_transfer(payment, sender);
+            }
         } else {
-            coin::destroy_zero(coin_to_return);
+            // No payment required, return the whole coin
+            transfer::public_transfer(payment, sender);
         };
         
         // Get the poll
@@ -542,13 +663,13 @@ module contracts::voting {
         });
     }
 
-    /// Cast votes on multiple polls at once - simplified without token verification
+    /// Cast votes on multiple polls at once - with whitelist check
     public entry fun cast_multiple_votes(
         vote: &mut Vote,
         admin: &mut VoteAdmin,
         poll_indices: vector<u64>,
         option_indices_per_poll: vector<vector<u64>>,
-        payment: Coin<SUI>,
+        mut payment: Coin<SUI>,
         clock: &Clock,
         ctx: &mut TxContext
     ) {
@@ -559,6 +680,11 @@ module contracts::voting {
         assert!(current_time >= vote.start_timestamp, EPollNotActive);
         assert!(current_time <= vote.end_timestamp, EPollClosed);
         assert!(!vote.is_cancelled, EPollClosed);
+        
+        // Check if sender is in whitelist (if whitelist is enabled)
+        if (vote.has_whitelist) {
+            assert!(dynamic_field::exists_(&vote.id, sender), ENotWhitelisted);
+        };
         
         // Ensure vectors have same length
         let poll_count = vector::length(&poll_indices);
@@ -572,20 +698,25 @@ module contracts::voting {
         // Store vote_id before any mutable borrows
         let vote_id = object::id(vote);
         
-        // Handle payment if required
-        let mut coin_to_return = payment;
+        // Handle payment if required - send to vote creator
         if (vote.payment_amount > 0) {
-            let payment_value = coin::value(&coin_to_return);
+            let payment_value = coin::value(&payment);
             assert!(payment_value >= vote.payment_amount, EInsufficientPayment);
             
-            let paid = coin::split(&mut coin_to_return, vote.payment_amount, ctx);
-            balance::join(&mut admin.fee_balance, coin::into_balance(paid));
-        };
-        
-        if (coin::value(&coin_to_return) > 0) {
-            transfer::public_transfer(coin_to_return, sender);
+            if (payment_value == vote.payment_amount) {
+                // Exact payment - send the whole coin to vote creator
+                transfer::public_transfer(payment, vote.creator);
+            } else {
+                // Split the payment
+                let paid = coin::split(&mut payment, vote.payment_amount, ctx);
+                // Send exact amount to vote creator
+                transfer::public_transfer(paid, vote.creator);
+                // Return any excess to sender
+                transfer::public_transfer(payment, sender);
+            }
         } else {
-            coin::destroy_zero(coin_to_return);
+            // No payment required, return the whole coin
+            transfer::public_transfer(payment, sender);
         };
         
         // Process each poll vote
@@ -747,11 +878,22 @@ module contracts::voting {
         };
     }
 
+    /// Check if an address is allowed to vote (for frontend use)
+    public fun is_allowed_to_vote(vote: &Vote, voter: address): bool {
+        // If there's no whitelist, everyone can vote
+        if (!vote.has_whitelist) {
+            return true
+        };
+        
+        // Otherwise, check if the address is in the whitelist
+        dynamic_field::exists_(&vote.id, voter)
+    }
+
     // ===== View functions =====
 
-    /// Get vote details - useful for frontend validation
+    /// Get vote details - updated with new token requirement fields
     public fun get_vote_details(vote: &Vote): (
-        address, String, String, u64, u64, u64, bool, u64, u64, bool
+        address, String, String, u64, u64, u64, bool, u64, u64, bool, Option<String>, Option<u64>, bool
     ) {
         (
             vote.creator,
@@ -763,7 +905,10 @@ module contracts::voting {
             vote.require_all_polls,
             vote.polls_count,
             vote.total_votes,
-            vote.is_cancelled
+            vote.is_cancelled,
+            vote.token_requirement,
+            vote.token_amount,
+            vote.has_whitelist
         )
     }
     
@@ -802,8 +947,7 @@ module contracts::voting {
     }
     
     /// Get admin statistics
-    public fun get_admin_stats(admin: &VoteAdmin): (u64, u64, u64) {
-        let fee_amount = balance::value(&admin.fee_balance);
-        (admin.total_votes_created, admin.total_votes_cast, fee_amount)
+    public fun get_admin_stats(admin: &VoteAdmin): (u64, u64) {
+        (admin.total_votes_created, admin.total_votes_cast)
     }
 }
