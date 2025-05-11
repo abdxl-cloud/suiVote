@@ -125,7 +125,7 @@ export default function PollsPage() {
   }
 
   const calculatePercentage = (vote: number, total: number) => {
-    if (!total) return 0
+    if (!total || typeof total !== 'number' || total <= 0) return 0
     return Math.round((vote / total) * 100)
   }
 
@@ -215,8 +215,8 @@ export default function PollsPage() {
     .filter((vote) => (filterStatus === "all" ? true : vote.status === filterStatus))
     .sort((a, b) => {
       // Use created date or fallback to endTimestamp if created is missing
-      const dateA = new Date(a.created || a.endTimestamp).getTime()
-      const dateB = new Date(b.created || b.endTimestamp).getTime()
+      const dateA = new Date(a.created || a.endTimestamp || 0).getTime()
+      const dateB = new Date(b.created || b.endTimestamp || 0).getTime()
       return filterDate === "newest" ? dateB - dateA : dateA - dateB
     })
 
@@ -388,7 +388,7 @@ export default function PollsPage() {
                       {renderStatusBadge(vote.status)}
                     </div>
                     <CardDescription className="line-clamp-2 min-h-[40px]">
-                      {vote.description || " "}
+                      {vote.description || "No description provided"}
                     </CardDescription>
                     {renderFeatureBadges(vote)}
                   </CardHeader>
@@ -458,7 +458,7 @@ export default function PollsPage() {
                         {vote.status === "active" || vote.status === "pending" 
                           ? "Vote Now" 
                           : vote.status === "voted" 
-                          ? "Vote" 
+                          ? "My Vote" 
                           : "View"}
                       </Button>
                     </Link>
@@ -535,12 +535,12 @@ export default function PollsPage() {
         ) : null}
       </motion.div>
 
-      {selectedVote && (
+      {selectedVote && typeof window !== 'undefined' && (
         <ShareDialog
           open={shareDialogOpen}
           onOpenChange={setShareDialogOpen}
           title={selectedVote.title || "Untitled Vote"}
-          url={`${typeof window !== "undefined" ? window.location.origin : ""}/vote/${selectedVote.id}`}
+          url={`${window.location.origin}/vote/${selectedVote.id}`}
         />
       )}
     </div>
