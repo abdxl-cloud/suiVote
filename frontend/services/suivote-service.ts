@@ -126,9 +126,7 @@ export class SuiVoteService {
     try {
       this.client = new SuiClient({ url: getFullnodeUrl(network) })
       this.isInitialized = true
-      console.log(`SuiVoteService initialized on network: ${network}`)
-    } catch (error) {
-      console.error(`Failed to initialize SuiClient for network ${network}:`, error)
+      } catch (error) {
       throw new Error(`Failed to initialize SuiVoteService: ${error instanceof Error ? error.message : String(error)}`)
     }
   }
@@ -170,8 +168,6 @@ async getVotesCreatedByAddress(
       throw new Error("Address is required")
     }
 
-    console.log(`Fetching votes created by address ${address}, limit: ${limit}`)
-
     // Query for VoteCreated events using MoveEventType filter
     const eventsResponse = await this.client.queryEvents({
       query: {
@@ -186,16 +182,12 @@ async getVotesCreatedByAddress(
     const votes: VoteDetails[] = []
     const processedIds = new Set<string>()
 
-    console.log(`Found ${eventsResponse.data.length} vote creation events, filtering for creator: ${address}`)
-
     // Manually filter the events for creator = address
     const filteredEvents = eventsResponse.data.filter(event => {
       if (!event.parsedJson) return false
       const voteCreatedEvent = event.parsedJson as VoteCreatedEvent
       return voteCreatedEvent.creator === address
     })
-
-    console.log(`After filtering, found ${filteredEvents.length} events by creator ${address}`)
 
     // Use Promise.all for parallel processing
     await Promise.all(
@@ -221,15 +213,11 @@ async getVotesCreatedByAddress(
 
     // Apply limit after filtering
     const limitedVotes = votes.slice(0, limit)
-
-    console.log(`Processed ${limitedVotes.length} unique votes`)
-
     return {
       data: limitedVotes,
       nextCursor: eventsResponse.nextCursor,
     }
   } catch (error) {
-    console.error("Failed to fetch votes created by address:", error)
     throw new Error(`Failed to fetch votes: ${error instanceof Error ? error.message : String(error)}`)
   }
 }
@@ -252,10 +240,7 @@ async getVotesCreatedByAddress(
       if (!address) {
         throw new Error("Address is required")
       }
-
-      console.log(`Fetching votes participated by address ${address}, limit: ${limit}`)
-
-      // Query for VoteCast events using MoveEventType filter
+    // Query for VoteCast events using MoveEventType filter
       const eventsResponse = await this.client.queryEvents({
         query: {
           MoveEventType: `${PACKAGE_ID}::voting::VoteCast`
@@ -265,17 +250,12 @@ async getVotesCreatedByAddress(
         descending_order: true, // Get most recent first
       })
 
-      console.log(`Found ${eventsResponse.data.length} vote cast events, filtering for voter: ${address}`)
-
       // Manually filter the events for voter = address
       const filteredEvents = eventsResponse.data.filter(event => {
         if (!event.parsedJson) return false
         const voteCastEvent = event.parsedJson as VoteCastEvent
         return voteCastEvent.voter === address
       })
-
-      console.log(`After filtering, found ${filteredEvents.length} events by voter ${address}`)
-
       // Process events to extract unique vote IDs
       const voteIds = new Set<string>()
       for (const event of filteredEvents) {
@@ -284,9 +264,6 @@ async getVotesCreatedByAddress(
         const voteCastEvent = event.parsedJson as VoteCastEvent
         voteIds.add(voteCastEvent.vote_id)
       }
-
-      console.log(`Found ${voteIds.size} unique votes participated in`)
-
       // Fetch details for each unique vote in parallel
       const votesPromises = Array.from(voteIds).map((voteId) => this.getVoteDetails(voteId))
       const votesResults = await Promise.all(votesPromises)
@@ -294,8 +271,6 @@ async getVotesCreatedByAddress(
       // Filter out null results and respect the limit
       const votes = votesResults.filter(Boolean) as VoteDetails[]
       const limitedVotes = votes.slice(0, limit)
-
-      console.log(`Successfully processed ${limitedVotes.length} votes`)
 
       return {
         data: limitedVotes,
@@ -535,8 +510,6 @@ async getVotesCreatedByAddress(
       const voteDetails = await this.getVoteDetails(voteId)
       if (!voteDetails) throw new Error(`Vote ${voteId} not found`)
 
-      console.log(`Fetching polls for vote ${voteId}, count: ${voteDetails.pollsCount}`)
-
       const polls: PollDetails[] = []
       const pollPromises: Promise<void>[] = []
 
@@ -587,11 +560,8 @@ async getVotesCreatedByAddress(
       // Sort polls by index (though they should already be in order)
       polls.sort((a, b) => a.id.localeCompare(b.id))
 
-      console.log(`Successfully fetched ${polls.length} polls`)
-
       return polls
     } catch (error) {
-      console.error(`Failed to fetch polls for vote ${voteId}:`, error)
       throw new Error(`Failed to fetch polls: ${error instanceof Error ? error.message : String(error)}`)
     }
   }
@@ -614,8 +584,6 @@ async getVotesCreatedByAddress(
         throw new Error("Poll index must be 1 or greater")
       }
 
-      console.log(`Fetching options for vote ${voteId}, poll index: ${pollIndex}`)
-
       // First get the poll details
       const polls = await this.getVotePolls(voteId)
       if (!polls || polls.length < pollIndex) {
@@ -624,8 +592,6 @@ async getVotesCreatedByAddress(
 
       const poll = polls[pollIndex - 1] // Convert to 0-based index
       const pollId = poll.id
-
-      console.log(`Poll ID: ${pollId}, options count: ${poll.optionsCount}`)
 
       const options: PollOptionDetails[] = []
       const optionPromises: Promise<void>[] = []
@@ -673,8 +639,6 @@ async getVotesCreatedByAddress(
       // Sort options by index (though they should already be in order)
       options.sort((a, b) => a.id.localeCompare(b.id))
 
-      console.log(`Successfully fetched ${options.length} options`)
-
       return options
     } catch (error) {
       console.error(`Failed to fetch options for poll ${pollIndex} in vote ${voteId}:`, error)
@@ -719,8 +683,6 @@ createCompleteVoteTransaction(
     if (!pollData || !Array.isArray(pollData) || pollData.length === 0) {
       throw new Error("At least one poll is required")
     }
-
-    console.log(`Creating complete vote: ${title} with ${pollData.length} polls`)
 
     const tx = new Transaction()
 
@@ -839,8 +801,6 @@ createCompleteVoteTransaction(
     if (!pollData || !Array.isArray(pollData) || pollData.length === 0) {
       throw new Error("At least one poll is required")
     }
-
-    console.log(`Creating vote with media: ${title} with ${pollData.length} polls and ${Object.keys(mediaFiles).length} media files`)
 
     const tx = new Transaction()
 
@@ -1009,8 +969,6 @@ createCompleteVoteTransaction(
         return false
       }
 
-      console.log(`Checking if ${voterAddress} is whitelisted for vote ${voteId}`)
-
       // First get the vote details to check if it has a whitelist
       const voteDetails = await this.getVoteDetails(voteId)
       if (!voteDetails) return false
@@ -1067,8 +1025,6 @@ createCompleteVoteTransaction(
         }
       }
 
-      console.log(`Adding ${voterAddresses.length} voters to the whitelist for vote ${voteId}`)
-
       const tx = new Transaction()
 
       // Get the clock object
@@ -1105,8 +1061,6 @@ createCompleteVoteTransaction(
       if (!voteId) {
         throw new Error("Vote ID is required")
       }
-
-      console.log(`Getting whitelisted voters for vote ${voteId}`)
 
       // First check if the vote has a whitelist
       const voteDetails = await this.getVoteDetails(voteId)
@@ -1167,8 +1121,6 @@ createCompleteVoteTransaction(
         throw new Error("Address is required")
       }
 
-      console.log(`Fetching votes where ${address} is whitelisted, limit: ${limit}`)
-
       // Query for VoterWhitelisted events using MoveEventType filter
       const eventsResponse = await this.client.queryEvents({
         query: {
@@ -1179,16 +1131,12 @@ createCompleteVoteTransaction(
         descending_order: true, // Get most recent first
       })
 
-      console.log(`Found ${eventsResponse.data.length} whitelist events, filtering for voter: ${address}`)
-
       // Manually filter the events for voter_address = address
       const filteredEvents = eventsResponse.data.filter(event => {
         if (!event.parsedJson) return false
         const whitelistEvent = event.parsedJson as VoterWhitelistedEvent
         return whitelistEvent.voter_address === address
       })
-
-      console.log(`After filtering, found ${filteredEvents.length} events for voter ${address}`)
 
       // Process events to extract unique vote IDs
       const voteIds = new Set<string>()
@@ -1199,8 +1147,6 @@ createCompleteVoteTransaction(
         voteIds.add(whitelistEvent.vote_id)
       }
 
-      console.log(`Found ${voteIds.size} unique votes where user is whitelisted`)
-
       // Fetch details for each unique vote in parallel
       const votesPromises = Array.from(voteIds).map((voteId) => this.getVoteDetails(voteId))
       const votesResults = await Promise.all(votesPromises)
@@ -1209,7 +1155,6 @@ createCompleteVoteTransaction(
       const votes = votesResults.filter(Boolean) as VoteDetails[]
       const limitedVotes = votes.slice(0, limit)
 
-      console.log(`Successfully processed ${limitedVotes.length} votes`)
 
       return {
         data: limitedVotes,
@@ -1249,8 +1194,6 @@ createCompleteVoteTransaction(
       if (payment < 0) {
         throw new Error("Payment amount must be non-negative")
       }
-
-      console.log(`Casting vote on poll ${pollIndex} of vote ${voteId}, options: ${optionIndices.join(", ")}`)
 
       const tx = new Transaction()
 
@@ -1338,8 +1281,6 @@ createCompleteVoteTransaction(
         throw new Error("Payment amount must be non-negative")
       }
 
-      console.log(`Casting votes on ${pollIndices.length} polls of vote ${voteId}`)
-
       const tx = new Transaction()
 
       // Create payment coin if needed
@@ -1387,8 +1328,6 @@ createCompleteVoteTransaction(
         throw new Error("Vote ID is required")
       }
 
-      console.log(`Closing vote ${voteId}`)
-
       const tx = new Transaction()
 
       // Get the clock object
@@ -1418,8 +1357,6 @@ createCompleteVoteTransaction(
       if (!voteId) {
         throw new Error("Vote ID is required")
       }
-
-      console.log(`Cancelling vote ${voteId}`)
 
       const tx = new Transaction()
 
@@ -1456,8 +1393,6 @@ createCompleteVoteTransaction(
         throw new Error("New end timestamp must be in the future")
       }
 
-      console.log(`Extending voting period for vote ${voteId} to ${new Date(newEndTimestamp).toISOString()}`)
-
       const tx = new Transaction()
 
       // Get the clock object
@@ -1493,7 +1428,6 @@ async hasVoted(userAddress: string, voteId: string): Promise<boolean> {
       throw new Error("Vote ID is required")
     }
 
-    console.log(`Checking if user ${userAddress} has voted on vote ${voteId}`)
 
     // Query for VoteCast events using MoveEventType filter
     const { data } = await this.client.queryEvents({
@@ -1511,11 +1445,9 @@ async hasVoted(userAddress: string, voteId: string): Promise<boolean> {
       return voteCastEvent.voter === userAddress && voteCastEvent.vote_id === voteId
     })
 
-    console.log(`User ${userAddress} has ${hasVoted ? "" : "not "}voted on vote ${voteId}`)
 
     return hasVoted
   } catch (error) {
-    console.error(`Failed to check if user ${userAddress} has voted on vote ${voteId}:`, error)
     return false
   }
 }
@@ -1534,23 +1466,18 @@ async hasVoted(userAddress: string, voteId: string): Promise<boolean> {
         return null
       }
 
-      console.log(`Getting vote results for vote ${voteId}`)
-
       // First check if vote is closed
       const voteDetails = await this.getVoteDetails(voteId)
       if (!voteDetails) return null
 
       // Only return results if vote is closed or is active
       if (voteDetails.status !== "closed" && voteDetails.status !== "active") {
-        console.log(`Vote ${voteId} is ${voteDetails.status}, results not available`)
         return null
       }
 
       // Get all polls first
       const polls = await this.getVotePolls(voteId)
       if (!polls || polls.length === 0) return null
-
-      console.log(`Found ${polls.length} polls for vote ${voteId}`)
 
       // Fetch options for each poll in parallel
       const pollOptionsPromises: Array<Promise<{ pollId: string; options: PollOptionDetails[] }>> = []
@@ -1577,12 +1504,8 @@ async hasVoted(userAddress: string, voteId: string): Promise<boolean> {
           results[pollId] = options
         }
       }
-
-      console.log(`Successfully retrieved results for ${Object.keys(results).length} polls`)
-
       return results
     } catch (error) {
-      console.error(`Failed to get vote results for vote ${voteId}:`, error)
       return null
     }
   }
@@ -1600,13 +1523,11 @@ async hasVoted(userAddress: string, voteId: string): Promise<boolean> {
       
       // Return TRUE if token type or required amount is undefined
       if (!tokenType || requiredAmount === undefined) {
-        console.log("Token type or required amount is undefined, token check passed")
         return true
       }
       
       // Check for user address (still required even if token check is bypassed)
       if (!userAddress) {
-        console.warn("Missing userAddress in checkTokenBalance")
         return false
       }
       
@@ -1624,8 +1545,6 @@ async hasVoted(userAddress: string, voteId: string): Promise<boolean> {
         
         // Convert balance to number (considering SUI decimals is 9)
         const balance = Number(balanceData.totalBalance) / Math.pow(10, 9)
-        
-        console.log(`User balance: ${balance} SUI, Required: ${requiredAmount} SUI`)
         
         return balance >= requiredAmount
       }
@@ -1663,8 +1582,6 @@ async hasVoted(userAddress: string, voteId: string): Promise<boolean> {
           const totalBalance = ownedCoins.reduce((sum, coin) => {
             return sum + Number(coin.balance)
           }, 0) / Math.pow(10, decimals)
-          
-          console.log(`User ${tokenType} balance: ${totalBalance}, Required: ${requiredAmount}`)
           
           return totalBalance >= requiredAmount
         } catch (error) {

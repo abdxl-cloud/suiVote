@@ -217,7 +217,6 @@ export default function SuccessPage() {
           // If vote ID is not directly provided, we might need to get it from the transaction
           if (txDigest) {
             // You could implement logic here to get the vote ID from the transaction
-            console.log("Transaction digest available:", txDigest)
             // For now, we'll just show what we have
             setLoading(false)
             return

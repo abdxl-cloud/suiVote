@@ -398,6 +398,21 @@ const disabledDates = [
 
   // Function to handle tab changes with validation
   const handleTabChange = (value: string) => {
+    // Special check for navigating from details to polls tab
+    if (activeTab === "details" && value === "polls" && !voteTitle.trim()) {
+      // Show specific error for missing title
+      setErrors((prev) => ({
+        ...prev,
+        title: "Vote title is required"
+      }))
+      
+      // Show toast notification
+      toast.error("Vote title is required", {
+        description: "Please enter a title for your vote before proceeding to polls"
+      })
+      return
+    }
+    
     // Check if current section is complete before allowing navigation
     if (isSectionComplete(activeTab)) {
       setActiveTab(value)
@@ -1033,16 +1048,6 @@ const disabledDates = [
                 <CardFooter className="flex justify-end p-4">
                   <Button 
                     onClick={() => {
-                      // Validate details section before proceeding
-                      if (!voteTitle.trim()) {
-                        setErrors(prev => ({ ...prev, title: "Vote title is required" }));
-                        toast.error("Please provide a vote title");
-                        return;
-                      }
-                      setActiveTab("polls");
-                    }} 
-                    className="transition-all hover:scale-105"
-                    onClick={() => {
                       if (isSectionComplete("details")) {
                         setActiveTab("polls");
                       } else {
@@ -1052,6 +1057,11 @@ const disabledDates = [
                         });
                       }
                     }}
+                    disabled={!voteTitle.trim().length}
+                    className={cn(
+                      "transition-all hover:scale-105",
+                      !voteTitle.trim().length && "opacity-50 cursor-not-allowed"
+                    )}
                   >
                     Continue to Polls
                     <ArrowRight className="ml-2 h-4 w-4" />
