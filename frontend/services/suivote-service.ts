@@ -1586,4 +1586,96 @@ async hasVoted(userAddress: string, voteId: string): Promise<boolean> {
       return null
     }
   }
+
+  /**
+ * Check if a user has the required token balance
+ * @param userAddress User address
+ * @param tokenType Token type (e.g., "0x2::sui::SUI" or a custom token)
+ * @param requiredAmount Minimum amount required
+ * @returns Boolean indicating if the user has sufficient balance
+ */
+  async checkTokenBalance(userAddress: string, tokenType: string, requiredAmount: number): Promise {
+    try {
+      this.checkInitialization()
+      
+      // Return TRUE if token type or required amount is undefined
+      if (!tokenType || requiredAmount === undefined) {
+        console.log("Token type or required amount is undefined, token check passed")
+        return true
+      }
+      
+      // Check for user address (still required even if token check is bypassed)
+      if (!userAddress) {
+        console.warn("Missing userAddress in checkTokenBalance")
+        return false
+      }
+      
+      // For the native SUI token
+      if (tokenType === "0x2::sui::SUI") {
+        // Get the user's SUI balance
+        const { data: balanceData } = await this.client.getBalance({
+          owner: userAddress,
+          coinType: "0x2::sui::SUI"
+        })
+        
+        if (!balanceData || !balanceData.totalBalance) {
+          return false
+        }
+        
+        // Convert balance to number (considering SUI decimals is 9)
+        const balance = Number(balanceData.totalBalance) / Math.pow(10, 9)
+        
+        console.log(`User balance: ${balance} SUI, Required: ${requiredAmount} SUI`)
+        
+        return balance >= requiredAmount
+      }
+      
+      // For other tokens
+      else {
+        try {
+          // Query for all coins owned by the address
+          const { data: ownedCoins } = await this.client.getCoins({
+            owner: userAddress,
+            coinType: tokenType
+          })
+          
+          if (!ownedCoins || ownedCoins.length === 0) {
+            return false
+          }
+          
+          // Get token info to determine decimals
+          let decimals = 9 // Default to 9 decimals like SUI
+          
+          try {
+            // Attempt to get coin metadata for correct decimal handling
+            const metadata = await this.client.getCoinMetadata({
+              coinType: tokenType
+            })
+            
+            if (metadata && metadata.decimals) {
+              decimals = metadata.decimals
+            }
+          } catch (metadataError) {
+            console.warn(`Could not get metadata for token ${tokenType}, using default decimals: 9`)
+          }
+          
+          // Sum up the total balance across all coins of this type
+          const totalBalance = ownedCoins.reduce((sum, coin) => {
+            return sum + Number(coin.balance)
+          }, 0) / Math.pow(10, decimals)
+          
+          console.log(`User ${tokenType} balance: ${totalBalance}, Required: ${requiredAmount}`)
+          
+          return totalBalance >= requiredAmount
+        } catch (error) {
+          console.error(`Error fetching token balance for ${tokenType}:`, error)
+          return false
+        }
+      }
+    } catch (error) {
+      console.error(`Failed to check token balance:`, error)
+      return false
+    }
+  }
+
 }

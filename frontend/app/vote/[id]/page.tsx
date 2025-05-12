@@ -94,7 +94,6 @@ export default function VotePage() {
       }
 
       setVote(voteDetails)
-
       // Get polls for the vote
       const pollsData = await suivote.getVotePolls(params.id)
       
@@ -145,12 +144,12 @@ export default function VotePage() {
         }
       }
 
-      // Check if user has required tokens
+      // Check if user has required tokens - only check if requiredToken is defined
       if (wallet.connected && wallet.address && voteDetails.requiredToken) {
         const hasTokens = await suivote.checkTokenBalance(
           wallet.address, 
           voteDetails.requiredToken, 
-          voteDetails.requiredAmount
+          voteDetails.requiredAmount || 0
         )
         setUserHasRequiredTokens(hasTokens)
       }
@@ -226,14 +225,19 @@ export default function VotePage() {
         }
       })
       
-      // Check if user has required tokens
+      // Check if user has required tokens - only check if requiredToken is defined
       if (vote.requiredToken) {
         suivote.checkTokenBalance(
           wallet.address, 
           vote.requiredToken, 
-          vote.requiredAmount
+          vote.requiredAmount || 0
         ).then(hasTokens => {
           setUserHasRequiredTokens(hasTokens)
+          if (!hasTokens && vote.requiredToken) {
+            toast.warning("Token requirement not met", {
+              description: `This vote requires at least ${vote.requiredAmount} ${vote.requiredToken?.split("::")?.pop() || "tokens"}`
+            })
+          }
         })
       }
     } else {
@@ -241,7 +245,7 @@ export default function VotePage() {
       setShowingResults(false)
     }
   }, [wallet.connected, wallet.address, params.id, vote])
-
+  
   // Handle option selection
   const handleOptionSelect = (pollId, optionId, isMultiSelect) => {
     setSelections(prev => {
@@ -292,9 +296,9 @@ export default function VotePage() {
       isValid = false
     }
 
-    // Check if user has required tokens
-    if (!userHasRequiredTokens && vote.requiredToken) {
-      newErrors.tokens = `You need at least ${vote.requiredAmount} ${vote.requiredToken.split("::").pop()} to vote`
+    // Check if user has required tokens - only check if requiredToken is defined
+    if (vote.requiredToken && !userHasRequiredTokens) {
+      newErrors.tokens = `You need at least ${vote.requiredAmount} ${vote.requiredToken?.split("::")?.pop() || "tokens"} to vote`
       isValid = false
     }
 
@@ -498,6 +502,12 @@ export default function VotePage() {
     }
   }
 
+  // Get token display name with fallback
+  const getTokenDisplayName = (tokenAddress) => {
+    if (!tokenAddress) return "tokens";
+    return tokenAddress?.split("::")?.pop() || "tokens";
+  }
+
   // Handle share dialog
   const handleShare = () => {
     setShareDialogOpen(true)
@@ -526,9 +536,9 @@ export default function VotePage() {
         </Alert>
 
         <Button asChild variant="outline">
-          <Link href="/dashboard">
+          <Link href="/polls">
             <ArrowLeft className="mr-2 h-4 w-4" />
-            Back to Dashboard
+            Back to Polls
           </Link>
         </Button>
       </div>
@@ -542,9 +552,9 @@ export default function VotePage() {
         {/* Back button */}
         <div className="mb-6">
           <Button asChild variant="outline" size="sm">
-            <Link href="/dashboard">
+            <Link href="/polls">
               <ArrowLeft className="mr-2 h-4 w-4" />
-              Back to Dashboard
+              Back to Polls
             </Link>
           </Button>
         </div>
@@ -656,7 +666,7 @@ export default function VotePage() {
                       <div>
                         <p className="text-sm font-medium">Token Requirement</p>
                         <p className="text-xs text-muted-foreground">
-                          Minimum {vote.requiredAmount} {vote.requiredToken.split("::").pop()}
+                          Minimum {vote.requiredAmount} {getTokenDisplayName(vote.requiredToken)}
                         </p>
                       </div>
                     </div>
@@ -669,7 +679,7 @@ export default function VotePage() {
                       </div>
                       <div>
                         <p className="text-sm font-medium">Payment Required</p>
-                        <p className="text-xs text-muted-foreground">{vote.paymentAmount} SUI per vote</p>
+                        <p className="text-xs text-muted-foreground">{vote.paymentAmount / 1_000_000_000} SUI per vote</p>
                       </div>
                     </div>
                   )}
@@ -782,9 +792,9 @@ export default function VotePage() {
       {/* Back button */}
       <div className="mb-6">
         <Button asChild variant="outline" size="sm">
-          <Link href="/dashboard">
+          <Link href="/polls">
             <ArrowLeft className="mr-2 h-4 w-4" />
-            Back to Dashboard
+            Back to Polls
           </Link>
         </Button>
       </div>
@@ -866,7 +876,7 @@ export default function VotePage() {
                     <div>
                       <p className="text-sm font-medium">Token Requirement</p>
                       <p className="text-xs text-muted-foreground">
-                        Minimum {vote.requiredAmount} {vote.requiredToken.split("::").pop()}
+                        Minimum {vote.requiredAmount} {getTokenDisplayName(vote.requiredToken)}
                       </p>
                     </div>
                   </div>
@@ -879,7 +889,7 @@ export default function VotePage() {
                     </div>
                     <div>
                       <p className="text-sm font-medium">Payment Required</p>
-                      <p className="text-xs text-muted-foreground">{vote.paymentAmount} SUI per vote</p>
+                      <p className="text-xs text-muted-foreground">{vote.paymentAmount / 1_000_000_000} SUI per vote</p>
                     </div>
                   </div>
                 )}
@@ -931,7 +941,7 @@ export default function VotePage() {
           </Alert>
         </motion.div>
       )}
-
+    
       {/* Token requirement alert */}
       {wallet.connected && !userHasRequiredTokens && vote.requiredToken && vote.status === "active" && (
         <motion.div
@@ -944,13 +954,56 @@ export default function VotePage() {
             <AlertCircle className="h-4 w-4" />
             <AlertTitle>Insufficient token balance</AlertTitle>
             <AlertDescription>
-              You need at least {vote.requiredAmount} {vote.requiredToken.split("::").pop()} to participate in
+              You need at least {vote.requiredAmount} {getTokenDisplayName(vote.requiredToken)} to participate in
               this vote.
             </AlertDescription>
           </Alert>
         </motion.div>
       )}
 
+      {wallet.connected && !userHasRequiredTokens && vote.requiredToken && vote.status === "active" && (
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.3, delay: 0.2 }}
+          className="mb-6"
+        >
+          <Alert variant="destructive">
+            <AlertCircle className="h-4 w-4" />
+            <AlertTitle>Token Requirement</AlertTitle>
+            <AlertDescription>
+              <p className="mb-2">This vote is token-gated. You need at least {vote.requiredAmount} {getTokenDisplayName(vote.requiredToken)} to participate.</p>
+              <div className="flex flex-col sm:flex-row gap-3 mt-3">
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  asChild
+                  className="bg-background/80 border-white/20 hover:bg-background"
+                >
+                  <a href={`https://explorer.sui.io/address/${wallet.address}?network=${SUI_CONFIG.NETWORK.toLowerCase()}`} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2">
+                    <ExternalLink className="h-3.5 w-3.5" />
+                    View Your Wallet 
+                  </a>
+                </Button>
+                {vote.requiredToken && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    asChild
+                    className="bg-background/80 border-white/20 hover:bg-background"
+                  >
+                    <a href={`https://explorer.sui.io/coin/${encodeURIComponent(vote.requiredToken)}?network=${SUI_CONFIG.NETWORK.toLowerCase()}`} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2">
+                      <Wallet className="h-3.5 w-3.5" />
+                      Get Token
+                    </a>
+                  </Button>
+                )}
+              </div>
+            </AlertDescription>
+          </Alert>
+        </motion.div>
+      )}
+      
       {/* Already voted alert */}
       {hasUserVoted && (
         <motion.div

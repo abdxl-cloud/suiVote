@@ -159,9 +159,9 @@ export default function ClosedVotePage() {
         </Alert>
 
         <Button asChild variant="outline">
-          <Link href="/dashboard">
+          <Link href="/polls">
             <ArrowLeft className="mr-2 h-4 w-4" />
-            Back to Dashboard
+            Back to Polls
           </Link>
         </Button>
       </div>
@@ -173,9 +173,9 @@ export default function ClosedVotePage() {
       {/* Back button */}
       <div className="mb-6">
         <Button asChild variant="outline" size="sm">
-          <Link href="/dashboard">
+          <Link href="/polls">
             <ArrowLeft className="mr-2 h-4 w-4" />
-            Back to Dashboard
+            Back to Polls
           </Link>
         </Button>
       </div>
@@ -374,10 +374,10 @@ export default function ClosedVotePage() {
       )}
 
       <div className="mt-8 flex justify-center">
-        <Link href="/dashboard">
+        <Link href="/polls">
           <Button className="gap-2">
             <Home className="h-4 w-4" />
-            Back to Dashboard
+            Back to Polls
           </Button>
         </Link>
       </div>
