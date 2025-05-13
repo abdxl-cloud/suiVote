@@ -1048,20 +1048,22 @@ const disabledDates = [
                 <CardFooter className="flex justify-end p-4">
                   <Button 
                     onClick={() => {
+                      if (!voteTitle.trim().length) {
+                        // Show error but don't proceed
+                        toast.error("Please complete all required fields", {
+                          description: "Vote title is required"
+                        });
+                        return;
+                      }
+                      
+                      // Otherwise proceed normally
                       if (isSectionComplete("details")) {
                         setActiveTab("polls");
                       } else {
                         validateForm();
-                        toast.error("Please complete all required fields", {
-                          description: "Vote title is required"
-                        });
                       }
                     }}
-                    disabled={!voteTitle.trim().length}
-                    className={cn(
-                      "transition-all hover:scale-105",
-                      !voteTitle.trim().length && "opacity-50 cursor-not-allowed"
-                    )}
+                    className="transition-all hover:scale-105"
                   >
                     Continue to Polls
                     <ArrowRight className="ml-2 h-4 w-4" />

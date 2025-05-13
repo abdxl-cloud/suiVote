@@ -720,8 +720,9 @@ export default function DashboardPage() {
                           </ResponsiveContainer>
                         </ChartContainer>
                       ) : (
-                        <div className="flex items-center justify-center h-full text-muted-foreground">
-                          No activity data available
+                        <div className="text-center py-6 text-muted-foreground">
+                          <BarChart2 className="h-12 w-12 mx-auto mb-2 opacity-20" />
+                          <p>No activity data available yet</p>
                         </div>
                       )}
                     </div>
@@ -791,8 +792,9 @@ export default function DashboardPage() {
                           </ResponsiveContainer>
                         </ChartContainer>
                       ) : (
-                        <div className="flex items-center justify-center h-full text-muted-foreground">
-                          Not enough poll data available
+                        <div className="text-center py-6 text-muted-foreground">
+                          <BarChart2 className="h-12 w-12 mx-auto mb-2 opacity-20" />
+                          <p>No poll analytics available yet</p>
                         </div>
                       )}
                     </div>
