@@ -398,8 +398,8 @@ const disabledDates = [
 
   // Function to handle tab changes with validation
   const handleTabChange = (value: string) => {
-    // Special check for navigating from details to polls tab
-    if (activeTab === "details" && value === "polls" && !voteTitle.trim()) {
+    // If current tab is details and there's no title, prevent any navigation
+    if (activeTab === "details" && !voteTitle.trim()) {
       // Show specific error for missing title
       setErrors((prev) => ({
         ...prev,
@@ -408,7 +408,7 @@ const disabledDates = [
       
       // Show toast notification
       toast.error("Vote title is required", {
-        description: "Please enter a title for your vote before proceeding to polls"
+        description: "Please enter a title for your vote before proceeding"
       })
       return
     }
