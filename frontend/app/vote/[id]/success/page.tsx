@@ -179,9 +179,9 @@ export default function VoteSuccessPage() {
         
         <div className="flex justify-center">
           <Button asChild variant="outline">
-            <Link href="/dashboard">
+            <Link href="/polls">
               <Home className="mr-2 h-4 w-4" />
-              Return to Dashboard
+              Return to Polls
             </Link>
           </Button>
         </div>
@@ -194,9 +194,9 @@ export default function VoteSuccessPage() {
       {/* Back button */}
       <div className="mb-6">
         <Button asChild variant="outline" size="sm">
-          <Link href="/dashboard">
+          <Link href="/polls">
             <ArrowLeft className="mr-2 h-4 w-4" />
-            Back to Dashboard
+            Back to Polls
           </Link>
         </Button>
       </div>
@@ -246,9 +246,9 @@ export default function VoteSuccessPage() {
             
             <div className="flex flex-col sm:flex-row gap-4 justify-center">
               <Button asChild className="gap-2 flex-1">
-                <Link href="/dashboard">
+                <Link href="/polls">
                   <Home className="h-4 w-4" />
-                  Return to Dashboard
+                  Return to Polls
                 </Link>
               </Button>
               

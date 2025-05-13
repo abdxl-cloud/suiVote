@@ -206,7 +206,7 @@ export default function EditVotePage() {
     async function loadVoteData() {
       if (!voteId) {
         console.error("Missing vote ID")
-        router.push('/dashboard')
+        router.push('/Polls')
         return
       }
 
@@ -232,7 +232,7 @@ export default function EditVotePage() {
           toast.error("Vote not found", {
             description: "The vote you're trying to edit doesn't exist or has been deleted."
           })
-          router.push('/dashboard')
+          router.push('/Polls')
           return
         }
         
@@ -248,7 +248,7 @@ export default function EditVotePage() {
           })
           
           setTimeout(() => {
-            router.push('/dashboard')
+            router.push('/Polls')
           }, 3000)
           return
         }
@@ -733,8 +733,8 @@ export default function EditVotePage() {
       
       // Wait a moment to show the success state before redirecting
       setTimeout(() => {
-        // Navigate back to dashboard
-        router.push("/dashboard")
+        // Navigate back to Polls
+        router.push("/Polls")
       }, 1500)
     } catch (err) {
       console.error("Error updating vote:", err)
@@ -797,8 +797,8 @@ export default function EditVotePage() {
           </AlertDescription>
         </Alert>
         <div className="mt-4">
-          <Link href="/dashboard">
-            <Button>Return to Dashboard</Button>
+          <Link href="/Polls">
+            <Button>Return to Polls</Button>
           </Link>
         </div>
       </div>
@@ -816,8 +816,8 @@ export default function EditVotePage() {
           </AlertDescription>
         </Alert>
         <div className="mt-4">
-          <Link href="/dashboard">
-            <Button>Return to Dashboard</Button>
+          <Link href="/Polls">
+            <Button>Return to Polls</Button>
           </Link>
         </div>
       </div>
@@ -838,7 +838,7 @@ export default function EditVotePage() {
             <h1 className="text-2xl font-bold tracking-tight truncate">Edit: {voteTitle}</h1>
           </div>
           <div className="flex items-center gap-2 w-full sm:w-auto">
-            <Link href="/dashboard" className="w-full sm:w-auto">
+            <Link href="/Polls" className="w-full sm:w-auto">
               <Button
                 variant="outline"
                 size="sm"
@@ -1777,8 +1777,8 @@ export default function EditVotePage() {
                 Try Again
               </Button>
             ) : txStatus === TransactionStatus.SUCCESS ? (
-              <Button variant="default" onClick={() => router.push("/dashboard")}>
-                Return to Dashboard
+              <Button variant="default" onClick={() => router.push("/Polls")}>
+                Return to Polls
               </Button>
             ) : (
               <Button

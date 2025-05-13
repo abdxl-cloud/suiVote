@@ -503,6 +503,44 @@ export function useSuiVote() {
     [],
   )
 
+  // frontend/hooks/use-suivote.ts
+
+  // Add this function to the useSuiVote hook:
+
+  /**
+   * Check if a user has the required token balance
+   * @param userAddress User address
+   * @param tokenType Token type (e.g., "0x2::sui::SUI" or custom token)
+   * @param requiredAmount Minimum amount required
+   * @returns Boolean indicating if the user has sufficient balance
+   */
+  const checkTokenBalance = useCallback(async (
+    userAddress: string,
+    tokenType: string,
+    requiredAmount: number
+  ): Promise<boolean> => {
+    try {
+      setLoading(true)
+      setError(null)
+
+      if (!userAddress || !tokenType) {
+        console.warn("Missing userAddress or tokenType in checkTokenBalance")
+        return false
+      }
+
+      const result = await suiVoteService.checkTokenBalance(userAddress, tokenType, requiredAmount)
+      console.log("Token balance check result:", result)
+      return result
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err)
+      setError(errorMessage)
+      console.error("Error checking token balance:", errorMessage)
+      return false
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
   return {
     loading,
     error,
@@ -522,6 +560,7 @@ export function useSuiVote() {
     hasVoted,
     getVoteResults,
     executeTransaction,
+    checkTokenBalance,
     // Whitelist functionality
     addAllowedVotersTransaction,
     isVoterWhitelisted,

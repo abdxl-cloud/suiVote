@@ -367,7 +367,67 @@ const disabledDates = [
   }
     
   // Enhanced validation function aligned with service validation
-  const validateForm = (): boolean => {
+  // Function to check if a section is complete
+  const isSectionComplete = (section: string): boolean => {
+    switch (section) {
+      case "details":
+        return voteTitle.trim().length > 0
+      case "polls":
+        return polls.every(poll => 
+          poll.title.trim().length > 0 && 
+          poll.options.length >= 2 && 
+          poll.options.every(option => option.text.trim().length > 0)
+        )
+      case "settings":
+        const hasValidDates = votingSettings.startDate && votingSettings.endDate && 
+          isAfter(votingSettings.endDate, votingSettings.startDate)
+        
+        const hasValidToken = votingSettings.requiredToken === "none" || 
+          (votingSettings.requiredToken !== "none" && 
+           votingSettings.requiredAmount && 
+           Number.parseFloat(votingSettings.requiredAmount) > 0)
+        
+        const hasValidPayment = !votingSettings.paymentAmount || 
+          Number.parseFloat(votingSettings.paymentAmount) >= 0
+        
+        return hasValidDates && hasValidToken && hasValidPayment && wallet.connected
+      default:
+        return true
+    }
+  }
+
+  // Function to handle tab changes with validation
+  const handleTabChange = (value: string) => {
+    // If current tab is details and there's no title, prevent any navigation
+    if (activeTab === "details" && !voteTitle.trim()) {
+      // Show specific error for missing title
+      setErrors((prev) => ({
+        ...prev,
+        title: "Vote title is required"
+      }))
+      
+      // Show toast notification
+      toast.error("Vote title is required", {
+        description: "Please enter a title for your vote before proceeding"
+      })
+      return
+    }
+    
+    // Check if current section is complete before allowing navigation
+    if (isSectionComplete(activeTab)) {
+      setActiveTab(value)
+    } else {
+      // Validate the current section to show errors
+      validateForm()
+      
+      // Show toast notification
+      toast.error("Please complete the current section", {
+        description: "Fix all errors before proceeding to the next section"
+      })
+    }
+  }
+
+  const validateForm = (navigateToErrors: boolean = true): boolean => {
     const newErrors: ValidationErrors = {}
     let errorTab: string | null = null
 
@@ -485,8 +545,8 @@ const disabledDates = [
 
     setErrors(newErrors)
 
-    // If there are errors, navigate to the tab with errors
-    if (Object.keys(newErrors).length > 0 && errorTab) {
+    // If there are errors and we should navigate to them
+    if (navigateToErrors && Object.keys(newErrors).length > 0 && errorTab) {
       setActiveTab(errorTab)
 
       // If the error is in a specific poll, navigate to that poll
@@ -500,7 +560,7 @@ const disabledDates = [
       return false
     }
 
-    return true
+    return Object.keys(newErrors).length === 0
   }
 
   const addMediaToOption = (mediaHandlers: any, pollIndex: number, optionIndex: number) => {
@@ -565,15 +625,23 @@ const disabledDates = [
   // Update your handleSubmit function to use the media handler
   const handleSubmit = async (mediaHandlers: any) => {
     try {
-      if (!validateForm()) {
-        // Scroll to the error alert if present
-        setTimeout(() => {
-          const errorAlert = document.querySelector('[role="alert"]')
-          if (errorAlert) {
-            errorAlert.scrollIntoView({ behavior: "smooth", block: "center" })
-          }
-        }, 100);
-        return;
+      // Check if all sections are complete
+      const detailsComplete = isSectionComplete("details");
+      const pollsComplete = isSectionComplete("polls");
+      const settingsComplete = isSectionComplete("settings");
+      
+      if (!detailsComplete || !pollsComplete || !settingsComplete) {
+        // Validate to show all errors
+        if (!validateForm()) {
+          // Scroll to the error alert if present
+          setTimeout(() => {
+            const errorAlert = document.querySelector('[role="alert"]')
+            if (errorAlert) {
+              errorAlert.scrollIntoView({ behavior: "smooth", block: "center" })
+            }
+          }, 100);
+          return;
+        }
       }
 
       if (!wallet.connected) {
@@ -754,7 +822,7 @@ const disabledDates = [
         )}
       </AnimatePresence>
 
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+      <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
         {/* Sticky tab navigation - visible on all screen sizes */}
         <motion.div
           initial={{ opacity: 0, y: -5 }}
@@ -888,6 +956,51 @@ const disabledDates = [
                       </li>
                     </ul>
                   </div>
+                  
+                  {/* Vote Preview Card - Desktop Only */}
+                  <div className="mt-6 hidden md:block">
+                    <Card className="border-dashed transition-all hover:shadow-md">
+                      <CardHeader className="p-3">
+                        <CardTitle className="text-sm">Vote Preview</CardTitle>
+                        <CardDescription className="text-xs">How your vote will appear</CardDescription>
+                      </CardHeader>
+                      <CardContent className="p-3">
+                        <div className="rounded-lg border p-3 bg-muted/20">
+                          <div className="flex flex-col gap-2">
+                            <h3 className="font-semibold text-sm">{voteTitle || "Untitled Vote"}</h3>
+                            <p className="text-xs text-muted-foreground line-clamp-2">{voteDescription || "No description provided"}</p>
+
+                            <div className="mt-2 flex flex-wrap gap-1.5">
+                              <Badge variant="outline" className="text-xs bg-green-50 text-green-700 border-green-200">
+                                {polls.length} {polls.length === 1 ? "Poll" : "Polls"}
+                              </Badge>
+
+                              {votingSettings.requiredToken !== "none" && (
+                                <Badge variant="outline" className="text-xs bg-blue-50 text-blue-700 border-blue-200">
+                                  Requires {votingSettings.requiredToken.length > 10 
+                                    ? `${votingSettings.requiredToken.substring(0, 6)}...${votingSettings.requiredToken.substring(votingSettings.requiredToken.length - 4)}` 
+                                    : votingSettings.requiredToken.toUpperCase()}
+                                </Badge>
+                              )}
+
+                              {Number(votingSettings.paymentAmount) > 0 && (
+                                <Badge variant="outline" className="text-xs bg-amber-50 text-amber-700 border-amber-200">
+                                  Payment: {votingSettings.paymentAmount} SUI
+                                </Badge>
+                              )}
+
+                              {showLiveStats && (
+                                <Badge variant="outline" className="text-xs bg-purple-50 text-purple-700 border-purple-200">
+                                  <BarChart2 className="h-3 w-3 mr-1" />
+                                  Live Results
+                                </Badge>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  </div>
                 </CardContent>
               </Card>
             </div>
@@ -933,7 +1046,25 @@ const disabledDates = [
                   </div>
                 </CardContent>
                 <CardFooter className="flex justify-end p-4">
-                  <Button onClick={() => setActiveTab("polls")} className="transition-all hover:scale-105">
+                  <Button 
+                    onClick={() => {
+                      if (!voteTitle.trim().length) {
+                        // Show error but don't proceed
+                        toast.error("Please complete all required fields", {
+                          description: "Vote title is required"
+                        });
+                        return;
+                      }
+                      
+                      // Otherwise proceed normally
+                      if (isSectionComplete("details")) {
+                        setActiveTab("polls");
+                      } else {
+                        validateForm();
+                      }
+                    }}
+                    className="transition-all hover:scale-105"
+                  >
                     Continue to Polls
                     <ArrowRight className="ml-2 h-4 w-4" />
                   </Button>
@@ -1220,7 +1351,16 @@ const disabledDates = [
                       </Button>
                       <span className="text-xs text-muted-foreground ml-1">Navigate between polls</span>
                     </div>
-                    <Button onClick={() => setActiveTab("settings")} className="gap-2 transition-all hover:scale-105">
+                    <Button onClick={() => {
+                      if (isSectionComplete("polls")) {
+                        setActiveTab("settings");
+                      } else {
+                        validateForm();
+                        toast.error("Please complete all poll options", {
+                          description: "All polls must have a title and at least 2 options with text"
+                        });
+                      }
+                    }} className="gap-2 transition-all hover:scale-105">
                       Continue
                       <ArrowRight className="h-4 w-4" />
                     </Button>
@@ -1398,7 +1538,16 @@ const disabledDates = [
                     variant="outline"
                     size="icon"
                     className="rounded-full h-8 w-8 transition-all hover:scale-110"
-                    onClick={() => setActiveTab("polls")}
+                    onClick={() => {
+                      if (isSectionComplete("settings")) {
+                        setActiveTab("polls");
+                      } else {
+                        validateForm();
+                        toast.error("Please complete all settings", {
+                          description: "Ensure all voting settings are properly configured"
+                        });
+                      }
+                    }}
                   >
                     <ChevronLeft className="h-4 w-4" />
                   </Button>
@@ -1425,8 +1574,8 @@ const disabledDates = [
                 </CardFooter>
               </Card>
 
-              {/* Preview Card */}
-              <Card className="mt-6 border-dashed transition-all hover:shadow-md">
+              {/* Preview Card - Mobile Only */}
+              <Card className="mt-6 border-dashed transition-all hover:shadow-md md:hidden">
                 <CardHeader>
                   <CardTitle className="text-lg">Vote Preview</CardTitle>
                   <CardDescription>How your vote will appear to participants</CardDescription>
@@ -1444,7 +1593,9 @@ const disabledDates = [
 
                         {votingSettings.requiredToken !== "none" && (
                           <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">
-                            Requires {votingSettings.requiredToken.toUpperCase()}
+                            Requires {votingSettings.requiredToken.length > 10 
+                              ? `${votingSettings.requiredToken.substring(0, 6)}...${votingSettings.requiredToken.substring(votingSettings.requiredToken.length - 4)}` 
+                              : votingSettings.requiredToken.toUpperCase()}
                           </Badge>
                         )}
 
