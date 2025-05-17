@@ -335,12 +335,7 @@ export default function VoteSuccessPage() {
               </div>
             </CardContent>
             <CardFooter className="flex justify-center pt-2 pb-6">
-              <Button asChild variant="outline" className="gap-2">
-                <Link href={`/vote/${params.id}`}>
-                  <BarChart2 className="h-4 w-4" />
-                  View Vote
-                </Link>
-              </Button>
+            
             </CardFooter>
           </Card>
         </motion.div>
