@@ -550,16 +550,26 @@ export default function VotePage() {
   // Loading state
   if (loading) {
     return (
-      <div className="container max-w-4xl py-10 px-4 md:px-6">
-        <div className="flex flex-col items-center justify-center min-h-[60vh] gap-6">
-          <div className="relative h-16 w-16">
+      <div className="container max-w-4xl py-6 md:py-10 px-4 md:px-6 mx-auto">
+        <div className="flex flex-col items-center justify-center min-h-[70vh] gap-6">
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ duration: 0.5 }}
+            className="relative h-24 w-24"
+          >
             <div className="absolute inset-0 rounded-full border-t-2 border-primary animate-spin"></div>
-            <div className="absolute inset-3 rounded-full bg-primary/20 animate-pulse"></div>
-          </div>
-          <div className="text-center space-y-2">
-            <h3 className="text-xl font-medium">Loading Vote</h3>
-            <p className="text-muted-foreground">Please wait while we retrieve the vote data...</p>
-          </div>
+            <div className="absolute inset-3 rounded-full bg-primary/20 animate-pulse shadow-lg"></div>
+          </motion.div>
+          <motion.div 
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5, delay: 0.2 }}
+            className="text-center space-y-3"
+          >
+            <h3 className="text-2xl font-medium">Loading Vote</h3>
+            <p className="text-muted-foreground text-base">Please wait while we retrieve the vote data...</p>
+          </motion.div>
         </div>
       </div>
     )
@@ -568,7 +578,7 @@ export default function VotePage() {
   // Error state
   if (validationErrors.general || !vote) {
     return (
-      <div className="container max-w-4xl py-10 px-4 md:px-6">
+      <div className="container max-w-4xl py-6 md:py-10 px-4 md:px-6 mx-auto">
         <Alert variant="destructive" className="mb-6">
           <AlertCircle className="h-4 w-4" />
           <AlertTitle>Error Loading Vote</AlertTitle>
@@ -590,10 +600,10 @@ export default function VotePage() {
   // Upcoming vote state
   if (vote && vote.status === "upcoming") {
     return (
-      <div className="container max-w-4xl py-10 px-4 md:px-6">
+      <div className="container max-w-4xl py-6 md:py-10 px-4 md:px-6 mx-auto">
         {/* Back button */}
         <div className="mb-6">
-          <Button asChild variant="outline" size="sm">
+          <Button asChild variant="outline" size="sm" className="transition-all duration-200 hover:translate-x-[-2px]">
             <Link href="/polls">
               <ArrowLeft className="mr-2 h-4 w-4" />
               Back to Polls
@@ -605,9 +615,9 @@ export default function VotePage() {
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5 }}
-          className="mb-6"
+          className="mb-8"
         >
-          <Card className="border-2 shadow-lg overflow-hidden">
+          <Card className="border border-muted/40 shadow-lg overflow-hidden rounded-xl transition-all duration-200 hover:shadow-xl hover:border-muted/60">
             <div className="h-2 bg-blue-500 w-full"></div>
             <CardHeader className="pb-2">
               <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -615,7 +625,7 @@ export default function VotePage() {
                   <CardTitle className="text-2xl md:text-3xl">{vote.title}</CardTitle>
                   <div className="flex items-center gap-2 mt-2">
                     <Badge className="bg-blue-500 hover:bg-blue-600 text-white">Upcoming</Badge>
-                    <Badge variant="outline" className="gap-1">
+                    <Badge variant="outline" className="gap-1 transition-all duration-200 hover:translate-x-[2px]">
                       <Calendar className="h-3 w-3" />
                       Starts {formatDate(vote.startTimestamp)}
                     </Badge>
@@ -815,7 +825,7 @@ export default function VotePage() {
         >
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-xl font-bold">Polls Preview</h2>
-            <Badge variant="outline" className="gap-1">
+            <Badge variant="outline" className="gap-1 transition-all duration-200 hover:translate-x-[2px]">
               <MessageSquareText className="h-3 w-3" />
               {polls.length} {polls.length === 1 ? "Poll" : "Polls"}
             </Badge>
@@ -882,7 +892,7 @@ export default function VotePage() {
           transition={{ duration: 0.3, delay: 0.5 }}
           className="mt-8"
         >
-          <Separator className="my-4" />
+          <Separator className="my-6" />
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 text-sm text-muted-foreground">
             <div className="flex items-center gap-2">
               <span>Vote ID:</span>
@@ -920,54 +930,59 @@ export default function VotePage() {
   // 2. Vote is open, user has voted, and live stats are enabled
   // 4. Vote is closed and live stats are enabled
   return (
-    <div className="container max-w-4xl py-10 px-4 md:px-6">
+    <div className="container max-w-4xl py-6 md:py-10 px-4 md:px-6 mx-auto">
       {/* Back button */}
-      <div className="mb-6">
-        <Button asChild variant="outline" size="sm">
+      <motion.div 
+        initial={{ opacity: 0, x: -10 }}
+        animate={{ opacity: 1, x: 0 }}
+        transition={{ duration: 0.3 }}
+        className="mb-8"
+      >
+        <Button asChild variant="outline" size="sm" className="group transition-all duration-200 hover:shadow-md hover:translate-x-[-2px]">
           <Link href="/polls">
-            <ArrowLeft className="mr-2 h-4 w-4" />
+            <ArrowLeft className="mr-2 h-4 w-4 group-hover:-translate-x-0.5 transition-transform" />
             Back to Polls
           </Link>
         </Button>
-      </div>
+      </motion.div>
       
       {/* Vote header */}
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5 }}
-        className="mb-6"
+        className="mb-8"
       >
         <Card className={cn(
-          "border-2 shadow-lg overflow-hidden",
+          "border border-muted/40 shadow-xl overflow-hidden rounded-xl hover:shadow-2xl transition-all duration-300",
           vote.status === "active" ? "border-t-green-500" : "border-t-gray-500",
         )}>
           <div className={cn(
-            "h-2 w-full",
+            "h-2.5 w-full",
             vote.status === "active" ? "bg-green-500" : "bg-gray-500",
           )}></div>
-          <CardHeader className="pb-2">
+          <CardHeader className="pb-3 pt-5 px-5 md:px-6">
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
               <div>
-                <CardTitle className="text-2xl md:text-3xl">{vote.title}</CardTitle>
-                <div className="flex flex-wrap items-center gap-2 mt-2">
+                <CardTitle className="text-2xl md:text-3xl font-bold">{vote.title}</CardTitle>
+                <div className="flex flex-wrap items-center gap-2 mt-3">
                   {getStatusBadge()}
-                  <Badge variant="outline" className="gap-1">
-                    <Users className="h-3 w-3" />
+                  <Badge variant="outline" className="gap-1.5 py-1 px-3">
+                    <Users className="h-3.5 w-3.5" />
                     {vote.totalVotes} votes
                   </Badge>
-                  <Badge variant="outline" className="gap-1">
-                    <Clock className="h-3 w-3" />
+                  <Badge variant="outline" className="gap-1.5 py-1 px-3">
+                    <Clock className="h-3.5 w-3.5" />
                     {getTimeRemaining()}
                   </Badge>
                   {vote.showLiveStats ? (
-                    <Badge variant="outline" className="gap-1 bg-purple-100/50 dark:bg-purple-900/20 text-purple-700 dark:text-purple-400">
-                      <Eye className="h-3 w-3" />
+                    <Badge variant="outline" className="gap-1.5 py-1 px-3 bg-purple-100/50 dark:bg-purple-900/20 text-purple-700 dark:text-purple-400 border-purple-200 dark:border-purple-800">
+                      <Eye className="h-3.5 w-3.5" />
                       Live Results
                     </Badge>
                   ) : (
-                    <Badge variant="outline" className="gap-1 bg-gray-100/50 dark:bg-gray-900/20 text-gray-700 dark:text-gray-400">
-                      <EyeOff className="h-3 w-3" />
+                    <Badge variant="outline" className="gap-1.5 py-1 px-3 bg-gray-100/50 dark:bg-gray-900/20 text-gray-700 dark:text-gray-400 border-gray-200 dark:border-gray-800">
+                      <EyeOff className="h-3.5 w-3.5" />
                       Hidden Results
                     </Badge>
                   )}
@@ -977,7 +992,7 @@ export default function VotePage() {
                 variant="outline" 
                 size="sm" 
                 onClick={handleShare}
-                className="gap-2"
+                className="gap-2 hover:bg-primary/10 transition-colors"
               >
                 <Share2 className="h-4 w-4" />
                 Share
@@ -985,23 +1000,23 @@ export default function VotePage() {
             </div>
           </CardHeader>
           
-          <CardContent className="pb-6">
+          <CardContent className="pb-6 px-5 md:px-6">
             {vote.description && (
-              <div className="mb-4 text-muted-foreground">
+              <div className="mb-5 text-muted-foreground text-base leading-relaxed">
                 {vote.description}
               </div>
             )}
             
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
-              <div className="flex items-center gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 mb-8">
+              <div className="flex items-center gap-3 p-4 rounded-lg bg-muted/30 hover:bg-muted/50 transition-all duration-200 hover:shadow-sm">
                 <div className={cn(
-                  "p-2 rounded-full",
+                  "p-2.5 rounded-full",
                   vote.status === "active" ? "bg-green-100 dark:bg-green-900/30" : 
                   vote.status === "closed" ? "bg-gray-100 dark:bg-gray-900/30" : 
                   "bg-blue-100 dark:bg-blue-900/30"
                 )}>
                   <Calendar className={cn(
-                    "h-4 w-4",
+                    "h-5 w-5",
                     vote.status === "active" ? "text-green-600 dark:text-green-400" : 
                     vote.status === "closed" ? "text-gray-600 dark:text-gray-400" : 
                     "text-blue-600 dark:text-blue-400"
@@ -1015,15 +1030,15 @@ export default function VotePage() {
                 </div>
               </div>
               
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-3 p-4 rounded-lg bg-muted/30 hover:bg-muted/50 transition-all duration-200 hover:shadow-sm">
                 <div className={cn(
-                  "p-2 rounded-full",
+                  "p-2.5 rounded-full",
                   vote.status === "active" ? "bg-green-100 dark:bg-green-900/30" : 
                   vote.status === "closed" ? "bg-gray-100 dark:bg-gray-900/30" : 
                   "bg-blue-100 dark:bg-blue-900/30"
                 )}>
                   <Timer className={cn(
-                    "h-4 w-4",
+                    "h-5 w-5",
                     vote.status === "active" ? "text-green-600 dark:text-green-400" : 
                     vote.status === "closed" ? "text-gray-600 dark:text-gray-400" : 
                     "text-blue-600 dark:text-blue-400"
@@ -1044,49 +1059,61 @@ export default function VotePage() {
             </div>
             
             {/* Status message based on conditions */}
-            {vote.status === "closed" ? (
-              <Alert className="bg-gray-50 dark:bg-gray-900/50 border-gray-200 dark:border-gray-800 mb-0">
-                <Lock className="h-4 w-4 text-gray-600 dark:text-gray-400" />
-                <AlertTitle>This vote has ended</AlertTitle>
-                <AlertDescription>
-                  {vote.showLiveStats ? 
-                    "The voting period has concluded. Results are available below." : 
-                    "The voting period has concluded. Results will be displayed when released by the creator."
-                  }
-                </AlertDescription>
-              </Alert>
-            ) : hasVoted ? (
-              <Alert className="bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800 mb-0">
-                <CheckCircle2 className="h-4 w-4 text-green-600 dark:text-green-400" />
-                <AlertTitle>Thank you for voting!</AlertTitle>
-                <AlertDescription>
-                  {vote.showLiveStats ? 
-                    "Your vote has been recorded. Live results are shown below." : 
-                    "Your vote has been recorded. Results will be available when voting ends."
-                  }
-                </AlertDescription>
-              </Alert>
-            ) : (
-              vote.status === "active" && (
-                <Alert className="bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800 mb-0">
-                  <Info className="h-4 w-4 text-blue-600 dark:text-blue-400" />
-                  <AlertTitle>Active Vote</AlertTitle>
-                  <AlertDescription className="flex flex-col sm:flex-row sm:items-center gap-4">
-                    <span>
-                      {!wallet.connected ? 
-                        "Connect your wallet to participate in this vote." :
-                        vote.hasWhitelist && !userCanVote ? 
-                          "Your wallet is not on the whitelist for this vote." :
-                          vote.requiredToken && !userHasRequiredTokens ?
-                            `You need at least ${vote.requiredAmount} ${vote.requiredToken.split("::").pop()} to vote.` :
-                            "Cast your vote by selecting options below."
-                      }
-                    </span>
-                    {!wallet.connected && <WalletConnectButton />}
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.4, delay: 0.1 }}
+            >
+              {vote.status === "closed" ? (
+                <Alert className="bg-gray-50 dark:bg-gray-900/50 border-gray-200 dark:border-gray-800 mb-0 shadow-sm rounded-lg">
+                  <div className="p-1.5 bg-gray-200 dark:bg-gray-800 rounded-full mr-2">
+                    <Lock className="h-4 w-4 text-gray-600 dark:text-gray-400" />
+                  </div>
+                  <AlertTitle className="font-semibold text-base">This vote has ended</AlertTitle>
+                  <AlertDescription className="mt-1">
+                    {vote.showLiveStats ? 
+                      "The voting period has concluded. Results are available below." : 
+                      "The voting period has concluded. Results will be displayed when released by the creator."
+                    }
                   </AlertDescription>
                 </Alert>
-              )
-            )}
+              ) : hasVoted ? (
+                <Alert className="bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800 mb-0 shadow-sm rounded-lg">
+                  <div className="p-1.5 bg-green-200 dark:bg-green-800 rounded-full mr-2">
+                    <CheckCircle2 className="h-4 w-4 text-green-600 dark:text-green-400" />
+                  </div>
+                  <AlertTitle className="font-semibold text-base">Thank you for voting!</AlertTitle>
+                  <AlertDescription className="mt-1">
+                    {vote.showLiveStats ? 
+                      "Your vote has been recorded. Live results are shown below." : 
+                      "Your vote has been recorded. Results will be available when voting ends."
+                    }
+                  </AlertDescription>
+                </Alert>
+              ) : (
+                vote.status === "active" && (
+                  <Alert className="bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800 mb-0 shadow-sm rounded-lg">
+                    <div className="p-1.5 bg-blue-200 dark:bg-blue-800 rounded-full mr-2">
+                      <Info className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+                    </div>
+                    <AlertTitle className="font-semibold text-base">Active Vote</AlertTitle>
+                    <AlertDescription className="flex flex-col sm:flex-row sm:items-center gap-4 mt-1">
+                      <span>
+                        {!wallet.connected ? 
+                          "Connect your wallet to participate in this vote." :
+                          vote.hasWhitelist && !userCanVote ? 
+                            "Your wallet is not on the whitelist for this vote." :
+                            vote.requiredToken && !userHasRequiredTokens ?
+                              `You need at least ${vote.requiredAmount} ${vote.requiredToken.split("::").pop()} to vote.` :
+                              "Cast your vote by selecting options below."
+                        }
+                      </span>
+                      {!wallet.connected && <WalletConnectButton />}
+                    </AlertDescription>
+                  </Alert>
+                )
+              )}
+            </motion.div>
           </CardContent>
         </Card>
       </motion.div>
@@ -1121,7 +1148,7 @@ export default function VotePage() {
             >
               {/* Poll navigation if more than one poll */}
               {polls.length > 1 && (
-                <div className="flex items-center justify-between mb-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
                   <div className="flex items-center gap-2">
                     <Button
                       variant="outline"
@@ -1172,7 +1199,7 @@ export default function VotePage() {
               
               {/* Current active poll */}
               <Card className={cn(
-                "transition-all duration-300 relative overflow-hidden",
+                "transition-all duration-300 relative overflow-hidden border border-muted/40 shadow-md rounded-xl hover:shadow-lg",
                 validationErrors[polls[activePollIndex].id] && "border-red-500"
               )}>
                 <div className={cn(
@@ -1223,8 +1250,8 @@ export default function VotePage() {
                         
                         return (
                           <div key={option.id} className={cn(
-                            "rounded-lg border p-4 transition-all",
-                            isSelected && "bg-primary/5 border-primary/30",
+                            "rounded-lg border p-4 transition-all duration-200 hover:bg-accent/30",
+                            isSelected && "bg-primary/5 border-primary/30 shadow-sm",
                             isDisabled && "opacity-80",
                             showingResults && "relative overflow-hidden transition-all"
                           )}>
@@ -1297,8 +1324,8 @@ export default function VotePage() {
                           
                           return (
                             <div key={option.id} className={cn(
-                              "rounded-lg border p-4 transition-all",
-                              isSelected && "bg-primary/5 border-primary/30",
+                              "rounded-lg border p-4 transition-all duration-200 hover:bg-accent/30",
+                              isSelected && "bg-primary/5 border-primary/30 shadow-sm",
                               isDisabled && "opacity-80",
                               showingResults && "relative overflow-hidden transition-all"
                             )}>
@@ -1355,7 +1382,7 @@ export default function VotePage() {
                 </CardContent>
                 
                 {polls.length > 1 && (
-                  <CardFooter className="flex justify-between border-t p-4">
+                  <CardFooter className="flex justify-between border-t p-5">
                     <div className="flex items-center gap-2">
                       <Button
                         variant="ghost"
@@ -1366,7 +1393,7 @@ export default function VotePage() {
                           }
                         }}
                         disabled={activePollIndex === 0}
-                        className="gap-1"
+                        className="gap-1 transition-all duration-200 hover:translate-x-[-2px]"
                       >
                         <ChevronLeft className="h-4 w-4" />
                         Previous
@@ -1380,7 +1407,7 @@ export default function VotePage() {
                           }
                         }}
                         disabled={activePollIndex === polls.length - 1}
-                        className="gap-1"
+                        className="gap-1 transition-all duration-200 hover:translate-x-[-2px]"
                       >
                         Next
                         <ChevronRight className="h-4 w-4" />
@@ -1533,7 +1560,7 @@ export default function VotePage() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5, delay: 0.3 }}
-            className="mt-8 flex justify-between items-center p-4 border rounded-lg bg-muted/30"
+            className="mt-10 flex flex-col sm:flex-row justify-between items-center p-5 border border-muted/40 rounded-xl bg-muted/30 shadow-sm gap-4"
           >
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <Info className="h-4 w-4" />
@@ -1547,7 +1574,7 @@ export default function VotePage() {
             <Button
               onClick={handleSubmitVote}
               disabled={submitting || !userCanVote}
-              className="gap-2 bg-primary hover:bg-primary/90"
+              className="gap-2 bg-primary hover:bg-primary/90 transition-all duration-200 hover:shadow-md w-full sm:w-auto"
               size="lg"
             >
               {submitting ? (
@@ -1571,9 +1598,9 @@ export default function VotePage() {
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.3, delay: 0.5 }}
-        className="mt-8"
+        className="mt-10"
       >
-        <Separator className="my-4" />
+        <Separator className="my-6" />
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 text-sm text-muted-foreground">
           <div className="flex items-center gap-2">
             <span>Created by:</span>

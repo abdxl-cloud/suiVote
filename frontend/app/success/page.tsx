@@ -49,7 +49,7 @@ import { useWallet } from "@suiet/wallet-kit"
 import confetti from "canvas-confetti"
 import { QRCodeSVG } from "qrcode.react"
 import { cn } from "@/lib/utils"
-import { SuiClient, getFullnodeUrl } from '@mysten/sui.js/client';
+import { SuiClient, getFullnodeUrl } from '@mysten/sui/client';
 
 
 
