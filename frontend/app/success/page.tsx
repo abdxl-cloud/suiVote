@@ -47,8 +47,11 @@ import { useSuiVote } from "@/hooks/use-suivote"
 import { SUI_CONFIG } from "@/config/sui-config"
 import { useWallet } from "@suiet/wallet-kit"
 import confetti from "canvas-confetti"
-import QRCode from "qrcode.react"
+import { QRCodeSVG } from "qrcode.react"
 import { cn } from "@/lib/utils"
+import { SuiClient, getFullnodeUrl } from '@mysten/sui/client';
+
+
 
 export default function SuccessPage() {
   const router = useRouter()
@@ -56,7 +59,7 @@ export default function SuccessPage() {
   const suivote = useSuiVote()
   const wallet = useWallet()
   const shareButtonRef = useRef(null)
-  
+
   const [voteDetails, setVoteDetails] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -65,15 +68,40 @@ export default function SuccessPage() {
   const [qrVisible, setQrVisible] = useState(false)
   const [activeTab, setActiveTab] = useState<string>("share")
   const [confettiLaunched, setConfettiLaunched] = useState(false)
-  
+  const [voteId, setVoteId] = useState<string | null>(null)
   // Get transaction digest and vote ID from URL params
   const txDigest = searchParams.get("digest")
-  const voteId = searchParams.get("voteId")
-  
+
+  async function getSecondVoteObjectId(digest: string) {
+    const client = new SuiClient({ url: getFullnodeUrl('testnet') });
+
+    const tx = await client.getTransactionBlock({
+      digest,
+      options: { showEffects: true }
+    });
+
+    // Get created objects array
+    const createdObjects = tx.effects?.created || [];
+
+    // Get second object (index 1)
+    const secondObject = createdObjects[1]?.reference?.objectId;
+
+    if (!secondObject) {
+      throw new Error('No second created object found');
+    }
+
+    // Optional: Verify object type
+    const objectData = await client.getObject({
+      id: secondObject,
+      options: { showType: true }
+    });
+    return secondObject;
+  }
+
   // Format date
   const formatDate = (timestamp: number) => {
     try {
-      return new Date(timestamp).toLocaleDateString(undefined, { 
+      return new Date(timestamp).toLocaleDateString(undefined, {
         year: 'numeric',
         month: 'long',
         day: 'numeric',
@@ -85,18 +113,18 @@ export default function SuccessPage() {
       return "Date unavailable"
     }
   }
-  
+
   // Format remaining time
   const formatRemainingTime = (endTimestamp: number) => {
     try {
       const now = Date.now()
       const timeRemaining = endTimestamp - now
-      
+
       if (timeRemaining <= 0) return "Ended"
-      
+
       const days = Math.floor(timeRemaining / (1000 * 60 * 60 * 24))
       const hours = Math.floor((timeRemaining % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60))
-      
+
       if (days > 0) {
         return `${days}d ${hours}h remaining`
       } else {
@@ -107,13 +135,13 @@ export default function SuccessPage() {
       return "Time unavailable"
     }
   }
-  
+
   // Truncate address for display
   const truncateAddress = (address: string | null | undefined) => {
     if (!address) return ""
     return `${address.substring(0, 6)}...${address.substring(address.length - 4)}`
   }
-  
+
   // Get transaction explorer URL
   const getTransactionExplorerUrl = () => {
     if (!txDigest) return "#"
@@ -125,7 +153,7 @@ export default function SuccessPage() {
       return `https://explorer.sui.io/txblock/${txDigest}?network=${network}`
     }
   }
-  
+
   // Get vote explorer URL
   const getVoteExplorerUrl = () => {
     if (!voteId) return "#"
@@ -137,45 +165,45 @@ export default function SuccessPage() {
       return `https://explorer.sui.io/object/${voteId}?network=${network}`
     }
   }
-  
+
   // Generate share URL
   const getShareUrl = () => {
     if (typeof window === "undefined") return ""
-    
+
     return `${window.location.origin}/vote/${voteId}`
   }
-  
+
   // Handle copy share link
   const handleCopyLink = async () => {
     const shareUrl = getShareUrl()
-    
+
     try {
       await navigator.clipboard.writeText(shareUrl)
       setCopied(true)
-      
+
       // Animate the copy button
       if (shareButtonRef.current) {
         const button = shareButtonRef.current as HTMLElement
         button.classList.add("scale-110")
         setTimeout(() => button.classList.remove("scale-110"), 200)
       }
-      
+
       toast.success("Link copied to clipboard", {
         description: "Share it with your participants"
       })
-      
+
       setTimeout(() => setCopied(false), 2000)
     } catch (err) {
       console.error("Failed to copy:", err)
       toast.error("Failed to copy link")
     }
   }
-  
+
   // Launch confetti effect
   const launchConfetti = () => {
     if (confettiLaunched) return
     setConfettiLaunched(true)
-    
+
     const duration = 3 * 1000
     const animationEnd = Date.now() + duration
     const defaults = { startVelocity: 30, spread: 360, ticks: 60, zIndex: 0 }
@@ -184,7 +212,7 @@ export default function SuccessPage() {
       return Math.random() * (max - min) + min
     }
 
-    const interval: any = setInterval(function() {
+    const interval: any = setInterval(function () {
       const timeLeft = animationEnd - Date.now()
 
       if (timeLeft <= 0) {
@@ -192,7 +220,7 @@ export default function SuccessPage() {
       }
 
       const particleCount = 50 * (timeLeft / duration)
-      
+
       // Since particles fall down, start a bit higher than random
       confetti({
         ...defaults,
@@ -206,32 +234,31 @@ export default function SuccessPage() {
       })
     }, 250)
   }
-  
+
   // Fetch vote details
   useEffect(() => {
     const fetchVoteDetails = async () => {
       try {
-        setLoading(true)
-        
-        if (!voteId) {
-          // If vote ID is not directly provided, we might need to get it from the transaction
+      if (!voteId) {
           if (txDigest) {
             // You could implement logic here to get the vote ID from the transaction
             // For now, we'll just show what we have
+            const id = await getSecondVoteObjectId(txDigest);
+            setVoteId(id);
             setLoading(false)
             return
           } else {
             throw new Error("Vote ID and transaction digest not found")
           }
         }
-        
+
         // Fetch vote details
         const details = await suivote.getVoteDetails(voteId)
-        
+
         if (details) {
           setVoteDetails(details)
           document.title = `Vote Created: ${details.title} - SuiVote`
-          
+
           // Launch confetti with a slight delay for better UX
           setTimeout(() => {
             launchConfetti()
@@ -246,15 +273,15 @@ export default function SuccessPage() {
         setLoading(false)
       }
     }
-    
+
     fetchVoteDetails()
   }, [voteId, txDigest, suivote])
-  
+
   // Handle share dialog
   const handleShare = () => {
     setShareDialogOpen(true)
   }
-  
+
   // Toggle QR code visibility
   const toggleQrCode = () => {
     setQrVisible(prev => !prev)
@@ -289,7 +316,7 @@ export default function SuccessPage() {
         <div className="mb-6">
           <Skeleton className="h-9 w-32" />
         </div>
-        
+
         <div className="space-y-8">
           <Card>
             <CardHeader className="pb-2">
@@ -310,7 +337,7 @@ export default function SuccessPage() {
               </div>
             </CardContent>
           </Card>
-          
+
           <Card>
             <CardHeader>
               <Skeleton className="h-6 w-40" />
@@ -342,28 +369,28 @@ export default function SuccessPage() {
             </Link>
           </Button>
         </div>
-        
+
         <Alert variant="destructive" className="mb-6">
           <AlertCircle className="h-4 w-4" />
           <AlertTitle>Error loading vote details</AlertTitle>
           <AlertDescription>{error}</AlertDescription>
         </Alert>
-        
+
         <Card>
           <CardContent className="p-8 text-center">
             <p className="mb-6 text-muted-foreground">
               We couldn't load the vote details. However, your vote was created successfully
               {txDigest && " and the transaction was processed on the blockchain"}.
             </p>
-            
+
             {txDigest && (
               <div className="mb-6 text-sm">
                 <Label>Transaction ID</Label>
                 <div className="flex items-center justify-center mt-2">
                   <code className="bg-muted p-2 rounded text-xs overflow-x-auto max-w-full">{txDigest}</code>
-                  <a 
-                    href={getTransactionExplorerUrl()} 
-                    target="_blank" 
+                  <a
+                    href={getTransactionExplorerUrl()}
+                    target="_blank"
                     rel="noopener noreferrer"
                     className="ml-2 text-primary hover:text-primary/90 transition-colors"
                   >
@@ -372,7 +399,7 @@ export default function SuccessPage() {
                 </div>
               </div>
             )}
-            
+
             <div className="flex flex-col sm:flex-row gap-4 justify-center">
               <Button asChild>
                 <Link href="/dashboard">
@@ -380,7 +407,7 @@ export default function SuccessPage() {
                   Return to Dashboard
                 </Link>
               </Button>
-              
+
               <Button variant="outline" asChild>
                 <Link href="/create">
                   <Plus className="mr-2 h-4 w-4" />
@@ -404,18 +431,18 @@ export default function SuccessPage() {
             View
           </Link>
         </Button>
-        
+
         <Button variant="outline" className="flex-1" size="sm" onClick={handleCopyLink} ref={shareButtonRef}>
           {copied ? <CheckCircle2 className="h-4 w-4 mr-1.5" /> : <Copy className="h-4 w-4 mr-1.5" />}
           {copied ? "Copied" : "Copy"}
         </Button>
-        
+
         <Button variant="outline" className="flex-1" size="sm" onClick={handleShare}>
           <Share2 className="h-4 w-4 mr-1.5" />
           Share
         </Button>
       </div>
-      
+
       {/* Back button */}
       <div className="mb-6 flex justify-between items-center">
         <Button asChild variant="outline" size="sm">
@@ -424,7 +451,7 @@ export default function SuccessPage() {
             Back to Dashboard
           </Link>
         </Button>
-        
+
         <Button asChild variant="ghost" size="sm" className="hidden sm:flex">
           <Link href="/create" className="gap-2 text-muted-foreground hover:text-foreground">
             Create Another Vote
@@ -432,7 +459,7 @@ export default function SuccessPage() {
           </Link>
         </Button>
       </div>
-      
+
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
@@ -444,15 +471,15 @@ export default function SuccessPage() {
           <div className="absolute -right-12 -top-3 rotate-45 bg-primary/90 dark:bg-primary/80 text-primary-foreground text-xs font-bold py-1 w-36 text-center shadow-md">
             CREATED
           </div>
-          
+
           <CardHeader className="pb-6 pt-8 text-center">
             <div className="flex justify-center mb-4">
-              <motion.div 
+              <motion.div
                 initial={{ scale: 0.8, opacity: 0 }}
                 animate={{ scale: 1, opacity: 1 }}
-                transition={{ 
-                  type: "spring", 
-                  stiffness: 200, 
+                transition={{
+                  type: "spring",
+                  stiffness: 200,
                   damping: 15,
                   delay: 0.2
                 }}
@@ -474,7 +501,7 @@ export default function SuccessPage() {
               )}
             </CardDescription>
           </CardHeader>
-          
+
           <CardContent className="space-y-6 pb-8">
             <Alert className="bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800">
               <Sparkles className="h-4 w-4 text-green-600 dark:text-green-400" />
@@ -482,7 +509,7 @@ export default function SuccessPage() {
                 Your vote is now ready to receive responses. Share the link with participants to start collecting votes.
               </AlertDescription>
             </Alert>
-            
+
             {/* Tabs for different actions */}
             <Tabs defaultValue="share" value={activeTab} onValueChange={setActiveTab} className="w-full">
               <TabsList className="grid grid-cols-3 mb-4">
@@ -502,7 +529,7 @@ export default function SuccessPage() {
                   <span className="sm:hidden">Tx</span>
                 </TabsTrigger>
               </TabsList>
-              
+
               <TabsContent value="share" className="space-y-6 focus-visible:outline-none focus-visible:ring-0">
                 {/* Share link */}
                 <div className="space-y-2">
@@ -514,10 +541,10 @@ export default function SuccessPage() {
                     </Button>
                   </Label>
                   <div className="flex items-center space-x-2">
-                    <Input 
-                      id="share-link" 
-                      value={getShareUrl()} 
-                      readOnly 
+                    <Input
+                      id="share-link"
+                      value={getShareUrl()}
+                      readOnly
                       className="font-mono text-sm"
                       onClick={(e) => e.currentTarget.select()}
                     />
@@ -533,7 +560,7 @@ export default function SuccessPage() {
                     </Button>
                   </div>
                 </div>
-                
+
                 {/* QR Code */}
                 <AnimatePresence>
                   {qrVisible && (
@@ -545,8 +572,8 @@ export default function SuccessPage() {
                       className="flex justify-center my-4 overflow-hidden"
                     >
                       <div className="bg-white p-4 rounded-lg">
-                        <QRCode 
-                          value={getShareUrl()} 
+                        <QRCodeSVG
+                          value={getShareUrl()}
                           size={180}
                           level="H"
                           includeMargin={true}
@@ -563,7 +590,7 @@ export default function SuccessPage() {
                     </motion.div>
                   )}
                 </AnimatePresence>
-                
+
                 {/* Social sharing */}
                 <div className="space-y-2">
                   <Label className="text-sm">Share on Social Media</Label>
@@ -591,7 +618,7 @@ export default function SuccessPage() {
                     ))}
                   </div>
                 </div>
-                
+
                 {/* Action buttons */}
                 <div className="hidden md:flex flex-col sm:flex-row gap-4 pt-2">
                   <Button asChild className="gap-2 flex-1">
@@ -600,10 +627,10 @@ export default function SuccessPage() {
                       View Vote
                     </Link>
                   </Button>
-                  
-                  <Button 
-                    onClick={handleShare} 
-                    variant="outline" 
+
+                  <Button
+                    onClick={handleShare}
+                    variant="outline"
                     className="gap-2 flex-1"
                   >
                     <Share2 className="h-4 w-4" />
@@ -611,7 +638,7 @@ export default function SuccessPage() {
                   </Button>
                 </div>
               </TabsContent>
-              
+
               <TabsContent value="details" className="space-y-4 focus-visible:outline-none focus-visible:ring-0">
                 {voteDetails ? (
                   <>
@@ -619,14 +646,14 @@ export default function SuccessPage() {
                       <h3 className="text-sm font-medium text-muted-foreground mb-1">Vote Title</h3>
                       <p className="font-medium text-lg">{voteDetails.title}</p>
                     </div>
-                    
+
                     {voteDetails.description && (
                       <div>
                         <h3 className="text-sm font-medium text-muted-foreground mb-1">Description</h3>
                         <p>{voteDetails.description}</p>
                       </div>
                     )}
-                    
+
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 bg-muted/30 p-4 rounded-lg">
                       <div>
                         <h3 className="text-sm font-medium text-muted-foreground mb-1">Start Date</h3>
@@ -635,7 +662,7 @@ export default function SuccessPage() {
                           <span>{formatDate(voteDetails.startTimestamp)}</span>
                         </div>
                       </div>
-                      
+
                       <div>
                         <h3 className="text-sm font-medium text-muted-foreground mb-1">End Date</h3>
                         <div className="flex items-center gap-2">
@@ -643,7 +670,7 @@ export default function SuccessPage() {
                           <span>{formatDate(voteDetails.endTimestamp)}</span>
                         </div>
                       </div>
-                      
+
                       <div>
                         <h3 className="text-sm font-medium text-muted-foreground mb-1">Time Remaining</h3>
                         <Badge variant="outline" className="gap-1 bg-green-50 dark:bg-green-900/10 border-green-200 dark:border-green-800 text-green-700 dark:text-green-400">
@@ -651,7 +678,7 @@ export default function SuccessPage() {
                           {formatRemainingTime(voteDetails.endTimestamp)}
                         </Badge>
                       </div>
-                      
+
                       <div>
                         <h3 className="text-sm font-medium text-muted-foreground mb-1">Poll Count</h3>
                         <Badge variant="outline" className="gap-1">
@@ -660,7 +687,7 @@ export default function SuccessPage() {
                         </Badge>
                       </div>
                     </div>
-                    
+
                     {voteDetails.requiredToken && (
                       <div className="bg-blue-50 dark:bg-blue-900/10 p-4 rounded-lg border border-blue-200 dark:border-blue-800">
                         <h3 className="text-sm font-medium text-muted-foreground mb-1">Token Requirement</h3>
@@ -673,14 +700,14 @@ export default function SuccessPage() {
                         </div>
                       </div>
                     )}
-                    
+
                     {/* Creator info */}
                     <div className="flex items-center justify-between text-sm text-muted-foreground pt-2">
                       <div className="flex items-center gap-2">
                         <Users className="h-4 w-4" />
                         <span>Created by: {truncateAddress(voteDetails.creator)}</span>
                       </div>
-                      
+
                       <a
                         href={getVoteExplorerUrl()}
                         target="_blank"
@@ -690,7 +717,7 @@ export default function SuccessPage() {
                         View on Explorer <ExternalLink className="h-3 w-3" />
                       </a>
                     </div>
-                    
+
                     {/* Action button */}
                     <div className="pt-2 hidden md:block">
                       <Button asChild className="w-full">
@@ -712,7 +739,7 @@ export default function SuccessPage() {
                   </div>
                 )}
               </TabsContent>
-              
+
               <TabsContent value="tx" className="focus-visible:outline-none focus-visible:ring-0">
                 {txDigest ? (
                   <div className="space-y-4">
@@ -735,7 +762,7 @@ export default function SuccessPage() {
                         </div>
                       </div>
                     </div>
-                    
+
                     <div>
                       <Label className="text-sm">Vote Object ID</Label>
                       <div className="bg-muted/70 rounded-lg p-4 mt-1.5">
@@ -757,7 +784,7 @@ export default function SuccessPage() {
                         </div>
                       </div>
                     </div>
-                    
+
                     <div className="bg-muted/30 p-4 rounded-lg">
                       <div className="flex items-center justify-between mb-1">
                         <span className="text-sm font-medium">Blockchain</span>
@@ -800,7 +827,7 @@ export default function SuccessPage() {
               </TabsContent>
             </Tabs>
           </CardContent>
-          
+
           <CardFooter className="pt-0 pb-6 flex justify-center">
             <div className="space-x-1 text-xs text-muted-foreground">
               <span>Created on {SUI_CONFIG.NETWORK.charAt(0).toUpperCase() + SUI_CONFIG.NETWORK.slice(1)}</span>
@@ -810,7 +837,7 @@ export default function SuccessPage() {
           </CardFooter>
         </Card>
       </motion.div>
-      
+
       {/* Next steps card */}
       <motion.div
         initial={{ opacity: 0, y: 20 }}
@@ -837,7 +864,7 @@ export default function SuccessPage() {
                 <h3 className="font-medium mb-1">Share the Vote</h3>
                 <p className="text-sm text-muted-foreground">Share the vote link with your intended participants</p>
               </div>
-              
+
               <div className="bg-muted/50 p-4 rounded-lg border border-border hover:border-primary/50 transition-colors">
                 <div className="flex justify-between items-start mb-3">
                   <div className="bg-primary/10 rounded-full h-8 w-8 flex items-center justify-center">
@@ -848,7 +875,7 @@ export default function SuccessPage() {
                 <h3 className="font-medium mb-1">Collect Responses</h3>
                 <p className="text-sm text-muted-foreground">Wait for participants to submit their votes</p>
               </div>
-              
+
               <div className="bg-muted/50 p-4 rounded-lg border border-border hover:border-primary/50 transition-colors">
                 <div className="flex justify-between items-start mb-3">
                   <div className="bg-primary/10 rounded-full h-8 w-8 flex items-center justify-center">
@@ -863,7 +890,7 @@ export default function SuccessPage() {
           </CardContent>
         </Card>
       </motion.div>
-      
+
       {/* Share dialog */}
       <ShareDialog
         open={shareDialogOpen}

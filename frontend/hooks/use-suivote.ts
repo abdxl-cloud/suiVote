@@ -190,23 +190,12 @@ export function useSuiVote() {
       requiredAmount = 0,
       paymentAmount = 0,
       requireAllPolls = true,
+      showLiveStats = false,
       pollData: PollData[],
     ): Transaction => {
       try {
         setLoading(true)
         setError(null)
-
-        console.log("Creating vote transaction with:", {
-          title,
-          description,
-          startTimestamp,
-          endTimestamp,
-          requiredToken,
-          requiredAmount,
-          paymentAmount,
-          requireAllPolls,
-          pollCount: pollData.length,
-        })
 
         // Call the service method to create the transaction
         const transaction = suiVoteService.createCompleteVoteTransaction(
@@ -218,6 +207,7 @@ export function useSuiVote() {
           requiredAmount,
           paymentAmount,
           requireAllPolls,
+          showLiveStats,
           pollData,
         )
 
