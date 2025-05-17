@@ -59,9 +59,10 @@ module contracts::voting {
         polls_count: u64,
         total_votes: u64,
         is_cancelled: bool,
-        token_requirement: Option<String>,  // Optional token type identifier
-        token_amount: Option<u64>,          // Optional amount of custom token required
-        has_whitelist: bool                 // Indicates if vote has address restrictions
+        token_requirement: Option<String>,
+        token_amount: Option<u64>,
+        has_whitelist: bool,
+        show_live_stats: bool  
     }
 
     /// Simple struct to mark addresses as whitelisted - no UID needed
@@ -97,9 +98,10 @@ module contracts::voting {
         start_timestamp: u64,
         end_timestamp: u64,
         polls_count: u64,
-        token_requirement: Option<String>,  // New field
-        token_amount: Option<u64>,          // New field
-        has_whitelist: bool                 // New field
+        token_requirement: Option<String>,
+        token_amount: Option<u64>,
+        has_whitelist: bool,
+        show_live_stats: bool
     }
 
     /// Emitted when a vote is cast
@@ -166,10 +168,11 @@ module contracts::voting {
         description: String,
         start_timestamp: u64,
         end_timestamp: u64,
-        payment_amount: u64,         // Payment amount in SUI (will be converted to MIST)
+        payment_amount: u64,
         require_all_polls: bool,
-        token_requirement: vector<u8>,     // New: Optional token identifier as bytes
-        token_amount: u64,                 // New: Optional token amount
+        token_requirement: vector<u8>,
+        token_amount: u64,
+        show_live_stats: bool,  
         clock: &Clock,
         ctx: &mut TxContext
     ) {
@@ -207,14 +210,15 @@ module contracts::voting {
             description,
             start_timestamp,
             end_timestamp,
-            payment_amount: payment_in_mist,  // Store amount in MIST
+            payment_amount: payment_in_mist,
             require_all_polls,
             polls_count: 0,
             total_votes: 0,
             is_cancelled: false,
             token_requirement: token_req,
             token_amount: token_amt,
-            has_whitelist: false
+            has_whitelist: false,
+            show_live_stats 
         };
 
         let vote_id = object::id(&vote);
@@ -232,7 +236,8 @@ module contracts::voting {
             polls_count: 0,
             token_requirement: token_req,
             token_amount: token_amt,
-            has_whitelist: false
+            has_whitelist: false,
+            show_live_stats
         });
 
         // Share the vote object
@@ -403,10 +408,11 @@ module contracts::voting {
         description: String,
         start_timestamp: u64,
         end_timestamp: u64,
-        payment_amount: u64,         // Payment amount in SUI (will be converted to MIST)
+        payment_amount: u64,
         require_all_polls: bool,
-        token_requirement: vector<u8>,     // New: Optional token identifier as bytes
-        token_amount: u64,                 // New: Optional token amount
+        token_requirement: vector<u8>,
+        token_amount: u64,
+        show_live_stats: bool,
         poll_titles: vector<String>,
         poll_descriptions: vector<String>,
         poll_is_multi_select: vector<bool>,
@@ -461,14 +467,15 @@ module contracts::voting {
             description,
             start_timestamp,
             end_timestamp,
-            payment_amount: payment_in_mist,  // Store amount in MIST
+            payment_amount: payment_in_mist,
             require_all_polls,
             polls_count: 0,
             total_votes: 0,
             is_cancelled: false,
             token_requirement: token_req,
             token_amount: token_amt,
-            has_whitelist: false
+            has_whitelist: false,
+            show_live_stats 
         };
 
         // Get all option texts and media_urls total counts
@@ -586,7 +593,8 @@ module contracts::voting {
             polls_count: vote.polls_count,
             token_requirement: token_req,
             token_amount: token_amt,
-            has_whitelist: false
+            has_whitelist: false,
+            show_live_stats  // New field
         });
 
         // Share the vote object
@@ -932,7 +940,7 @@ module contracts::voting {
 
     /// Get vote details - updated with new token requirement fields
     public fun get_vote_details(vote: &Vote): (
-        address, String, String, u64, u64, u64, bool, u64, u64, bool, Option<String>, Option<u64>, bool
+        address, String, String, u64, u64, u64, bool, u64, u64, bool, Option<String>, Option<u64>, bool, bool
     ) {
         (
             vote.creator,
@@ -947,7 +955,8 @@ module contracts::voting {
             vote.is_cancelled,
             vote.token_requirement,
             vote.token_amount,
-            vote.has_whitelist
+            vote.has_whitelist,
+            vote.show_live_stats
         )
     }
     

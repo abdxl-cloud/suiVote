@@ -670,9 +670,7 @@ const disabledDates = [
       }));
 
       // Create the combined transaction
-      console.log("Creating vote transaction with media...");
       setTxStatus(TransactionStatus.BUILDING);
-      console.log(votingSettings.paymentAmount);
       
       const transaction = await mediaHandlers.createVoteWithMedia({
         voteTitle,
@@ -683,6 +681,7 @@ const disabledDates = [
         requiredAmount: votingSettings.requiredAmount || "0",
         paymentAmount: votingSettings.paymentAmount || "0",
         requireAllPolls: votingSettings.requireAllPolls,
+        showLiveStats: votingSettings.showLiveStats || false,
         polls: pollData,
         onSuccess: (voteId) => {
           console.log("Vote created successfully with ID:", voteId);

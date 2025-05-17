@@ -22,9 +22,10 @@ export interface VoteDetails {
   totalVotes: number
   isCancelled: boolean
   status: "active" | "pending" | "upcoming" | "closed" | "voted"
-  tokenRequirement?: string    // Token type identifier
-  tokenAmount?: number         // Token amount required
-  hasWhitelist: boolean        // Indicates if vote has address restrictions
+  tokenRequirement?: string    
+  tokenAmount?: number        
+  hasWhitelist: boolean        
+  showLiveStats: boolean
 }
 
 /**
@@ -72,9 +73,10 @@ export interface VoteCreatedEvent {
   start_timestamp: number
   end_timestamp: number
   polls_count: number
-  token_requirement?: string    // New field
-  token_amount?: number         // New field
-  has_whitelist: boolean        // New field
+  token_requirement?: string    
+  token_amount?: number         
+  has_whitelist: boolean        
+  show_live_stats: boolean
 }
 
 /**
@@ -115,7 +117,8 @@ export interface VoteList {
   tokenRequirement?: string
   tokenAmount?: number
   hasWhitelist: boolean
-  isWhitelisted?: boolean      // Indicates if user is whitelisted for this vote
+  isWhitelisted?: boolean  
+  showLiveStats: boolean
 }
 
 export class SuiVoteService {
@@ -126,7 +129,7 @@ export class SuiVoteService {
     try {
       this.client = new SuiClient({ url: getFullnodeUrl(network) })
       this.isInitialized = true
-      } catch (error) {
+    } catch (error) {
       throw new Error(`Failed to initialize SuiVoteService: ${error instanceof Error ? error.message : String(error)}`)
     }
   }
@@ -156,71 +159,71 @@ export class SuiVoteService {
  * @param cursor Pagination cursor
  * @returns Array of vote details with pagination cursor
  */
-async getVotesCreatedByAddress(
-  address: string,
-  limit = 20,
-  cursor?: string,
-): Promise<{ data: VoteDetails[]; nextCursor?: string }> {
-  try {
-    this.checkInitialization()
+  async getVotesCreatedByAddress(
+    address: string,
+    limit = 20,
+    cursor?: string,
+  ): Promise<{ data: VoteDetails[]; nextCursor?: string }> {
+    try {
+      this.checkInitialization()
 
-    if (!address) {
-      throw new Error("Address is required")
-    }
+      if (!address) {
+        throw new Error("Address is required")
+      }
 
-    // Query for VoteCreated events using MoveEventType filter
-    const eventsResponse = await this.client.queryEvents({
-      query: {
-        MoveEventType: `${PACKAGE_ID}::voting::VoteCreated`
-      },
-      cursor,
-      limit: 100, // Using a higher limit initially since we'll filter manually
-      descending_order: true, // Get most recent first
-    })
+      // Query for VoteCreated events using MoveEventType filter
+      const eventsResponse = await this.client.queryEvents({
+        query: {
+          MoveEventType: `${PACKAGE_ID}::voting::VoteCreated`
+        },
+        cursor,
+        limit: 100, // Using a higher limit initially since we'll filter manually
+        descending_order: true, // Get most recent first
+      })
 
-    // Process events to extract vote IDs
-    const votes: VoteDetails[] = []
-    const processedIds = new Set<string>()
+      // Process events to extract vote IDs
+      const votes: VoteDetails[] = []
+      const processedIds = new Set<string>()
 
-    // Manually filter the events for creator = address
-    const filteredEvents = eventsResponse.data.filter(event => {
-      if (!event.parsedJson) return false
-      const voteCreatedEvent = event.parsedJson as VoteCreatedEvent
-      return voteCreatedEvent.creator === address
-    })
-
-    // Use Promise.all for parallel processing
-    await Promise.all(
-      filteredEvents.map(async (event) => {
-        if (!event.parsedJson) return
-
+      // Manually filter the events for creator = address
+      const filteredEvents = eventsResponse.data.filter(event => {
+        if (!event.parsedJson) return false
         const voteCreatedEvent = event.parsedJson as VoteCreatedEvent
+        return voteCreatedEvent.creator === address
+      })
 
-        // Avoid processing duplicates
-        if (processedIds.has(voteCreatedEvent.vote_id)) return
-        processedIds.add(voteCreatedEvent.vote_id)
+      // Use Promise.all for parallel processing
+      await Promise.all(
+        filteredEvents.map(async (event) => {
+          if (!event.parsedJson) return
 
-        // Get detailed vote information
-        const voteDetails = await this.getVoteDetails(voteCreatedEvent.vote_id)
-        if (voteDetails) {
-          votes.push(voteDetails)
-        }
-      }),
-    )
+          const voteCreatedEvent = event.parsedJson as VoteCreatedEvent
 
-    // Sort by most recent first
-    votes.sort((a, b) => b.startTimestamp - a.startTimestamp)
+          // Avoid processing duplicates
+          if (processedIds.has(voteCreatedEvent.vote_id)) return
+          processedIds.add(voteCreatedEvent.vote_id)
 
-    // Apply limit after filtering
-    const limitedVotes = votes.slice(0, limit)
-    return {
-      data: limitedVotes,
-      nextCursor: eventsResponse.nextCursor,
+          // Get detailed vote information
+          const voteDetails = await this.getVoteDetails(voteCreatedEvent.vote_id)
+          if (voteDetails) {
+            votes.push(voteDetails)
+          }
+        }),
+      )
+
+      // Sort by most recent first
+      votes.sort((a, b) => b.startTimestamp - a.startTimestamp)
+
+      // Apply limit after filtering
+      const limitedVotes = votes.slice(0, limit)
+      return {
+        data: limitedVotes,
+        nextCursor: eventsResponse.nextCursor,
+      }
+    } catch (error) {
+      throw new Error(`Failed to fetch votes: ${error instanceof Error ? error.message : String(error)}`)
     }
-  } catch (error) {
-    throw new Error(`Failed to fetch votes: ${error instanceof Error ? error.message : String(error)}`)
   }
-}
 
   /**
    * Get votes that a user has participated in
@@ -240,7 +243,7 @@ async getVotesCreatedByAddress(
       if (!address) {
         throw new Error("Address is required")
       }
-    // Query for VoteCast events using MoveEventType filter
+      // Query for VoteCast events using MoveEventType filter
       const eventsResponse = await this.client.queryEvents({
         query: {
           MoveEventType: `${PACKAGE_ID}::voting::VoteCast`
@@ -314,7 +317,7 @@ async getVotesCreatedByAddress(
         const hasVoted = await this.hasVoted(address, voteId)
         return { voteId, hasVoted }
       })
-      
+
       const votedResults = await Promise.all(votedPromises)
       const votedVoteIds = new Set(
         votedResults
@@ -354,11 +357,11 @@ async getVotesCreatedByAddress(
       const voteList: VoteList[] = Array.from(allVoteMap.values()).map((vote) => {
         // Determine the correct status based on the requirements
         let status: "active" | "pending" | "upcoming" | "closed" | "voted"
-        
+
         // First, check if the user has already voted in this vote
         if (votedVoteIds.has(vote.id)) {
           status = "voted"
-        } 
+        }
         // If it's an upcoming vote
         else if (currentTime < vote.startTimestamp) {
           status = "upcoming"
@@ -461,11 +464,24 @@ async getVotesCreatedByAddress(
         status = "closed"
       }
 
-      // Extract token requirement fields - these are Option types in Sui
-      const tokenRequirement = fields.token_requirement?.fields?.value || undefined
-      const tokenAmount = fields.token_amount?.fields?.value !== undefined 
-        ? Number(fields.token_amount.fields.value) 
-        : undefined
+      let tokenRequirement = undefined;
+      let tokenAmount = undefined;
+
+      // Check if token_requirement exists and has a Some value
+      if (fields.token_requirement &&
+        typeof fields.token_requirement === 'object' &&
+        fields.token_requirement.fields &&
+        'value' in fields.token_requirement.fields) {
+        tokenRequirement = fields.token_requirement.fields.value;
+      }
+
+      // Check if token_amount exists and has a Some value
+      if (fields.token_amount &&
+        typeof fields.token_amount === 'object' &&
+        fields.token_amount.fields &&
+        'value' in fields.token_amount.fields) {
+        tokenAmount = Number(fields.token_amount.fields.value);
+      }
 
       // Build the vote details object with new fields
       const voteDetails: VoteDetails = {
@@ -481,9 +497,10 @@ async getVotesCreatedByAddress(
         totalVotes: Number(fields.total_votes || 0),
         isCancelled,
         status,
-        tokenRequirement,      // New field
-        tokenAmount,           // New field
-        hasWhitelist: !!fields.has_whitelist  // New field
+        tokenRequirement,
+        tokenAmount,
+        hasWhitelist: !!fields.has_whitelist,
+        showLiveStats: !!fields.show_live_stats
       }
 
       return voteDetails
@@ -646,314 +663,323 @@ async getVotesCreatedByAddress(
     }
   }
 
-/**
-   * Create a complete vote with polls and options in a single transaction
-   * @param title Vote title
-   * @param description Vote description
-   * @param startTimestamp Start timestamp in milliseconds
-   * @param endTimestamp End timestamp in milliseconds
-   * @param paymentAmount Payment amount in SUI
-   * @param requireAllPolls Whether all polls must be answered
-   * @param pollData Poll configuration data
-   * @returns Transaction to be signed
-   */
-createCompleteVoteTransaction(
-  title: string,
-  description: string,
-  startTimestamp: number,
-  endTimestamp: number,
-  requiredToken = "",
-  requiredAmount = 0,
-  paymentAmount = 0,
-  requireAllPolls = true,
-  pollData: PollData[],
-): Transaction {
-  try {
-    this.checkInitialization()
+  /**
+     * Create a complete vote with polls and options in a single transaction
+     * @param title Vote title
+     * @param description Vote description
+     * @param startTimestamp Start timestamp in milliseconds
+     * @param endTimestamp End timestamp in milliseconds
+     * @param paymentAmount Payment amount in SUI
+     * @param requireAllPolls Whether all polls must be answered
+     * @param showLiveStats Whether to show live stats
+     * @param pollData Poll configuration data
+     * @returns Transaction to be signed
+     */
+  createCompleteVoteTransaction(
+    title: string,
+    description: string,
+    startTimestamp: number,
+    endTimestamp: number,
+    requiredToken = "",
+    requiredAmount = 0,
+    paymentAmount = 0,
+    requireAllPolls = true,
+    showLiveStats = false,
+    pollData: PollData[],
+  ): Transaction {
+    try {
+      this.checkInitialization()
 
-    // Validate inputs
-    if (!title) {
-      throw new Error("Vote title is required")
-    }
+      // Validate inputs
+      if (!title) {
+        throw new Error("Vote title is required")
+      }
 
-    if (startTimestamp >= endTimestamp) {
-      throw new Error("End timestamp must be after start timestamp")
-    }
+      if (startTimestamp >= endTimestamp) {
+        throw new Error("End timestamp must be after start timestamp")
+      }
 
-    if (!pollData || !Array.isArray(pollData) || pollData.length === 0) {
-      throw new Error("At least one poll is required")
-    }
+      console.log("1", pollData)
 
-    const tx = new Transaction()
+      if (!pollData || !Array.isArray(pollData) || pollData.length === 0) {
+        throw new Error("At least one poll is required")
+      }
 
-    // Get current timestamp from Clock object
-    const clockObj = tx.object(SUI_CLOCK_OBJECT_ID)
+      const tx = new Transaction()
 
-    // Initialize arrays for poll data
-    const pollTitles: string[] = []
-    const pollDescriptions: string[] = []
-    const pollIsMultiSelect: boolean[] = []
-    const pollMaxSelections: number[] = []
-    const pollIsRequired: boolean[] = []
-    const pollOptionCounts: number[] = []
-    const pollOptionTexts: string[] = []
-    const pollOptionMediaUrls: number[][] = [] // Changed to number[][]
+      // Get current timestamp from Clock object
+      const clockObj = tx.object(SUI_CLOCK_OBJECT_ID)
 
-    // Process each poll
-    for (const poll of pollData) {
-      pollTitles.push(poll.title || "")
-      pollDescriptions.push(poll.description || "")
-      pollIsMultiSelect.push(!!poll.isMultiSelect)
-      pollIsRequired.push(!!poll.isRequired)
+      // Initialize arrays for poll data
+      const pollTitles: string[] = []
+      const pollDescriptions: string[] = []
+      const pollIsMultiSelect: boolean[] = []
+      const pollMaxSelections: number[] = []
+      const pollIsRequired: boolean[] = []
+      const pollOptionCounts: number[] = []
+      const pollOptionTexts: string[] = []
+      const pollOptionMediaUrls: number[][] = [] // Changed to number[][]
 
-      // Handle maxSelections for single/multi-select polls
-      const maxSelections = poll.isMultiSelect
-        ? Math.min(Math.max(1, poll.maxSelections), poll.options.length - 1)
-        : 1
-      pollMaxSelections.push(maxSelections)
+      // Process each poll
+      for (const poll of pollData) {
+        pollTitles.push(poll.title || "")
+        pollDescriptions.push(poll.description || "")
+        pollIsMultiSelect.push(!!poll.isMultiSelect)
+        pollIsRequired.push(!!poll.isRequired)
 
-      // Record option count for this poll
-      pollOptionCounts.push(poll.options.length)
+        // Handle maxSelections for single/multi-select polls
+        const maxSelections = poll.isMultiSelect
+          ? Math.min(Math.max(1, poll.maxSelections), poll.options.length - 1)
+          : 1
+        pollMaxSelections.push(maxSelections)
 
-      // Process options for this poll
-      for (const option of poll.options) {
-        pollOptionTexts.push(option.text || "")
+        // Record option count for this poll
+        pollOptionCounts.push(poll.options.length)
 
-        // Convert media URL to bytes (empty array if none)
-        if (option.mediaUrl) {
-          // Convert string to Uint8Array, then to regular array
-          const mediaUrlBytes = new TextEncoder().encode(option.mediaUrl)
-          // Convert Uint8Array to regular array
-          pollOptionMediaUrls.push(Array.from(mediaUrlBytes))
-        } else {
-          // Empty array if no media URL
-          pollOptionMediaUrls.push([])
+        // Process options for this poll
+        for (const option of poll.options) {
+          pollOptionTexts.push(option.text || "")
+
+          // Convert media URL to bytes (empty array if none)
+          if (option.mediaUrl) {
+            // Convert string to Uint8Array, then to regular array
+            const mediaUrlBytes = new TextEncoder().encode(option.mediaUrl)
+            // Convert Uint8Array to regular array
+            pollOptionMediaUrls.push(Array.from(mediaUrlBytes))
+          } else {
+            // Empty array if no media URL
+            pollOptionMediaUrls.push([])
+          }
         }
       }
+
+      // Convert token requirement to bytes
+      const tokenRequirementBytes = requiredToken
+        ? Array.from(new TextEncoder().encode(requiredToken))
+        : []
+
+      // Build the transaction with proper arguments matching the contract
+      tx.moveCall({
+        target: `${PACKAGE_ID}::voting::create_complete_vote`,
+        arguments: [
+          tx.object(ADMIN_ID),
+          tx.pure.string(title),
+          tx.pure.string(description),
+          tx.pure.u64(startTimestamp),
+          tx.pure.u64(endTimestamp),
+          tx.pure.u64(paymentAmount),
+          tx.pure.bool(requireAllPolls),
+          tx.pure.vector("u8", tokenRequirementBytes),
+          tx.pure.u64(requiredAmount),               
+          tx.pure.bool(showLiveStats),
+          tx.pure.vector("string", pollTitles),
+          tx.pure.vector("string", pollDescriptions),
+          tx.pure.vector("bool", pollIsMultiSelect),
+          tx.pure.vector("u64", pollMaxSelections),
+          tx.pure.vector("bool", pollIsRequired),
+          tx.pure.vector("u64", pollOptionCounts),
+          tx.pure.vector("string", pollOptionTexts),
+          tx.pure.vector("vector<u8>", pollOptionMediaUrls),
+          clockObj,
+        ],
+      })
+
+      return tx
+    } catch (error) {
+      console.error("Failed to create complete vote transaction:", error)
+      throw new Error(
+        `Failed to create complete vote transaction: ${error instanceof Error ? error.message : String(error)}`,
+      )
     }
-
-    // Convert token requirement to bytes
-    const tokenRequirementBytes = requiredToken 
-      ? Array.from(new TextEncoder().encode(requiredToken))
-      : []
-
-    // Build the transaction with proper arguments matching the contract
-    tx.moveCall({
-      target: `${PACKAGE_ID}::voting::create_complete_vote`,
-      arguments: [
-        tx.object(ADMIN_ID),
-        tx.pure.string(title),
-        tx.pure.string(description),
-        tx.pure.u64(startTimestamp),
-        tx.pure.u64(endTimestamp),
-        tx.pure.u64(paymentAmount),
-        tx.pure.bool(requireAllPolls),
-        tx.pure.vector("u8", tokenRequirementBytes),  // Token requirement as vector<u8>
-        tx.pure.u64(requiredAmount),                  // Token amount as u64
-        tx.pure.vector("string", pollTitles),
-        tx.pure.vector("string", pollDescriptions),
-        tx.pure.vector("bool", pollIsMultiSelect),
-        tx.pure.vector("u64", pollMaxSelections),
-        tx.pure.vector("bool", pollIsRequired),
-        tx.pure.vector("u64", pollOptionCounts),
-        tx.pure.vector("string", pollOptionTexts),
-        tx.pure.vector("vector<u8>", pollOptionMediaUrls),
-        clockObj,
-      ],
-    })
-
-    return tx
-  } catch (error) {
-    console.error("Failed to create complete vote transaction:", error)
-    throw new Error(
-      `Failed to create complete vote transaction: ${error instanceof Error ? error.message : String(error)}`,
-    )
   }
-}
 
   /**
    * Create a combined transaction for uploading media to Walrus and creating a vote
    */
   createVoteWithMediaTransaction(
-  title: string,
-  description: string,
-  startTimestamp: number,
-  endTimestamp: number,
-  requiredToken = "",
-  requiredAmount = 0,
-  paymentAmount = 0,
-  requireAllPolls = true,
-  pollData: PollData[],
-  mediaFiles: Record<string, { data: Uint8Array, contentType: string }>
-): Transaction {
-  try {
-    this.checkInitialization()
+    title: string,
+    description: string,
+    startTimestamp: number,
+    endTimestamp: number,
+    requiredToken = "",
+    requiredAmount = 0,
+    paymentAmount = 0,
+    requireAllPolls = true,
+    showLiveStats = false,
+    pollData: PollData[],
+    mediaFiles: Record<string, { data: Uint8Array, contentType: string }>
+  ): Transaction {
+    try {
+      this.checkInitialization()
 
-    // Validate inputs
-    if (!title) {
-      throw new Error("Vote title is required")
-    }
-
-    if (startTimestamp >= endTimestamp) {
-      throw new Error("End timestamp must be after start timestamp")
-    }
-
-    if (!pollData || !Array.isArray(pollData) || pollData.length === 0) {
-      throw new Error("At least one poll is required")
-    }
-
-    const tx = new Transaction()
-
-    // Get current timestamp from Clock object
-    const clockObj = tx.object(SUI_CLOCK_OBJECT_ID)
-
-    // Map to store uploaded blob IDs
-    const blobIdMap = new Map<string, string>()
-    
-    // Walrus Testnet Package ID - This is the actual package ID for Walrus on Testnet
-    const WALRUS_PACKAGE_ID = "0xd12a1773839233ca208d9c956d41e81f0f5f93a2f3384ab3cf8ce916a0e434fa"
-    
-    // 1. First, upload all media files using Walrus contracts
-    if (Object.keys(mediaFiles).length > 0) {
-      for (const [fileId, fileData] of Object.entries(mediaFiles)) {
-        // Calculate storage epochs (default is 10 epochs)
-        const storageEpochs = 10
-        const epochsArg = tx.pure.u64(storageEpochs)
-        
-        // Calculate storage size needed
-        const encodedLength = tx.pure.u64(fileData.data.length)
-        
-        // Determine whether the blob is deletable (true in most cases)
-        const deletable = tx.pure.bool(true)
-        
-        // Split coins for storage payment - calculate based on size
-        const estimatedStorageCost = Math.ceil(fileData.data.length * 10) + 1000 // Simple estimation
-        const [storageCoin] = tx.splitCoins(tx.gas, [tx.pure.u64(estimatedStorageCost)])
-        
-        // Step 1: Create a new storage object
-        const storage = tx.moveCall({
-          target: `${WALRUS_PACKAGE_ID}::storage::new_storage`,
-          arguments: [
-            storageCoin,     // Payment for storage
-            encodedLength,   // Size in bytes
-            epochsArg,       // Number of epochs to store
-            deletable,       // Whether the blob can be deleted
-          ],
-        })
-        
-        // Step 2: Create the blob with the storage
-        const blobObj = tx.moveCall({
-          target: `${WALRUS_PACKAGE_ID}::storage::create_blob_with_storage`,
-          arguments: [
-            storage,               // Storage object from previous call
-            tx.pure(fileData.data) // The actual binary data
-          ],
-        })
-        
-        // Store placeholder blob ID to reference in media URLs
-        blobIdMap.set(fileId, `[BLOB_ID_${fileId}]`)
+      // Validate inputs
+      if (!title) {
+        throw new Error("Vote title is required")
       }
-    }
-    
-    // 2. Process poll data with media URLs
-    const pollTitles: string[] = []
-    const pollDescriptions: string[] = []
-    const pollIsMultiSelect: boolean[] = []
-    const pollMaxSelections: number[] = []
-    const pollIsRequired: boolean[] = []
-    const pollOptionCounts: number[] = []
-    const pollOptionTexts: string[] = []
-    const pollOptionMediaUrls: number[][] = []
 
-    // Process each poll
-    for (const poll of pollData) {
-      pollTitles.push(poll.title || "")
-      pollDescriptions.push(poll.description || "")
-      pollIsMultiSelect.push(!!poll.isMultiSelect)
-      pollIsRequired.push(!!poll.isRequired)
+      if (startTimestamp >= endTimestamp) {
+        throw new Error("End timestamp must be after start timestamp")
+      }
 
-      // Handle maxSelections for single/multi-select polls
-      const maxSelections = poll.isMultiSelect
-        ? Math.min(Math.max(1, poll.maxSelections), poll.options.length - 1)
-        : 1
-      pollMaxSelections.push(maxSelections)
+      if (!pollData || !Array.isArray(pollData) || pollData.length === 0) {
+        throw new Error("At least one poll is required")
+      }
 
-      // Record option count for this poll
-      pollOptionCounts.push(poll.options.length)
+      const tx = new Transaction()
 
-      // Process options for this poll
-      for (const option of poll.options) {
-        pollOptionTexts.push(option.text || "")
+      // Get current timestamp from Clock object
+      const clockObj = tx.object(SUI_CLOCK_OBJECT_ID)
 
-        // If option has mediaUrl and it references a blob ID placeholder
-        if (option.mediaUrl && option.mediaUrl.startsWith("[MEDIA_FILE_") && option.mediaUrl.endsWith("]")) {
-          // Extract file ID from reference
-          const fileId = option.mediaUrl.substring(12, option.mediaUrl.length - 1)
-          
-          // Check if we have this file in our map
-          if (blobIdMap.has(fileId)) {
-            // Create the Sui blob URL
-            const placeholderUrl = `sui://blob/${blobIdMap.get(fileId)}`
-            
-            // Convert to byte array for the Move call
-            const mediaUrlBytes = new TextEncoder().encode(placeholderUrl)
-            pollOptionMediaUrls.push(Array.from(mediaUrlBytes))
-          } else {
-            // File not found, use empty URL
-            pollOptionMediaUrls.push([])
-          }
-        } else if (option.mediaUrl) {
-          // Regular URL (external or previously uploaded)
-          const mediaUrlBytes = new TextEncoder().encode(option.mediaUrl)
-          pollOptionMediaUrls.push(Array.from(mediaUrlBytes))
-        } else {
-          // No media URL
-          pollOptionMediaUrls.push([])
+      // Map to store uploaded blob IDs
+      const blobIdMap = new Map<string, string>()
+
+      // Walrus Testnet Package ID - This is the actual package ID for Walrus on Testnet
+      const WALRUS_PACKAGE_ID = "0xd12a1773839233ca208d9c956d41e81f0f5f93a2f3384ab3cf8ce916a0e434fa"
+
+      // 1. First, upload all media files using Walrus contracts
+      if (Object.keys(mediaFiles).length > 0) {
+        for (const [fileId, fileData] of Object.entries(mediaFiles)) {
+          // Calculate storage epochs (default is 10 epochs)
+          const storageEpochs = 10
+          const epochsArg = tx.pure.u64(storageEpochs)
+
+          // Calculate storage size needed
+          const encodedLength = tx.pure.u64(fileData.data.length)
+
+          // Determine whether the blob is deletable (true in most cases)
+          const deletable = tx.pure.bool(true)
+
+          // Split coins for storage payment - calculate based on size
+          const estimatedStorageCost = Math.ceil(fileData.data.length * 10) + 1000 // Simple estimation
+          const [storageCoin] = tx.splitCoins(tx.gas, [tx.pure.u64(estimatedStorageCost)])
+
+          // Step 1: Create a new storage object
+          const storage = tx.moveCall({
+            target: `${WALRUS_PACKAGE_ID}::storage::new_storage`,
+            arguments: [
+              storageCoin,     // Payment for storage
+              encodedLength,   // Size in bytes
+              epochsArg,       // Number of epochs to store
+              deletable,       // Whether the blob can be deleted
+            ],
+          })
+
+          // Step 2: Create the blob with the storage
+          const blobObj = tx.moveCall({
+            target: `${WALRUS_PACKAGE_ID}::storage::create_blob_with_storage`,
+            arguments: [
+              storage,               // Storage object from previous call
+              tx.pure(fileData.data) // The actual binary data
+            ],
+          })
+
+          // Store placeholder blob ID to reference in media URLs
+          blobIdMap.set(fileId, `[BLOB_ID_${fileId}]`)
         }
       }
+
+      // 2. Process poll data with media URLs
+      const pollTitles: string[] = []
+      const pollDescriptions: string[] = []
+      const pollIsMultiSelect: boolean[] = []
+      const pollMaxSelections: number[] = []
+      const pollIsRequired: boolean[] = []
+      const pollOptionCounts: number[] = []
+      const pollOptionTexts: string[] = []
+      const pollOptionMediaUrls: number[][] = []
+
+      // Process each poll
+      for (const poll of pollData) {
+        pollTitles.push(poll.title || "")
+        pollDescriptions.push(poll.description || "")
+        pollIsMultiSelect.push(!!poll.isMultiSelect)
+        pollIsRequired.push(!!poll.isRequired)
+
+        // Handle maxSelections for single/multi-select polls
+        const maxSelections = poll.isMultiSelect
+          ? Math.min(Math.max(1, poll.maxSelections), poll.options.length - 1)
+          : 1
+        pollMaxSelections.push(maxSelections)
+
+        // Record option count for this poll
+        pollOptionCounts.push(poll.options.length)
+
+        // Process options for this poll
+        for (const option of poll.options) {
+          pollOptionTexts.push(option.text || "")
+
+          // If option has mediaUrl and it references a blob ID placeholder
+          if (option.mediaUrl && option.mediaUrl.startsWith("[MEDIA_FILE_") && option.mediaUrl.endsWith("]")) {
+            // Extract file ID from reference
+            const fileId = option.mediaUrl.substring(12, option.mediaUrl.length - 1)
+
+            // Check if we have this file in our map
+            if (blobIdMap.has(fileId)) {
+              // Create the Sui blob URL
+              const placeholderUrl = `sui://blob/${blobIdMap.get(fileId)}`
+
+              // Convert to byte array for the Move call
+              const mediaUrlBytes = new TextEncoder().encode(placeholderUrl)
+              pollOptionMediaUrls.push(Array.from(mediaUrlBytes))
+            } else {
+              // File not found, use empty URL
+              pollOptionMediaUrls.push([])
+            }
+          } else if (option.mediaUrl) {
+            // Regular URL (external or previously uploaded)
+            const mediaUrlBytes = new TextEncoder().encode(option.mediaUrl)
+            pollOptionMediaUrls.push(Array.from(mediaUrlBytes))
+          } else {
+            // No media URL
+            pollOptionMediaUrls.push([])
+          }
+        }
+      }
+
+      // Convert token requirement to bytes
+      const tokenRequirementBytes = requiredToken
+        ? Array.from(new TextEncoder().encode(requiredToken))
+        : []
+
+
+      console.log("pollData", pollData)
+      // 3. Create the vote using the actual SuiVote package ID
+      const voteObj = tx.moveCall({
+        target: `${PACKAGE_ID}::voting::create_complete_vote`,
+        arguments: [
+          tx.object(ADMIN_ID),
+          tx.pure.string(title),
+          tx.pure.string(description),
+          tx.pure.u64(startTimestamp),
+          tx.pure.u64(endTimestamp),
+          tx.pure.u64(paymentAmount),
+          tx.pure.bool(requireAllPolls),
+          tx.pure.vector("u8", tokenRequirementBytes),  
+          tx.pure.u64(requiredAmount),     
+          tx.pure.bool(showLiveStats),            
+          tx.pure.vector("string", pollTitles),
+          tx.pure.vector("string", pollDescriptions),
+          tx.pure.vector("bool", pollIsMultiSelect),
+          tx.pure.vector("u64", pollMaxSelections),
+          tx.pure.vector("bool", pollIsRequired),
+          tx.pure.vector("u64", pollOptionCounts),
+          tx.pure.vector("string", pollOptionTexts),
+          tx.pure.vector("vector<u8>", pollOptionMediaUrls),
+          clockObj,
+        ],
+      })
+
+      // Return created vote object to the sender
+      tx.transferObjects([voteObj], tx.pure.address("$SENDER"))
+
+      return tx
+    } catch (error) {
+      console.error("Failed to create vote with media transaction:", error)
+      throw new Error(
+        `Failed to create vote with media: ${error instanceof Error ? error.message : String(error)}`
+      )
     }
-
-    // Convert token requirement to bytes
-    const tokenRequirementBytes = requiredToken 
-      ? Array.from(new TextEncoder().encode(requiredToken))
-      : []
-
-    // 3. Create the vote using the actual SuiVote package ID
-    const voteObj = tx.moveCall({
-      target: `${PACKAGE_ID}::voting::create_complete_vote`,
-      arguments: [
-        tx.object(ADMIN_ID),
-        tx.pure.string(title),
-        tx.pure.string(description),
-        tx.pure.u64(startTimestamp),
-        tx.pure.u64(endTimestamp),
-        tx.pure.u64(paymentAmount),
-        tx.pure.bool(requireAllPolls),
-        tx.pure.vector("u8", tokenRequirementBytes),  // Token requirement as vector<u8>
-        tx.pure.u64(requiredAmount),                  // Token amount as u64
-        tx.pure.vector("string", pollTitles),
-        tx.pure.vector("string", pollDescriptions),
-        tx.pure.vector("bool", pollIsMultiSelect),
-        tx.pure.vector("u64", pollMaxSelections),
-        tx.pure.vector("bool", pollIsRequired),
-        tx.pure.vector("u64", pollOptionCounts),
-        tx.pure.vector("string", pollOptionTexts),
-        tx.pure.vector("vector<u8>", pollOptionMediaUrls),
-        clockObj,
-      ],
-    })
-
-    // Return created vote object to the sender
-    tx.transferObjects([voteObj], tx.pure.address("$SENDER"))
-
-    return tx
-  } catch (error) {
-    console.error("Failed to create vote with media transaction:", error)
-    throw new Error(
-      `Failed to create vote with media: ${error instanceof Error ? error.message : String(error)}`
-    )
   }
-}
 
   /**
    * Check if a voter is whitelisted for a vote
@@ -1101,7 +1127,7 @@ createCompleteVoteTransaction(
       return []
     }
   }
-  
+
   /**
    * Get votes where a user is whitelisted
    * @param address User address
@@ -1416,41 +1442,41 @@ createCompleteVoteTransaction(
  * @param voteId Vote object ID
  * @returns Boolean indicating whether the user has voted
  */
-async hasVoted(userAddress: string, voteId: string): Promise<boolean> {
-  try {
-    this.checkInitialization()
+  async hasVoted(userAddress: string, voteId: string): Promise<boolean> {
+    try {
+      this.checkInitialization()
 
-    if (!userAddress) {
-      throw new Error("User address is required")
+      if (!userAddress) {
+        throw new Error("User address is required")
+      }
+
+      if (!voteId) {
+        throw new Error("Vote ID is required")
+      }
+
+
+      // Query for VoteCast events using MoveEventType filter
+      const { data } = await this.client.queryEvents({
+        query: {
+          MoveEventType: `${PACKAGE_ID}::voting::VoteCast`
+        },
+        limit: 50, // Using a reasonable limit to search through
+      })
+
+      // Manually filter for both voter and vote_id
+      const hasVoted = data.some(event => {
+        if (!event.parsedJson) return false
+
+        const voteCastEvent = event.parsedJson as VoteCastEvent
+        return voteCastEvent.voter === userAddress && voteCastEvent.vote_id === voteId
+      })
+
+
+      return hasVoted
+    } catch (error) {
+      return false
     }
-
-    if (!voteId) {
-      throw new Error("Vote ID is required")
-    }
-
-
-    // Query for VoteCast events using MoveEventType filter
-    const { data } = await this.client.queryEvents({
-      query: {
-        MoveEventType: `${PACKAGE_ID}::voting::VoteCast`
-      },
-      limit: 50, // Using a reasonable limit to search through
-    })
-
-    // Manually filter for both voter and vote_id
-    const hasVoted = data.some(event => {
-      if (!event.parsedJson) return false
-      
-      const voteCastEvent = event.parsedJson as VoteCastEvent
-      return voteCastEvent.voter === userAddress && voteCastEvent.vote_id === voteId
-    })
-
-
-    return hasVoted
-  } catch (error) {
-    return false
   }
-}
 
   /**
    * Get vote results if available
@@ -1520,17 +1546,17 @@ async hasVoted(userAddress: string, voteId: string): Promise<boolean> {
   async checkTokenBalance(userAddress: string, tokenType: string, requiredAmount: number): Promise {
     try {
       this.checkInitialization()
-      
+
       // Return TRUE if token type or required amount is undefined
       if (!tokenType || requiredAmount === undefined) {
         return true
       }
-      
+
       // Check for user address (still required even if token check is bypassed)
       if (!userAddress) {
         return false
       }
-      
+
       // For the native SUI token
       if (tokenType === "0x2::sui::SUI") {
         // Get the user's SUI balance
@@ -1538,17 +1564,17 @@ async hasVoted(userAddress: string, voteId: string): Promise<boolean> {
           owner: userAddress,
           coinType: "0x2::sui::SUI"
         })
-        
+
         if (!balanceData || !balanceData.totalBalance) {
           return false
         }
-        
+
         // Convert balance to number (considering SUI decimals is 9)
         const balance = Number(balanceData.totalBalance) / Math.pow(10, 9)
-        
+
         return balance >= requiredAmount
       }
-      
+
       // For other tokens
       else {
         try {
@@ -1557,32 +1583,32 @@ async hasVoted(userAddress: string, voteId: string): Promise<boolean> {
             owner: userAddress,
             coinType: tokenType
           })
-          
+
           if (!ownedCoins || ownedCoins.length === 0) {
             return false
           }
-          
+
           // Get token info to determine decimals
           let decimals = 9 // Default to 9 decimals like SUI
-          
+
           try {
             // Attempt to get coin metadata for correct decimal handling
             const metadata = await this.client.getCoinMetadata({
               coinType: tokenType
             })
-            
+
             if (metadata && metadata.decimals) {
               decimals = metadata.decimals
             }
           } catch (metadataError) {
             console.warn(`Could not get metadata for token ${tokenType}, using default decimals: 9`)
           }
-          
+
           // Sum up the total balance across all coins of this type
           const totalBalance = ownedCoins.reduce((sum, coin) => {
             return sum + Number(coin.balance)
           }, 0) / Math.pow(10, decimals)
-          
+
           return totalBalance >= requiredAmount
         } catch (error) {
           console.error(`Error fetching token balance for ${tokenType}:`, error)

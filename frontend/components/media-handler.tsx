@@ -39,7 +39,8 @@ interface MediaHandlersContextType {
     requiredToken?: string
     requiredAmount?: string
     paymentAmount?: string
-    requireAllPolls?: boolean
+    requireAllPolls?: boolean,
+    showLiveStats?: boolean,
     polls: any[]
     onSuccess?: (voteId: string) => void
   }) => Promise<{ transaction: Transaction, execute: () => Promise<any> }>
@@ -178,6 +179,7 @@ export function VoteMediaHandler({ children }: { children: (handlers: MediaHandl
     requiredAmount?: string
     paymentAmount?: string
     requireAllPolls?: boolean
+    showLiveStats?: boolean
     polls: any[]
     onSuccess?: (voteId: string) => void
   }) => {
@@ -244,7 +246,8 @@ export function VoteMediaHandler({ children }: { children: (handlers: MediaHandl
       const requiredAmount = parseInt(params.requiredAmount || "0", 10)
       const paymentAmount = parseInt(params.paymentAmount || "0", 10)
       const requireAllPolls = params.requireAllPolls !== undefined ? params.requireAllPolls : true
-      
+      const showLiveStats = params.showLiveStats !== undefined ? params.showLiveStats : false
+
       console.log(pollData)
       // Create transaction using the SuiVoteService
       const transaction = createCompleteVoteTransaction(
@@ -256,6 +259,7 @@ export function VoteMediaHandler({ children }: { children: (handlers: MediaHandl
         requiredAmount,
         paymentAmount,
         requireAllPolls,
+        showLiveStats,
         pollData
       )
       
