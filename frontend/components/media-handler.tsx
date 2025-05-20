@@ -41,6 +41,10 @@ interface MediaHandlersContextType {
     paymentAmount?: string
     requireAllPolls?: boolean,
     showLiveStats?: boolean,
+    isTokenWeighted?: boolean
+    tokenWeight?: string
+    enableWhitelist?: boolean
+    whitelistAddresses?: string[]
     polls: any[]
     onSuccess?: (voteId: string) => void
   }) => Promise<{ transaction: Transaction, execute: () => Promise<any> }>
@@ -180,6 +184,10 @@ export function VoteMediaHandler({ children }: { children: (handlers: MediaHandl
     paymentAmount?: string
     requireAllPolls?: boolean
     showLiveStats?: boolean
+    isTokenWeighted?: boolean       
+    tokenWeight?: string            
+    enableWhitelist?: boolean        
+    whitelistAddresses?: string[]
     polls: any[]
     onSuccess?: (voteId: string) => void
   }) => {
@@ -250,6 +258,8 @@ export function VoteMediaHandler({ children }: { children: (handlers: MediaHandl
 
       console.log(pollData)
       // Create transaction using the SuiVoteService
+
+      console.log(params.whitelistAddresses)
       const transaction = createCompleteVoteTransaction(
         params.voteTitle,
         params.voteDescription,
@@ -260,7 +270,10 @@ export function VoteMediaHandler({ children }: { children: (handlers: MediaHandl
         paymentAmount,
         requireAllPolls,
         showLiveStats,
-        pollData
+        pollData,
+        params.isTokenWeighted || false,
+        params.tokenWeight || "1",
+        params.whitelistAddresses || []
       )
       
       // Wrap transaction for execution

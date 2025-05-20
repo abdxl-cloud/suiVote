@@ -1,0 +1,16 @@
+# Summary
+
+* [Introduction](README.md)
+* [Getting Started](./getting-started/README.md)
+  * [Prerequisites](./getting-started/prerequisites.md)
+  * [Installation](./getting-started/installation.md)
+  * [Running the Project](./getting-started/running-the-project.md)
+* [Contracts](./contracts/README.md)
+  * [Voting Logic](./contracts/voting-logic.md)
+* [Frontend](./frontend/README.md)
+  * [Architecture](./frontend/architecture.md)
+  * [Key Components](./frontend/components.md)
+  * [State Management](./frontend/state-management.md)
+  * [Deployment](./frontend/deployment.md)
+* [API Reference](./api-reference/README.md)
+* [Contributing](./CONTRIBUTING.md)

@@ -54,8 +54,9 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Progress } from "@/components/ui/progress"
-// Update the imports to include the new TokenSelector component
+// Import components
 import { TokenSelector } from "@/components/token-selector"
+import { WhitelistSelector } from "@/components/whitelist-selector"
 import { VoteMediaHandler  } from "@/components/media-handler";
 import { MediaFileUploader } from "@/components/file-uploader";
 
@@ -93,6 +94,10 @@ type VotingSettings = {
   endDate: Date | undefined
   requireAllPolls: boolean
   showLiveStats: boolean
+  isTokenWeighted: boolean
+  tokenWeight: string
+  enableWhitelist: boolean
+  whitelistAddresses: string[]
 }
 
 type ValidationErrors = {
@@ -148,6 +153,10 @@ export default function CreateVotePage() {
     endDate: addDays(new Date(), 7),
     requireAllPolls: true,
     showLiveStats: false,
+    isTokenWeighted: false,
+    tokenWeight: "1",
+    enableWhitelist: false,
+    whitelistAddresses: []
   })
 
   const [errors, setErrors] = useState<ValidationErrors>({})
@@ -682,6 +691,12 @@ const disabledDates = [
         paymentAmount: votingSettings.paymentAmount || "0",
         requireAllPolls: votingSettings.requireAllPolls,
         showLiveStats: votingSettings.showLiveStats || false,
+        // Add token-weighted voting parameters
+        isTokenWeighted: votingSettings.isTokenWeighted && votingSettings.requiredToken !== "none",
+        tokenWeight: votingSettings.isTokenWeighted ? votingSettings.tokenWeight : "1",
+        // Add whitelist parameters
+        enableWhitelist: votingSettings.enableWhitelist,
+        whitelistAddresses: votingSettings.enableWhitelist ? votingSettings.whitelistAddresses : [],
         polls: pollData,
         onSuccess: (voteId) => {
           console.log("Vote created successfully with ID:", voteId);
@@ -1438,12 +1453,55 @@ const disabledDates = [
                       <div className="space-y-4">
                         <TokenSelector
                           value={votingSettings.requiredToken}
-                          onValueChange={(value) => setVotingSettings({ ...votingSettings, requiredToken: value })}
+                          onValueChange={(value) => {
+                            setVotingSettings({
+                              ...votingSettings,
+                              requiredToken: value,
+                              // Reset token weighted settings if no token is required
+                              isTokenWeighted: value === "none" ? false : votingSettings.isTokenWeighted,
+                            })
+                          }}
                           onAmountChange={(amount) => setVotingSettings({ ...votingSettings, requiredAmount: amount })}
                           amount={votingSettings.requiredAmount}
                           error={errors.votingSettings?.token}
                           required={false}
+                          // Token weighted voting props
+                          enableTokenWeighted={votingSettings.isTokenWeighted}
+                          onTokenWeightedChange={(enabled) => {
+                            setVotingSettings({
+                              ...votingSettings,
+                              isTokenWeighted: enabled,
+                            })
+                          }}
+                          tokenWeight={votingSettings.tokenWeight}
+                          onTokenWeightChange={(weight) => {
+                            setVotingSettings({
+                              ...votingSettings,
+                              tokenWeight: weight,
+                            })
+                          }}
                         />
+                        
+                        {/* Separate whitelist section */}
+                        <div className="mt-8 pt-6 border-t">
+                          <h3 className="text-base font-medium mb-4">Voter Whitelist</h3>
+                          <WhitelistSelector
+                            enableWhitelist={votingSettings.enableWhitelist}
+                            onWhitelistChange={(enabled) => {
+                              setVotingSettings({
+                                ...votingSettings,
+                                enableWhitelist: enabled,
+                              })
+                            }}
+                            whitelistAddresses={votingSettings.whitelistAddresses}
+                            onWhitelistAddressesChange={(addresses) => {
+                              setVotingSettings({
+                                ...votingSettings,
+                                whitelistAddresses: addresses,
+                              })
+                            }}
+                          />
+                        </div>
                       </div>
                     </div>
 
@@ -1595,6 +1653,13 @@ const disabledDates = [
                             Requires {votingSettings.requiredToken.length > 10 
                               ? `${votingSettings.requiredToken.substring(0, 6)}...${votingSettings.requiredToken.substring(votingSettings.requiredToken.length - 4)}` 
                               : votingSettings.requiredToken.toUpperCase()}
+                            {votingSettings.isTokenWeighted && " (Weighted)"}
+                          </Badge>
+                        )}
+                        
+                        {votingSettings.isTokenWeighted && votingSettings.requiredToken !== "none" && (
+                          <Badge variant="outline" className="bg-indigo-50 text-indigo-700 border-indigo-200">
+                            {votingSettings.tokenWeight} tokens = 1 vote
                           </Badge>
                         )}
 
