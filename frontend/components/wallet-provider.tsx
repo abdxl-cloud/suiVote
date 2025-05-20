@@ -6,7 +6,7 @@ import { ReactNode } from 'react';
 
 export function SuiWalletProvider({ children }: { children: ReactNode }) {
   return (
-    <WalletProvider>
+    <WalletProvider slushWallet={{ name: 'suiVote' }}>
       {children}
     </WalletProvider>
   );
