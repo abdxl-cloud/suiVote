@@ -106,7 +106,7 @@ export default function VotePage() {
       if (!voteDetails) {
         throw new Error("Vote not found")
       }
-      
+      console.log("Vote Details:", voteDetails)
       // If the vote is closed, redirect to the closed page
       // Only redirect if showLiveStats is false
       if (voteDetails.status === "closed" && !voteDetails?.showLiveStats) {
@@ -150,7 +150,7 @@ export default function VotePage() {
 
       // Default values if wallet is not connected
       let votedStatus = false
-      let hasRequiredTokens = !voteDetails.requiredToken // True if no token required
+      let hasRequiredTokens = !voteDetails.tokenRequirement // True if no token required
       let isWhitelisted = !voteDetails.hasWhitelist // True if no whitelist
 
       // Check if user has already voted and meets requirements
@@ -172,11 +172,11 @@ export default function VotePage() {
         }
         
         // Check token requirements
-        if (voteDetails.requiredToken) {
+        if (voteDetails.tokenRequirement) {
           hasRequiredTokens = await suivote.checkTokenBalance(
             wallet.address,
-            voteDetails.requiredToken,
-            voteDetails.requiredAmount
+            voteDetails.tokenRequirement,
+            voteDetails.tokenAmount
           )
         }
         
@@ -321,8 +321,8 @@ export default function VotePage() {
     }
     
     // Check if user has required tokens
-    if (!userHasRequiredTokens && vote.requiredToken) {
-      newErrors.tokens = `You need at least ${vote.requiredAmount} ${vote.requiredToken.split("::").pop()} to vote`
+    if (!userHasRequiredTokens && vote.tokenRequirement) {
+      newErrors.tokens = `You need at least ${vote.tokenAmount} ${vote.tokenRequirement.split("::").pop()} to vote`
       isValid = false
     }
     
@@ -399,7 +399,6 @@ export default function VotePage() {
       
       // Execute the transaction
       const response = await suivote.executeTransaction(transaction)
-      console.log("Vote transaction response:", response)
       
       // Update transaction status
       setTxStatus(TransactionStatus.EXECUTING)
@@ -467,7 +466,6 @@ export default function VotePage() {
   // Calculate time remaining
   const getTimeRemaining = () => {
     if (!vote) return ""
-    
     const now = Date.now()
     const endDate = vote.endTimestamp
     
@@ -750,7 +748,7 @@ export default function VotePage() {
                   </div>
                 )}
                 
-                {vote.requiredToken && (
+                {vote.tokenRequirement && (
                   <div className="flex items-center gap-3">
                     <div className="h-10 w-10 rounded-full bg-purple-100 dark:bg-purple-900/30 flex items-center justify-center">
                       <Wallet className="h-5 w-5 text-purple-600 dark:text-purple-400" />
@@ -758,7 +756,7 @@ export default function VotePage() {
                     <div>
                       <p className="text-sm font-medium">Token Requirement</p>
                       <p className="text-xs text-muted-foreground">
-                        Minimum {vote.requiredAmount} {vote.requiredToken.split("::").pop()}
+                        Minimum {vote.tokenAmount} {vote.tokenRequirement.split("::").pop()}
                       </p>
                     </div>
                   </div>
@@ -771,12 +769,12 @@ export default function VotePage() {
                     </div>
                     <div>
                       <p className="text-sm font-medium">Payment Required</p>
-                      <p className="text-xs text-muted-foreground">{vote.paymentAmount} SUI to vote</p>
+                      <p className="text-xs text-muted-foreground">{vote.paymentAmount/1000000000} SUI to vote</p>
                     </div>
                   </div>
                 )}
                 
-                {!vote.hasWhitelist && !vote.requiredToken && vote.paymentAmount <= 0 && (
+                {!vote.hasWhitelist && !vote.tokenRequirement && vote.paymentAmount <= 0 && (
                   <div className="flex items-center gap-3">
                     <div className="h-10 w-10 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center">
                       <CheckCircle2 className="h-5 w-5 text-green-600 dark:text-green-400" />
@@ -1103,8 +1101,8 @@ export default function VotePage() {
                           "Connect your wallet to participate in this vote." :
                           vote.hasWhitelist && !userCanVote ? 
                             "Your wallet is not on the whitelist for this vote." :
-                            vote.requiredToken && !userHasRequiredTokens ?
-                              `You need at least ${vote.requiredAmount} ${vote.requiredToken.split("::").pop()} to vote.` :
+                            vote.tokenRequirement && !userHasRequiredTokens ?
+                              `You need at least ${vote.tokenAmount} ${vote.tokenRequirement.split("::").pop()} to vote.` :
                               "Cast your vote by selecting options below."
                         }
                       </span>
@@ -1382,7 +1380,7 @@ export default function VotePage() {
                 </CardContent>
                 
                 {polls.length > 1 && (
-                  <CardFooter className="flex justify-between border-t p-5">
+                  <CardFooter className="flex justify-between p-5">
                     <div className="flex items-center gap-2">
                       <Button
                         variant="ghost"
@@ -1469,16 +1467,7 @@ export default function VotePage() {
                         </CardDescription>
                       )}
                     </div>
-                    
-                    <Badge 
-                      variant={poll.isRequired ? "secondary" : "outline"}
-                      className={cn(
-                        "text-xs",
-                        poll.isRequired && "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400"
-                      )}
-                    >
-                      {poll.isRequired ? "Required" : "Optional"}
-                    </Badge>
+        
                   </div>
                 </CardHeader>
                 

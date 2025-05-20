@@ -192,6 +192,9 @@ export function useSuiVote() {
       requireAllPolls = true,
       showLiveStats = false,
       pollData: PollData[],
+      isTokenWeighted = false,
+      tokenWeight = "1",
+      whitelistAddresses: string[] = [] 
     ): Transaction => {
       try {
         setLoading(true)
@@ -209,6 +212,9 @@ export function useSuiVote() {
           requireAllPolls,
           showLiveStats,
           pollData,
+          isTokenWeighted,
+          tokenWeight,
+          whitelistAddresses 
         )
 
         return transaction
@@ -293,12 +299,12 @@ export function useSuiVote() {
    * Create a transaction to cast a vote
    */
   const castVoteTransaction = useCallback(
-    (voteId: string, pollIndex: number, optionIndices: number[], payment = 0): Transaction => {
+    (voteId: string, pollIndex: number, optionIndices: number[], tokenBalance: number = 0, payment = 0): Transaction => {
       try {
         setLoading(true)
         setError(null)
 
-        const transaction = suiVoteService.castVoteTransaction(voteId, pollIndex, optionIndices, payment)
+        const transaction = suiVoteService.castVoteTransaction(voteId, pollIndex, optionIndices, tokenBalance, payment)
         return transaction
       } catch (err) {
         const errorMessage = err instanceof Error ? err.message : String(err)
@@ -315,7 +321,7 @@ export function useSuiVote() {
    * Create a transaction to cast multiple votes at once
    */
   const castMultipleVotesTransaction = useCallback(
-    (voteId: string, pollIndices: number[], optionIndicesPerPoll: number[][], payment = 0): Transaction => {
+    (voteId: string, pollIndices: number[], optionIndicesPerPoll: number[][],  tokenBalance: number = 0, payment = 0): Transaction => {
       try {
         setLoading(true)
         setError(null)
@@ -324,6 +330,7 @@ export function useSuiVote() {
           voteId,
           pollIndices,
           optionIndicesPerPoll,
+          tokenBalance,
           payment,
         )
         return transaction
@@ -519,7 +526,6 @@ export function useSuiVote() {
       }
 
       const result = await suiVoteService.checkTokenBalance(userAddress, tokenType, requiredAmount)
-      console.log("Token balance check result:", result)
       return result
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err)

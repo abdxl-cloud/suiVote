@@ -14,6 +14,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Textarea } from "@/components/ui/textarea"
 import {
   Dialog,
   DialogContent,
@@ -27,6 +28,7 @@ import { Separator } from "@/components/ui/separator"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Badge } from "@/components/ui/badge"
 import { ScrollArea } from "@/components/ui/scroll-area"
+import { Switch } from "@/components/ui/switch"
 import { cn } from "@/lib/utils"
 import { type TokenInfo, tokenService } from "@/services/token-service"
 
@@ -38,6 +40,11 @@ interface TokenSelectorProps {
   error?: string
   required?: boolean
   className?: string
+  // Props for token-weighted voting
+  enableTokenWeighted?: boolean
+  onTokenWeightedChange?: (enabled: boolean) => void
+  tokenWeight?: string
+  onTokenWeightChange?: (weight: string) => void
 }
 
 export function TokenSelector({
@@ -48,6 +55,11 @@ export function TokenSelector({
   error,
   required,
   className,
+  // Token weighted props with defaults
+  enableTokenWeighted = false,
+  onTokenWeightedChange,
+  tokenWeight = "1",
+  onTokenWeightChange,
 }: TokenSelectorProps) {
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
@@ -286,29 +298,80 @@ export function TokenSelector({
       {error && <p className="text-sm text-red-500 mt-1">{error}</p>}
 
       {selectedToken && onAmountChange && (
-        <div className="pt-2 space-y-2">
-          <Label htmlFor="token-amount" className="text-sm">
-            Required Amount <span className="text-red-500">*</span>
-          </Label>
-          <div className="flex items-center gap-2">
-            <Input
-              id="token-amount"
-              type="number"
-              min="0"
-              step="any"
-              placeholder="Enter amount"
-              value={amount || ""}
-              onChange={(e) => onAmountChange(e.target.value)}
-              className="flex-1"
-            />
-            <div className="flex-shrink-0 text-sm font-medium text-muted-foreground w-16 text-center">
-              {selectedToken.symbol}
+        <div className="pt-2 space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="token-amount" className="text-sm">
+              Required Amount <span className="text-red-500">*</span>
+            </Label>
+            <div className="flex items-center gap-2">
+              <Input
+                id="token-amount"
+                type="number"
+                min="0"
+                step="any"
+                placeholder="Enter amount"
+                value={amount || ""}
+                onChange={(e) => onAmountChange(e.target.value)}
+                className="flex-1"
+              />
+              <div className="flex-shrink-0 text-sm font-medium text-muted-foreground w-16 text-center">
+                {selectedToken.symbol}
+              </div>
             </div>
+            <p className="text-xs text-muted-foreground">
+              {selectedToken.decimals > 0 && `${selectedToken.decimals} decimals • `}
+              Voters need at least this amount to participate
+            </p>
           </div>
-          <p className="text-xs text-muted-foreground">
-            {selectedToken.decimals > 0 && `${selectedToken.decimals} decimals • `}
-            Voters need at least this amount to participate
-          </p>
+          
+          {/* Token-weighted voting section */}
+          {onTokenWeightedChange && onTokenWeightChange && (
+            <div className="space-y-3 pt-1">
+              <div className="flex items-center justify-between">
+                <Label htmlFor="token-weighted" className="text-sm cursor-pointer">
+                  Enable token-weighted voting
+                </Label>
+                <div className="flex items-center space-x-2">
+                  <Label htmlFor="token-weighted" className="text-sm cursor-pointer">
+                    {enableTokenWeighted ? "On" : "Off"}
+                  </Label>
+                  <Switch
+                    id="token-weighted"
+                    checked={enableTokenWeighted}
+                    onCheckedChange={onTokenWeightedChange}
+                  />
+                </div>
+              </div>
+              
+              {enableTokenWeighted && (
+                <div className="space-y-2 pt-1">
+                  <Label htmlFor="token-weight" className="text-sm">
+                    Tokens per vote <span className="text-red-500">*</span>
+                  </Label>
+                  <div className="flex items-center gap-2">
+                    <Input
+                      id="token-weight"
+                      type="number"
+                      min="1"
+                      step="any"
+                      placeholder="1"
+                      value={tokenWeight}
+                      onChange={(e) => onTokenWeightChange(e.target.value)}
+                      className="flex-1"
+                    />
+                    <div className="flex-shrink-0 text-sm font-medium text-muted-foreground w-16 text-center">
+                      {selectedToken.symbol}
+                    </div>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Each {tokenWeight} {selectedToken.symbol} equals 1 vote
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+          
+
         </div>
       )}
 

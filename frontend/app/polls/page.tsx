@@ -469,7 +469,7 @@ export default function PollsPage() {
                       </div>
                     </div>
                   </CardContent>
-                  <CardFooter className="flex justify-between border-t p-4 mt-auto">
+                  <CardFooter className="flex justify-between p-4 mt-auto">
                     <Link href={`/vote/${vote.id}`} className="w-1/2">
                       <Button 
                         variant={"ghost"} 

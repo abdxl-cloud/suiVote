@@ -5,16 +5,10 @@ module contracts::voting {
     use sui::dynamic_object_field as dof;
     use sui::dynamic_field;
     use sui::coin::{Self, Coin};
-    use sui::balance::{Self, Balance};
     use sui::sui::SUI;
     use sui::event;
     use sui::clock::{Self, Clock};
-    use sui::object::{Self, ID, UID};
-    use sui::transfer;
-    use sui::tx_context::{Self, TxContext};
     use std::string::{Self, String};
-    use std::option::{Self, Option};
-    use std::vector;
 
     // ===== Constants =====
     const SUI_DECIMALS: u64 = 1_000_000_000; // 1 SUI = 10^9 MIST
@@ -33,7 +27,9 @@ module contracts::voting {
     const EInvalidPollCount: u64 = 12;
     const EInvalidOptionCount: u64 = 13;
     const EInvalidInputLength: u64 = 14;
-    const ENotWhitelisted: u64 = 15; // New error code for non-whitelisted voters
+    const ENotWhitelisted: u64 = 15;
+    const EInvalidTokenWeightRatio: u64 = 16;
+    const EInvalidTokenBalance: u64 = 17;
 
     // ===== Capability objects =====
     
@@ -62,7 +58,9 @@ module contracts::voting {
         token_requirement: Option<String>,
         token_amount: Option<u64>,
         has_whitelist: bool,
-        show_live_stats: bool  
+        show_live_stats: bool,
+        use_token_weighting: bool,  
+        tokens_per_vote: u64
     }
 
     /// Simple struct to mark addresses as whitelisted - no UID needed
@@ -101,7 +99,9 @@ module contracts::voting {
         token_requirement: Option<String>,
         token_amount: Option<u64>,
         has_whitelist: bool,
-        show_live_stats: bool
+        show_live_stats: bool,
+        use_token_weighting: bool,
+        tokens_per_vote: u64 
     }
 
     /// Emitted when a vote is cast
@@ -109,7 +109,9 @@ module contracts::voting {
         vote_id: ID,
         poll_id: ID,
         voter: address,
-        option_indices: vector<u64>
+        option_indices: vector<u64>,
+        token_balance: u64,
+        vote_weight: u64     
     }
 
     /// Emitted when a poll is added to a vote
@@ -161,7 +163,7 @@ module contracts::voting {
 
     // ===== Vote creation and management =====
     
-    /// Create a new vote with its initial configuration, including token requirements
+    /// Create a new vote with its initial configuration, including token requirements and whitelist
     public entry fun create_vote(
         admin: &mut VoteAdmin,
         title: String,
@@ -170,9 +172,12 @@ module contracts::voting {
         end_timestamp: u64,
         payment_amount: u64,
         require_all_polls: bool,
-        token_requirement: vector<u8>,
+        token_requirement: String,
         token_amount: u64,
-        show_live_stats: bool,  
+        show_live_stats: bool, 
+        use_token_weighting: bool,
+        mut tokens_per_vote: u64,
+        whitelist_addresses: vector<address>, 
         clock: &Clock,
         ctx: &mut TxContext
     ) {
@@ -181,18 +186,35 @@ module contracts::voting {
         assert!(start_timestamp >= current_time, EInvalidTimestamp);
         assert!(end_timestamp > start_timestamp, EInvalidTimestamp);
 
-        // Convert token_requirement to Option<String>
-        let token_req = if (vector::length(&token_requirement) > 0) {
-            option::some(string::utf8(token_requirement))
+        let token_req = if (string::length(&token_requirement) > 0) {
+            option::some(token_requirement)
         } else {
             option::none()
         };
 
         // Convert token_amount to Option<u64>
-        let token_amt = if (token_amount > 0 && option::is_some(&token_req)) {
+        let mut token_amt = if (token_amount > 0 && option::is_some(&token_req)) {
             option::some(token_amount)
         } else {
             option::none()
+        };
+
+        // Validate token weighting settings
+        if (use_token_weighting) {
+            // If using token weighting, we must have a token requirement
+            assert!(option::is_some(&token_req), EInvalidTokenWeightRatio);
+            
+            // If tokens_per_vote is 0, use token_amount as default
+            if (tokens_per_vote == 0 && option::is_some(&token_amt)) {
+                tokens_per_vote = option::extract(&mut token_amt); // Use minimum requirement as ratio
+                token_amt = option::some(tokens_per_vote); // Restore the value
+            } else {
+                // Otherwise, ensure tokens_per_vote is positive
+                assert!(tokens_per_vote > 0, EInvalidTokenWeightRatio);
+            };
+        } else {
+            // If not using token weighting, set tokens_per_vote to 0
+            tokens_per_vote = 0;
         };
 
         // Convert payment_amount from SUI to MIST for internal storage
@@ -202,8 +224,8 @@ module contracts::voting {
             0
         };
 
-        // Create the vote object
-        let vote = Vote {
+        // Create the vote object with whitelist setting
+        let mut vote = Vote {
             id: object::new(ctx),
             creator: tx_context::sender(ctx),
             title,
@@ -217,16 +239,40 @@ module contracts::voting {
             is_cancelled: false,
             token_requirement: token_req,
             token_amount: token_amt,
-            has_whitelist: false,
-            show_live_stats 
+            has_whitelist: !vector::is_empty(&whitelist_addresses), // Set based on addresses
+            show_live_stats,
+            use_token_weighting,
+            tokens_per_vote
         };
 
         let vote_id = object::id(&vote);
         
+        // Process whitelist addresses if provided
+        if (!vector::is_empty(&whitelist_addresses)) {
+            let mut i = 0;
+            let voter_count = vector::length(&whitelist_addresses);
+            
+            while (i < voter_count) {
+                let voter = *vector::borrow(&whitelist_addresses, i);
+                
+                // Create and add whitelist marker
+                let marker = WhitelistMarker {};
+                dynamic_field::add(&mut vote.id, voter, marker);
+                
+                // Emit event for each whitelisted voter
+                event::emit(VoterWhitelisted {
+                    vote_id,
+                    voter_address: voter
+                });
+                
+                i = i + 1;
+            };
+        };
+        
         // Update admin stats
         admin.total_votes_created = admin.total_votes_created + 1;
         
-        // Emit event for frontend tracking with new fields
+        // Emit event for frontend tracking with updated whitelist status
         event::emit(VoteCreated {
             vote_id,
             creator: tx_context::sender(ctx),
@@ -236,8 +282,10 @@ module contracts::voting {
             polls_count: 0,
             token_requirement: token_req,
             token_amount: token_amt,
-            has_whitelist: false,
-            show_live_stats
+            has_whitelist: vote.has_whitelist,
+            show_live_stats,
+            use_token_weighting,
+            tokens_per_vote
         });
 
         // Share the vote object
@@ -400,8 +448,8 @@ module contracts::voting {
             i = i + 1;
         };
     }
-
-    /// Create a complete vote with polls and options in a single transaction, including token requirements
+    
+    /// Create a complete vote with polls and options in a single transaction, including token weighting
     public entry fun create_complete_vote(
         admin: &mut VoteAdmin,
         title: String,
@@ -413,6 +461,8 @@ module contracts::voting {
         token_requirement: vector<u8>,
         token_amount: u64,
         show_live_stats: bool,
+        use_token_weighting: bool,
+        mut tokens_per_vote: u64,
         poll_titles: vector<String>,
         poll_descriptions: vector<String>,
         poll_is_multi_select: vector<bool>,
@@ -421,6 +471,7 @@ module contracts::voting {
         poll_option_counts: vector<u64>,
         poll_option_texts: vector<String>,
         poll_option_media_urls: vector<vector<u8>>,
+        whitelist_addresses: vector<address>, 
         clock: &Clock,
         ctx: &mut TxContext
     ) {
@@ -446,10 +497,28 @@ module contracts::voting {
         };
 
         // Convert token_amount to Option<u64>
-        let token_amt = if (token_amount > 0 && option::is_some(&token_req)) {
+        let mut token_amt = if (token_amount > 0 && option::is_some(&token_req)) {
             option::some(token_amount)
         } else {
             option::none()
+        };
+        
+        // Validate token weighting settings
+        if (use_token_weighting) {
+            // If using token weighting, we must have a token requirement
+            assert!(option::is_some(&token_req), EInvalidTokenWeightRatio);
+            
+            // If tokens_per_vote is 0, use token_amount as default
+            if (tokens_per_vote == 0 && option::is_some(&token_amt)) {
+                tokens_per_vote = option::extract(&mut token_amt); // Use minimum requirement as ratio
+                token_amt = option::some(tokens_per_vote); // Restore the value
+            } else {
+                // Otherwise, ensure tokens_per_vote is positive
+                assert!(tokens_per_vote > 0, EInvalidTokenWeightRatio);
+            };
+        } else {
+            // If not using token weighting, set tokens_per_vote to 0
+            tokens_per_vote = 0;
         };
 
         // Convert payment_amount from SUI to MIST for internal storage
@@ -459,7 +528,7 @@ module contracts::voting {
             0
         };
 
-        // Create the vote object
+        // Create the vote object with token weighting fields and whitelist setting
         let mut vote = Vote {
             id: object::new(ctx),
             creator: tx_context::sender(ctx),
@@ -474,8 +543,10 @@ module contracts::voting {
             is_cancelled: false,
             token_requirement: token_req,
             token_amount: token_amt,
-            has_whitelist: false,
-            show_live_stats 
+            has_whitelist: !vector::is_empty(&whitelist_addresses), // Set based on addresses
+            show_live_stats,
+            use_token_weighting,
+            tokens_per_vote
         };
 
         // Get all option texts and media_urls total counts
@@ -580,10 +651,32 @@ module contracts::voting {
             i = i + 1;
         };
         
+        // Process whitelist addresses if provided
+        if (!vector::is_empty(&whitelist_addresses)) {
+            let mut i = 0;
+            let voter_count = vector::length(&whitelist_addresses);
+            
+            while (i < voter_count) {
+                let voter = *vector::borrow(&whitelist_addresses, i);
+                
+                // Create and add whitelist marker
+                let marker = WhitelistMarker {};
+                dynamic_field::add(&mut vote.id, voter, marker);
+                
+                // Emit event for each whitelisted voter
+                event::emit(VoterWhitelisted {
+                    vote_id,
+                    voter_address: voter
+                });
+                
+                i = i + 1;
+            };
+        };
+        
         // Update admin stats
         admin.total_votes_created = admin.total_votes_created + 1;
         
-        // Emit event for frontend tracking with new fields
+        // Emit event for frontend tracking with token weighting fields and whitelist status
         event::emit(VoteCreated {
             vote_id,
             creator: tx_context::sender(ctx),
@@ -593,8 +686,10 @@ module contracts::voting {
             polls_count: vote.polls_count,
             token_requirement: token_req,
             token_amount: token_amt,
-            has_whitelist: false,
-            show_live_stats  // New field
+            has_whitelist: vote.has_whitelist,
+            show_live_stats,
+            use_token_weighting,
+            tokens_per_vote
         });
 
         // Share the vote object
@@ -606,6 +701,7 @@ module contracts::voting {
         vote: &mut Vote,
         admin: &mut VoteAdmin,
         poll_index: u64,
+        token_balance: u64,
         option_indices: vector<u64>,
         mut payment: Coin<SUI>,
         clock: &Clock,
@@ -624,6 +720,11 @@ module contracts::voting {
             assert!(dynamic_field::exists_(&vote.id, sender), ENotWhitelisted);
         };
         
+        if (option::is_some(&vote.token_requirement) && option::is_some(&vote.token_amount)) {
+            let min_token_amount = option::borrow(&vote.token_amount);
+            assert!(token_balance >= *min_token_amount, EInvalidTokenBalance);
+        };
+
         // Store vote_id before any mutable borrows
         let vote_id = object::id(vote);
         
@@ -666,7 +767,21 @@ module contracts::voting {
         // Validate poll selections - moved to frontend, minimal validation on-chain
         validate_poll_selections(poll, &option_indices);
         
-        // Register vote for each selected option
+        let mut vote_weight = 1; // Default weight is 1
+        
+        if (vote.use_token_weighting && token_balance > 0 && vote.tokens_per_vote > 0) {
+            // Calculate weight: token_balance / tokens_per_vote
+            vote_weight = token_balance / vote.tokens_per_vote;
+            // Ensure minimum weight is 1 if they meet the requirement
+            if (vote_weight == 0 && option::is_some(&vote.token_amount)) {
+                let min_token_amount = option::borrow(&vote.token_amount);
+                if (token_balance >= *min_token_amount) {
+                    vote_weight = 1;
+                };
+            };
+        };
+
+        // Register weighted vote for each selected option
         let mut i = 0;
         let option_count = vector::length(&option_indices);
         
@@ -675,36 +790,40 @@ module contracts::voting {
             assert!(option_idx <= poll.options_count && option_idx > 0, EInvalidOptionIndex);
             
             let option: &mut PollOption = dof::borrow_mut(&mut poll.id, option_idx);
-            option.votes = option.votes + 1;
+            // Add vote_weight instead of just 1
+            option.votes = option.votes + vote_weight;
             
             i = i + 1;
         };
         
-        // Update poll response count
+        // Update poll response count (still count as 1 response, regardless of weight)
         poll.total_responses = poll.total_responses + 1;
         
         // Store the poll ID before releasing the borrow
         let poll_id = object::id(poll);
 
-        // Update vote counts
+        // Update vote counts (still count as 1 vote, regardless of weight)
         vote.total_votes = vote.total_votes + 1;
         admin.total_votes_cast = admin.total_votes_cast + 1;
         
-        // Emit event for frontend tracking
+        // Emit extended event with token weighting info
         event::emit(VoteCast {
             vote_id,
             poll_id,
             voter: sender,
-            option_indices
+            option_indices,
+            token_balance,
+            vote_weight
         });
     }
 
-    /// Cast votes on multiple polls at once - with whitelist check
+    /// Cast votes on multiple polls at once with token weighting
     public entry fun cast_multiple_votes(
         vote: &mut Vote,
         admin: &mut VoteAdmin,
         poll_indices: vector<u64>,
         option_indices_per_poll: vector<vector<u64>>,
+        token_balance: u64,
         mut payment: Coin<SUI>,
         clock: &Clock,
         ctx: &mut TxContext
@@ -720,6 +839,12 @@ module contracts::voting {
         // Check if sender is in whitelist (if whitelist is enabled)
         if (vote.has_whitelist) {
             assert!(dynamic_field::exists_(&vote.id, sender), ENotWhitelisted);
+        };
+        
+        // If token requirement exists, validate token balance
+        if (option::is_some(&vote.token_requirement) && option::is_some(&vote.token_amount)) {
+            let min_token_amount = option::borrow(&vote.token_amount);
+            assert!(token_balance >= *min_token_amount, EInvalidTokenBalance);
         };
         
         // Ensure vectors have same length
@@ -766,6 +891,21 @@ module contracts::voting {
             transfer::public_transfer(payment, sender);
         };
         
+        // Calculate vote weight based on token balance
+        let mut vote_weight = 1; // Default weight is 1
+        
+        if (vote.use_token_weighting && token_balance > 0 && vote.tokens_per_vote > 0) {
+            // Calculate weight: token_balance / tokens_per_vote
+            vote_weight = token_balance / vote.tokens_per_vote;
+            // Ensure minimum weight is 1 if they meet the requirement
+            if (vote_weight == 0 && option::is_some(&vote.token_amount)) {
+                let min_token_amount = option::borrow(&vote.token_amount);
+                if (token_balance >= *min_token_amount) {
+                    vote_weight = 1;
+                };
+            };
+        };
+        
         // Process each poll vote
         let mut i = 0;
         
@@ -780,7 +920,7 @@ module contracts::voting {
             // Validate selections - minimal on-chain validation
             validate_poll_selections(poll, &option_indices);
             
-            // Register votes
+            // Register votes with weight
             let mut j = 0;
             let option_count = vector::length(&option_indices);
             
@@ -789,29 +929,32 @@ module contracts::voting {
                 assert!(option_idx <= poll.options_count && option_idx > 0, EInvalidOptionIndex);
                 
                 let option: &mut PollOption = dof::borrow_mut(&mut poll.id, option_idx);
-                option.votes = option.votes + 1;
+                // Add vote_weight instead of just 1
+                option.votes = option.votes + vote_weight;
                 
                 j = j + 1;
             };
             
-            // Update poll response count
+            // Update poll response count (1 response, regardless of weight)
             poll.total_responses = poll.total_responses + 1;
             
             // Store the poll ID before releasing the borrow
             let poll_id = object::id(poll);
             
-            // Emit event for frontend tracking
+            // Emit event for frontend tracking with token weighting info
             event::emit(VoteCast {
                 vote_id,
                 poll_id,
                 voter: sender,
-                option_indices
+                option_indices,
+                token_balance,
+                vote_weight
             });
             
             i = i + 1;
         };
         
-        // Update total votes
+        // Update total votes (still count as 1 vote, regardless of weight)
         vote.total_votes = vote.total_votes + 1;
         admin.total_votes_cast = admin.total_votes_cast + 1;
     }
@@ -940,7 +1083,8 @@ module contracts::voting {
 
     /// Get vote details - updated with new token requirement fields
     public fun get_vote_details(vote: &Vote): (
-        address, String, String, u64, u64, u64, bool, u64, u64, bool, Option<String>, Option<u64>, bool, bool
+        address, String, String, u64, u64, u64, bool, u64, u64, bool, 
+        Option<String>, Option<u64>, bool, bool, bool, u64
     ) {
         (
             vote.creator,
@@ -956,7 +1100,9 @@ module contracts::voting {
             vote.token_requirement,
             vote.token_amount,
             vote.has_whitelist,
-            vote.show_live_stats
+            vote.show_live_stats,
+            vote.use_token_weighting,
+            vote.tokens_per_vote
         )
     }
     

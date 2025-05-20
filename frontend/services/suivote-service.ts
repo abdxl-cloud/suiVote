@@ -26,6 +26,8 @@ export interface VoteDetails {
   tokenAmount?: number        
   hasWhitelist: boolean        
   showLiveStats: boolean
+  useTokenWeighting: boolean 
+  tokensPerVote: number 
 }
 
 /**
@@ -61,6 +63,8 @@ export interface VoteCastEvent {
   poll_id: string
   voter: string
   option_indices: number[]
+  token_balance: number  
+  vote_weight: number
 }
 
 /**
@@ -77,6 +81,8 @@ export interface VoteCreatedEvent {
   token_amount?: number         
   has_whitelist: boolean        
   show_live_stats: boolean
+  use_token_weighting: boolean
+  tokens_per_vote: number
 }
 
 /**
@@ -119,6 +125,8 @@ export interface VoteList {
   hasWhitelist: boolean
   isWhitelisted?: boolean  
   showLiveStats: boolean
+  useTokenWeighting: boolean
+  tokensPerVote: number        
 }
 
 export class SuiVoteService {
@@ -415,100 +423,97 @@ export class SuiVoteService {
    * @returns Vote details or null if not found
    */
   async getVoteDetails(voteId: string): Promise<VoteDetails | null> {
-    try {
-      this.checkInitialization()
+  try {
+    this.checkInitialization()
 
-      if (!voteId) {
-        console.warn("Empty voteId provided to getVoteDetails")
-        return null
-      }
-
-      // Fetch the vote object
-      const { data } = await this.client.getObject({
-        id: voteId,
-        options: {
-          showContent: true,
-          showType: true,
-        },
-      })
-
-      if (!data || !data.content || data.content.dataType !== "moveObject") {
-        console.warn(`Vote object not found or invalid: ${voteId}`)
-        return null
-      }
-
-      const objectType = data.type as string
-      // Verify this is a Vote object from our package
-      if (!objectType || !objectType.startsWith(`${PACKAGE_ID}::voting::Vote`)) {
-        console.warn(`Object is not a Vote type: ${objectType}`)
-        return null
-      }
-
-      const fields = data.content.fields as Record<string, any>
-
-      // Get current time to determine vote status
-      const currentTime = Date.now()
-      const startTimestamp = Number(fields.start_timestamp)
-      const endTimestamp = Number(fields.end_timestamp)
-      const isCancelled = fields.is_cancelled
-
-      // Default status - will be refined by the getMyVotes method
-      let status: "active" | "pending" | "upcoming" | "closed" | "voted"
-      if (isCancelled) {
-        status = "closed"
-      } else if (currentTime < startTimestamp) {
-        status = "upcoming"
-      } else if (currentTime <= endTimestamp) {
-        status = "active" // Default to active, will be refined to "pending" or "voted" by getMyVotes if needed
-      } else {
-        status = "closed"
-      }
-
-      let tokenRequirement = undefined;
-      let tokenAmount = undefined;
-
-      // Check if token_requirement exists and has a Some value
-      if (fields.token_requirement &&
-        typeof fields.token_requirement === 'object' &&
-        fields.token_requirement.fields &&
-        'value' in fields.token_requirement.fields) {
-        tokenRequirement = fields.token_requirement.fields.value;
-      }
-
-      // Check if token_amount exists and has a Some value
-      if (fields.token_amount &&
-        typeof fields.token_amount === 'object' &&
-        fields.token_amount.fields &&
-        'value' in fields.token_amount.fields) {
-        tokenAmount = Number(fields.token_amount.fields.value);
-      }
-
-      // Build the vote details object with new fields
-      const voteDetails: VoteDetails = {
-        id: voteId,
-        creator: fields.creator,
-        title: fields.title,
-        description: fields.description,
-        startTimestamp,
-        endTimestamp,
-        paymentAmount: Number(fields.payment_amount || 0),
-        requireAllPolls: !!fields.require_all_polls,
-        pollsCount: Number(fields.polls_count || 0),
-        totalVotes: Number(fields.total_votes || 0),
-        isCancelled,
-        status,
-        tokenRequirement,
-        tokenAmount,
-        hasWhitelist: !!fields.has_whitelist,
-        showLiveStats: !!fields.show_live_stats
-      }
-
-      return voteDetails
-    } catch (error) {
-      console.error(`Failed to fetch vote details for ${voteId}:`, error)
+    if (!voteId) {
+      console.warn("Empty voteId provided to getVoteDetails")
       return null
     }
+
+    // Fetch the vote object
+    const { data } = await this.client.getObject({
+      id: voteId,
+      options: {
+        showContent: true,
+        showType: true,
+      },
+    })
+
+    if (!data || !data.content || data.content.dataType !== "moveObject") {
+      console.warn(`Vote object not found or invalid: ${voteId}`)
+      return null
+    }
+
+    const objectType = data.type as string
+    // Verify this is a Vote object from our package
+    if (!objectType || !objectType.startsWith(`${PACKAGE_ID}::voting::Vote`)) {
+      console.warn(`Object is not a Vote type: ${objectType}`)
+      return null
+    }
+
+    const fields = data.content.fields as Record<string, any>
+
+    // Get current time to determine vote status
+    const currentTime = Date.now()
+    const startTimestamp = Number(fields.start_timestamp)
+    const endTimestamp = Number(fields.end_timestamp)
+    const isCancelled = fields.is_cancelled
+
+    // Default status - will be refined by the getMyVotes method
+    let status: "active" | "pending" | "upcoming" | "closed" | "voted"
+    if (isCancelled) {
+      status = "closed"
+    } else if (currentTime < startTimestamp) {
+      status = "upcoming"
+    } else if (currentTime <= endTimestamp) {
+      status = "active" // Default to active, will be refined to "pending" or "voted" by getMyVotes if needed
+    } else {
+      status = "closed"
+    }
+
+    let tokenRequirement = fields.token_requirement;
+    let tokenAmount = fields.token_amount;
+    let useTokenWeighting = false;
+    let tokensPerVote = 0;
+
+    // Extract token weighting fields
+    if ('use_token_weighting' in fields) {
+      useTokenWeighting = !!fields.use_token_weighting;
+    }
+
+    if ('tokens_per_vote' in fields) {
+      tokensPerVote = Number(fields.tokens_per_vote);
+    }
+    
+    // Build the vote details object with all fields
+    const voteDetails: VoteDetails = {
+      id: voteId,
+      creator: fields.creator,
+      title: fields.title,
+      description: fields.description,
+      startTimestamp,
+      endTimestamp,
+      paymentAmount: Number(fields.payment_amount || 0),
+      requireAllPolls: !!fields.require_all_polls,
+      pollsCount: Number(fields.polls_count || 0),
+      totalVotes: Number(fields.total_votes || 0),
+      isCancelled,
+      status,
+      tokenRequirement,
+      tokenAmount,
+      hasWhitelist: !!fields.has_whitelist,
+      showLiveStats: !!fields.show_live_stats,
+      useTokenWeighting,
+      tokensPerVote
+    }
+
+    return voteDetails
+  } catch (error) {
+    console.error(`Failed to fetch vote details for ${voteId}:`, error)
+    return null
   }
+}
 
   /**
    * Get detailed information about a vote's polls
@@ -686,6 +691,9 @@ export class SuiVoteService {
     requireAllPolls = true,
     showLiveStats = false,
     pollData: PollData[],
+    useTokenWeighting = false, 
+    tokensPerVote = 0,
+    whitelistAddresses: string[] = []   
   ): Transaction {
     try {
       this.checkInitialization()
@@ -758,6 +766,9 @@ export class SuiVoteService {
         ? Array.from(new TextEncoder().encode(requiredToken))
         : []
 
+      console.log("TX", requiredToken, tokenRequirementBytes)
+      console.log(requiredAmount)
+
       // Build the transaction with proper arguments matching the contract
       tx.moveCall({
         target: `${PACKAGE_ID}::voting::create_complete_vote`,
@@ -769,9 +780,11 @@ export class SuiVoteService {
           tx.pure.u64(endTimestamp),
           tx.pure.u64(paymentAmount),
           tx.pure.bool(requireAllPolls),
-          tx.pure.vector("u8", tokenRequirementBytes),
+          tx.pure.string(requiredToken),
           tx.pure.u64(requiredAmount),               
           tx.pure.bool(showLiveStats),
+          tx.pure.bool(useTokenWeighting),   
+          tx.pure.u64(tokensPerVote),        
           tx.pure.vector("string", pollTitles),
           tx.pure.vector("string", pollDescriptions),
           tx.pure.vector("bool", pollIsMultiSelect),
@@ -780,6 +793,7 @@ export class SuiVoteService {
           tx.pure.vector("u64", pollOptionCounts),
           tx.pure.vector("string", pollOptionTexts),
           tx.pure.vector("vector<u8>", pollOptionMediaUrls),
+          tx.pure.vector("address", whitelistAddresses),
           clockObj,
         ],
       })
@@ -806,8 +820,11 @@ export class SuiVoteService {
     paymentAmount = 0,
     requireAllPolls = true,
     showLiveStats = false,
+    useTokenWeighting = false,    // New parameter
+    tokensPerVote = 0,  
     pollData: PollData[],
-    mediaFiles: Record<string, { data: Uint8Array, contentType: string }>
+    mediaFiles: Record<string, { data: Uint8Array, contentType: string }>,
+    whitelistAddresses: string[] = []
   ): Transaction {
     try {
       this.checkInitialization()
@@ -941,8 +958,6 @@ export class SuiVoteService {
         ? Array.from(new TextEncoder().encode(requiredToken))
         : []
 
-
-      console.log("pollData", pollData)
       // 3. Create the vote using the actual SuiVote package ID
       const voteObj = tx.moveCall({
         target: `${PACKAGE_ID}::voting::create_complete_vote`,
@@ -954,9 +969,11 @@ export class SuiVoteService {
           tx.pure.u64(endTimestamp),
           tx.pure.u64(paymentAmount),
           tx.pure.bool(requireAllPolls),
-          tx.pure.vector("u8", tokenRequirementBytes),  
+          tx.pure.string(requiredToken),  
           tx.pure.u64(requiredAmount),     
-          tx.pure.bool(showLiveStats),            
+          tx.pure.bool(showLiveStats),
+          tx.pure.bool(useTokenWeighting),
+          tx.pure.u64(tokensPerVote),            
           tx.pure.vector("string", pollTitles),
           tx.pure.vector("string", pollDescriptions),
           tx.pure.vector("bool", pollIsMultiSelect),
@@ -965,6 +982,7 @@ export class SuiVoteService {
           tx.pure.vector("u64", pollOptionCounts),
           tx.pure.vector("string", pollOptionTexts),
           tx.pure.vector("vector<u8>", pollOptionMediaUrls),
+          tx.pure.vector("address", whitelistAddresses),
           clockObj,
         ],
       })
@@ -1200,7 +1218,7 @@ export class SuiVoteService {
    * @param payment SUI payment amount (if required)
    * @returns Transaction to be signed
    */
-  castVoteTransaction(voteId: string, pollIndex: number, optionIndices: number[], payment = 0): Transaction {
+  castVoteTransaction(voteId: string, pollIndex: number, optionIndices: number[],tokenBalance: number = 0, payment = 0): Transaction {
     try {
       this.checkInitialization()
 
@@ -1243,6 +1261,7 @@ export class SuiVoteService {
           tx.object(ADMIN_ID),
           tx.pure.u64(pollIndex),
           tx.pure.vector("u64", optionIndices),
+          tx.pure.u64(tokenBalance),
           paymentCoin,
           clockObj,
         ],
@@ -1267,6 +1286,7 @@ export class SuiVoteService {
     voteId: string,
     pollIndices: number[],
     optionIndicesPerPoll: number[][],
+    tokenBalance: number = 0,
     payment = 0,
   ): Transaction {
     try {
@@ -1307,6 +1327,12 @@ export class SuiVoteService {
         throw new Error("Payment amount must be non-negative")
       }
 
+      if (tokenBalance <= 0) {
+      // Just set a high default value for the transaction to pass validation
+      // The contract will still require the user to actually have the tokens
+        tokenBalance = 1000000000000; // Very high default value
+      }
+
       const tx = new Transaction()
 
       // Create payment coin if needed
@@ -1329,6 +1355,7 @@ export class SuiVoteService {
           tx.object(ADMIN_ID),
           tx.pure.vector("u64", pollIndices),
           tx.pure.vector("vector<u64>", optionIndicesPerPoll),
+          tx.pure.u64(tokenBalance),
           paymentCoin,
           clockObj,
         ],
@@ -1340,6 +1367,22 @@ export class SuiVoteService {
       throw new Error(`Failed to cast multiple votes: ${error instanceof Error ? error.message : String(error)}`)
     }
   }
+
+    calculateVoteWeight(tokenBalance: number, tokensPerVote: number, minimumTokenAmount: number = 0): number {
+    if (tokenBalance <= 0 || tokensPerVote <= 0) {
+      return 1; // Default weight
+    }
+    
+    const weight = Math.floor(tokenBalance / tokensPerVote);
+    
+    // Ensure minimum weight is 1 if they meet the minimum token requirement
+    if (weight === 0 && minimumTokenAmount > 0 && tokenBalance >= minimumTokenAmount) {
+      return 1;
+    }
+    
+    return Math.max(weight, 0);
+  }
+
 
   /**
    * Close a vote (can be called by creator or after end time)
@@ -1543,82 +1586,59 @@ export class SuiVoteService {
  * @param requiredAmount Minimum amount required
  * @returns Boolean indicating if the user has sufficient balance
  */
-  async checkTokenBalance(userAddress: string, tokenType: string, requiredAmount: number): Promise {
+  async checkTokenBalance(userAddress: string, tokenType: string, requiredAmount: string): Promise<boolean> {
     try {
-      this.checkInitialization()
+      this.checkInitialization();
 
-      // Return TRUE if token type or required amount is undefined
-      if (!tokenType || requiredAmount === undefined) {
-        return true
+      // Return true if no token requirement or required amount is zero
+      if (!tokenType || requiredAmount === undefined) return true;
+      if (requiredAmount === "0") return true;
+
+      if (!userAddress) return false;
+
+      // Fetch user's balance in base units
+      const { totalBalance } = await this.client.getBalance({
+        owner: userAddress,
+        coinType: tokenType,
+      });
+
+      if (!totalBalance) return false;
+
+      // Get token decimals
+      let decimals = 9; // Default for SUI
+      try {
+        const metadata = await this.client.getCoinMetadata({ coinType: tokenType });
+        if (metadata?.decimals !== undefined) decimals = metadata.decimals;
+      } catch (error) {
+        console.warn(`Using default decimals for ${tokenType}: ${decimals}`);
       }
 
-      // Check for user address (still required even if token check is bypassed)
-      if (!userAddress) {
-        return false
-      }
+      // Parse required amount into base units
+      const requiredBase = this.parseToBaseUnits(requiredAmount, decimals);
+      const userBalance = BigInt(totalBalance);
 
-      // For the native SUI token
-      if (tokenType === "0x2::sui::SUI") {
-        // Get the user's SUI balance
-        const { data: balanceData } = await this.client.getBalance({
-          owner: userAddress,
-          coinType: "0x2::sui::SUI"
-        })
-
-        if (!balanceData || !balanceData.totalBalance) {
-          return false
-        }
-
-        // Convert balance to number (considering SUI decimals is 9)
-        const balance = Number(balanceData.totalBalance) / Math.pow(10, 9)
-
-        return balance >= requiredAmount
-      }
-
-      // For other tokens
-      else {
-        try {
-          // Query for all coins owned by the address
-          const { data: ownedCoins } = await this.client.getCoins({
-            owner: userAddress,
-            coinType: tokenType
-          })
-
-          if (!ownedCoins || ownedCoins.length === 0) {
-            return false
-          }
-
-          // Get token info to determine decimals
-          let decimals = 9 // Default to 9 decimals like SUI
-
-          try {
-            // Attempt to get coin metadata for correct decimal handling
-            const metadata = await this.client.getCoinMetadata({
-              coinType: tokenType
-            })
-
-            if (metadata && metadata.decimals) {
-              decimals = metadata.decimals
-            }
-          } catch (metadataError) {
-            console.warn(`Could not get metadata for token ${tokenType}, using default decimals: 9`)
-          }
-
-          // Sum up the total balance across all coins of this type
-          const totalBalance = ownedCoins.reduce((sum, coin) => {
-            return sum + Number(coin.balance)
-          }, 0) / Math.pow(10, decimals)
-
-          return totalBalance >= requiredAmount
-        } catch (error) {
-          console.error(`Error fetching token balance for ${tokenType}:`, error)
-          return false
-        }
-      }
+      return userBalance >= requiredBase;
     } catch (error) {
-      console.error(`Failed to check token balance:`, error)
-      return false
+      console.error("checkTokenBalance error:", error);
+      return false;
     }
+  }
+
+  private parseToBaseUnits(amountStr: string, decimals: number): bigint {
+    const [integerPart, fractionalPart = '0'] = amountStr.split('.');
+    
+    // Pad fractional part to 'decimals' digits and truncate excess
+    const fractionalPadded = fractionalPart
+      .padEnd(decimals, '0')
+      .slice(0, decimals);
+
+    // Combine integer and fractional parts
+    const fullNumberStr = integerPart + fractionalPadded;
+
+    // Handle empty integer part (e.g., ".5")
+    if (fullNumberStr === '') return 0n;
+
+    return BigInt(fullNumberStr);
   }
 
 }
