@@ -1,4 +1,5 @@
 /// @title SuiVote: A streamlined decentralized voting platform on Sui
+/// @version 1.1.0
 /// @notice This module implements an optimized voting system with reduced on-chain operations
 /// @dev Functionality that can be handled by the frontend has been moved off-chain
 module contracts::voting {
@@ -12,6 +13,7 @@ module contracts::voting {
 
     // ===== Constants =====
     const SUI_DECIMALS: u64 = 1_000_000_000; // 1 SUI = 10^9 MIST
+    const CURRENT_VERSION: u64 = 1; // Contract version for upgrade management
 
     // ===== Error codes =====
     const EInvalidTimestamp: u64 = 0;
@@ -30,6 +32,7 @@ module contracts::voting {
     const ENotWhitelisted: u64 = 15;
     const EInvalidTokenWeightRatio: u64 = 16;
     const EInvalidTokenBalance: u64 = 17;
+    const EUpgradeNotNeeded: u64 = 18; // New error for upgrade logic
 
     // ===== Capability objects =====
     
@@ -42,7 +45,7 @@ module contracts::voting {
 
     // ===== Core data structures =====
     
-    /// Main vote container - with new token requirement fields and whitelist flag
+    /// Main vote container - with new token requirement fields, whitelist flag, and version
     public struct Vote has key, store {
         id: UID,
         creator: address,
@@ -60,7 +63,8 @@ module contracts::voting {
         has_whitelist: bool,
         show_live_stats: bool,
         use_token_weighting: bool,  
-        tokens_per_vote: u64
+        tokens_per_vote: u64,
+        version: u64  // New version field for upgrade management
     }
 
     /// Simple struct to mark addresses as whitelisted - no UID needed
@@ -101,7 +105,8 @@ module contracts::voting {
         has_whitelist: bool,
         show_live_stats: bool,
         use_token_weighting: bool,
-        tokens_per_vote: u64 
+        tokens_per_vote: u64,
+        version: u64  // Add version to event
     }
 
     /// Emitted when a vote is cast
@@ -144,10 +149,18 @@ module contracts::voting {
         timestamp: u64
     }
 
-    /// New event: Emitted when an address is added to the allowed voters list
+    /// Emitted when an address is added to the allowed voters list
     public struct VoterWhitelisted has copy, drop {
         vote_id: ID,
         voter_address: address
+    }
+
+    /// New event: Emitted when a vote is upgraded
+    public struct VoteUpgraded has copy, drop {
+        vote_id: ID,
+        creator: address,
+        old_version: u64,
+        new_version: u64
     }
 
     // ===== Initialization =====
@@ -224,7 +237,7 @@ module contracts::voting {
             0
         };
 
-        // Create the vote object with whitelist setting
+        // Create the vote object with whitelist setting and version
         let mut vote = Vote {
             id: object::new(ctx),
             creator: tx_context::sender(ctx),
@@ -242,37 +255,57 @@ module contracts::voting {
             has_whitelist: !vector::is_empty(&whitelist_addresses), // Set based on addresses
             show_live_stats,
             use_token_weighting,
-            tokens_per_vote
+            tokens_per_vote,
+            version: CURRENT_VERSION // Initialize with current version
         };
 
         let vote_id = object::id(&vote);
         
-        // Process whitelist addresses if provided
-        if (!vector::is_empty(&whitelist_addresses)) {
-            let mut i = 0;
-            let voter_count = vector::length(&whitelist_addresses);
+        // Process whitelist - always add creator if whitelist is enabled
+        if (vote.has_whitelist) {
+            // Store creator address first - FIX: avoid referential transparency violation
+            let creator = vote.creator;
             
-            while (i < voter_count) {
-                let voter = *vector::borrow(&whitelist_addresses, i);
+            // Always add creator first
+            let creator_marker = WhitelistMarker {};
+            dynamic_field::add(&mut vote.id, creator, creator_marker);
+            
+            // Emit event for creator
+            event::emit(VoterWhitelisted {
+                vote_id,
+                voter_address: creator
+            });
+            
+            // Now process the rest of whitelist addresses if any were provided
+            if (!vector::is_empty(&whitelist_addresses)) {
+                let mut i = 0;
+                let voter_count = vector::length(&whitelist_addresses);
                 
-                // Create and add whitelist marker
-                let marker = WhitelistMarker {};
-                dynamic_field::add(&mut vote.id, voter, marker);
-                
-                // Emit event for each whitelisted voter
-                event::emit(VoterWhitelisted {
-                    vote_id,
-                    voter_address: voter
-                });
-                
-                i = i + 1;
+                while (i < voter_count) {
+                    let voter = *vector::borrow(&whitelist_addresses, i);
+                    
+                    // Only add if not already added (skip if it's the creator)
+                    if (!dynamic_field::exists_(&vote.id, voter)) {
+                        // Create and add whitelist marker
+                        let marker = WhitelistMarker {};
+                        dynamic_field::add(&mut vote.id, voter, marker);
+                        
+                        // Emit event for each whitelisted voter
+                        event::emit(VoterWhitelisted {
+                            vote_id,
+                            voter_address: voter
+                        });
+                    };
+                    
+                    i = i + 1;
+                };
             };
         };
         
         // Update admin stats
         admin.total_votes_created = admin.total_votes_created + 1;
         
-        // Emit event for frontend tracking with updated whitelist status
+        // Emit event for frontend tracking with updated whitelist status and version
         event::emit(VoteCreated {
             vote_id,
             creator: tx_context::sender(ctx),
@@ -285,7 +318,8 @@ module contracts::voting {
             has_whitelist: vote.has_whitelist,
             show_live_stats,
             use_token_weighting,
-            tokens_per_vote
+            tokens_per_vote,
+            version: vote.version
         });
 
         // Share the vote object
@@ -400,7 +434,7 @@ module contracts::voting {
         });
     }
 
-    /// New function: Add allowed voters to the whitelist
+    /// Add allowed voters to the whitelist
     public entry fun add_allowed_voters(
         vote: &mut Vote,
         voters: vector<address>,
@@ -446,6 +480,80 @@ module contracts::voting {
             };
             
             i = i + 1;
+        };
+    }
+    
+    /// New function: Ensure vote creator is whitelisted for their own vote
+    public entry fun ensure_creator_whitelisted(
+        vote: &mut Vote,
+        clock: &Clock,
+        ctx: &mut TxContext
+    ) {
+        // Only call before voting starts
+        let current_time = clock::timestamp_ms(clock);
+        assert!(current_time < vote.start_timestamp, EPollNotActive);
+        
+        // Only creator can ensure themselves
+        let sender = tx_context::sender(ctx);
+        assert!(vote.creator == sender, ENotAuthorized);
+        
+        // Only relevant if whitelist is enabled
+        if (vote.has_whitelist) {
+            // Check if creator is already whitelisted
+            if (!dynamic_field::exists_(&vote.id, vote.creator)) {
+                // Add creator to whitelist
+                let marker = WhitelistMarker {};
+                dynamic_field::add(&mut vote.id, vote.creator, marker);
+                
+                // Emit event for tracking
+                event::emit(VoterWhitelisted {
+                    vote_id: object::id(vote),
+                    voter_address: vote.creator
+                });
+            };
+        };
+    }
+    
+    /// Upgrade helper function for existing votes
+    public entry fun upgrade_vote_to_current_version(
+        vote: &mut Vote,
+        ctx: &mut TxContext
+    ) {
+        // Only creator can upgrade
+        assert!(vote.creator == tx_context::sender(ctx), ENotAuthorized);
+        
+        // Store current version for event
+        let old_version = vote.version;
+        
+        // Check if upgrade needed
+        if (vote.version < CURRENT_VERSION) {
+            // Perform version-specific upgrades
+            
+            // For version 0 to 1 (whitelist creator fix)
+            if (vote.version < 1 && vote.has_whitelist && !dynamic_field::exists_(&vote.id, vote.creator)) {
+                let marker = WhitelistMarker {};
+                dynamic_field::add(&mut vote.id, vote.creator, marker);
+                
+                // Emit event for tracking
+                event::emit(VoterWhitelisted {
+                    vote_id: object::id(vote),
+                    voter_address: vote.creator
+                });
+            };
+            
+            // Set to current version
+            vote.version = CURRENT_VERSION;
+            
+            // Emit upgrade event
+            event::emit(VoteUpgraded {
+                vote_id: object::id(vote),
+                creator: vote.creator,
+                old_version,
+                new_version: CURRENT_VERSION
+            });
+        } else {
+            // Already at current version
+            assert!(false, EUpgradeNotNeeded);
         };
     }
     
@@ -546,7 +654,8 @@ module contracts::voting {
             has_whitelist: !vector::is_empty(&whitelist_addresses), // Set based on addresses
             show_live_stats,
             use_token_weighting,
-            tokens_per_vote
+            tokens_per_vote,
+            version: CURRENT_VERSION // Initialize with current version
         };
 
         // Get all option texts and media_urls total counts
@@ -651,25 +760,44 @@ module contracts::voting {
             i = i + 1;
         };
         
-        // Process whitelist addresses if provided
-        if (!vector::is_empty(&whitelist_addresses)) {
-            let mut i = 0;
-            let voter_count = vector::length(&whitelist_addresses);
+        // Process whitelist - always add creator if whitelist is enabled
+        if (vote.has_whitelist) {
+            // Store creator address first - FIX: avoid referential transparency violation
+            let creator = vote.creator;
             
-            while (i < voter_count) {
-                let voter = *vector::borrow(&whitelist_addresses, i);
+            // Always add creator first
+            let creator_marker = WhitelistMarker {};
+            dynamic_field::add(&mut vote.id, creator, creator_marker);
+            
+            // Emit event for creator
+            event::emit(VoterWhitelisted {
+                vote_id,
+                voter_address: creator
+            });
+            
+            // Now process the rest of whitelist addresses if any were provided
+            if (!vector::is_empty(&whitelist_addresses)) {
+                let mut i = 0;
+                let voter_count = vector::length(&whitelist_addresses);
                 
-                // Create and add whitelist marker
-                let marker = WhitelistMarker {};
-                dynamic_field::add(&mut vote.id, voter, marker);
-                
-                // Emit event for each whitelisted voter
-                event::emit(VoterWhitelisted {
-                    vote_id,
-                    voter_address: voter
-                });
-                
-                i = i + 1;
+                while (i < voter_count) {
+                    let voter = *vector::borrow(&whitelist_addresses, i);
+                    
+                    // Only add if not already added (skip if it's the creator)
+                    if (!dynamic_field::exists_(&vote.id, voter)) {
+                        // Create and add whitelist marker
+                        let marker = WhitelistMarker {};
+                        dynamic_field::add(&mut vote.id, voter, marker);
+                        
+                        // Emit event for each whitelisted voter
+                        event::emit(VoterWhitelisted {
+                            vote_id,
+                            voter_address: voter
+                        });
+                    };
+                    
+                    i = i + 1;
+                };
             };
         };
         
@@ -689,7 +817,8 @@ module contracts::voting {
             has_whitelist: vote.has_whitelist,
             show_live_stats,
             use_token_weighting,
-            tokens_per_vote
+            tokens_per_vote,
+            version: vote.version
         });
 
         // Share the vote object
@@ -1081,10 +1210,10 @@ module contracts::voting {
 
     // ===== View functions =====
 
-    /// Get vote details - updated with new token requirement fields
+    /// Get vote details - updated with new token requirement fields and version
     public fun get_vote_details(vote: &Vote): (
         address, String, String, u64, u64, u64, bool, u64, u64, bool, 
-        Option<String>, Option<u64>, bool, bool, bool, u64
+        Option<String>, Option<u64>, bool, bool, bool, u64, u64
     ) {
         (
             vote.creator,
@@ -1102,7 +1231,8 @@ module contracts::voting {
             vote.has_whitelist,
             vote.show_live_stats,
             vote.use_token_weighting,
-            vote.tokens_per_vote
+            vote.tokens_per_vote,
+            vote.version
         )
     }
     
@@ -1143,5 +1273,10 @@ module contracts::voting {
     /// Get admin statistics
     public fun get_admin_stats(admin: &VoteAdmin): (u64, u64) {
         (admin.total_votes_created, admin.total_votes_cast)
+    }
+
+    /// Get contract version
+    public fun get_contract_version(): u64 {
+        CURRENT_VERSION
     }
 }

@@ -83,6 +83,7 @@ export default function VotePage() {
   const [validationErrors, setValidationErrors] = useState({})
   const [userCanVote, setUserCanVote] = useState(false)
   const [userHasRequiredTokens, setUserHasRequiredTokens] = useState(true)
+  const [tokenBalance, setTokenBalance] = useState(0)
   
   // Transaction state
   const [txStatus, setTxStatus] = useState(TransactionStatus.IDLE)
@@ -144,7 +145,7 @@ export default function VotePage() {
       // Initialize selections
       const initialSelections = {}
       pollsWithOptions.forEach((poll) => {
-        initialSelections[poll.id] = poll.isMultiSelect ? [] : ""
+        initialSelections[poll.id] = []
       })
       setSelections(initialSelections)
 
@@ -152,6 +153,7 @@ export default function VotePage() {
       let votedStatus = false
       let hasRequiredTokens = !voteDetails.tokenRequirement // True if no token required
       let isWhitelisted = !voteDetails.hasWhitelist // True if no whitelist
+      let calculatedTokenBalance = 0
 
       // Check if user has already voted and meets requirements
       if (wallet.connected && wallet.address) {
@@ -171,7 +173,7 @@ export default function VotePage() {
           setShowingResults(true)
         }
         
-        // Check token requirements
+        // Check token requirements and get actual token balance for weighted voting
         if (voteDetails.tokenRequirement) {
           hasRequiredTokens = await suivote.checkTokenBalance(
             wallet.address,
@@ -281,10 +283,17 @@ export default function VotePage() {
           const poll = polls.find(p => p.id === pollId)
           if (poll && currentSelections.length < poll.maxSelections) {
             newSelections[pollId] = [...currentSelections, optionId]
+          } else {
+            // Show a toast to inform user they've reached max selections
+            toast.info(`You can select up to ${poll.maxSelections} options for this poll`, {
+              description: "Please deselect an option before selecting a new one"
+            });
+            // Return unchanged selections
+            return prev;
           }
         }
       } else {
-        // For single-select polls
+        // For single-select polls - always just one option
         newSelections[pollId] = [optionId]
       }
       
@@ -338,108 +347,288 @@ export default function VotePage() {
         newErrors[poll.id] = "This poll requires a response"
         isValid = false
       }
+      
+      // Additional validation for selection count
+      if (selections[poll.id] && selections[poll.id].length > 0) {
+        // For single-select polls, only one option should be selected
+        if (!poll.isMultiSelect && selections[poll.id].length > 1) {
+          newErrors[poll.id] = "This is a single-select poll. Please select only one option.";
+          isValid = false;
+        }
+        
+        // For multi-select polls, check against max selections
+        if (poll.isMultiSelect && selections[poll.id].length > poll.maxSelections) {
+          newErrors[poll.id] = `You can select up to ${poll.maxSelections} options for this poll.`;
+          isValid = false;
+        }
+      }
     })
     
     setValidationErrors(newErrors)
     return isValid
   }
   
-  // Handle vote submission
-  const handleSubmitVote = async () => {
-    try {
-      if (!validateVote()) return
+  // Replace or update the handleSubmitVote function in vote-page.jsx
+
+const handleSubmitVote = async () => {
+  try {
+    if (!validateVote()) return;
+    
+    setSubmitting(true);
+    setTxStatus(TransactionStatus.BUILDING);
+    
+    // Check if we have selections for multiple polls
+    const selectedPollIds = Object.keys(selections).filter(pollId => 
+      selections[pollId] && selections[pollId].length > 0
+    );
+    
+    console.log("Selected poll IDs:", selectedPollIds);
+    
+    // If we only have one poll selected, use single-poll voting
+    if (selectedPollIds.length === 1) {
+      const pollId = selectedPollIds[0];
+      const poll = polls.find(p => p.id === pollId);
       
-      setSubmitting(true)
-      setTxStatus(TransactionStatus.BUILDING)
+      if (!poll) {
+        throw new Error("Selected poll not found");
+      }
       
-      // Prepare the poll indices and option selections
-      const pollIndices = []
-      const optionIndicesPerPoll = []
+      // Find index of the poll in the array (convert to 1-based for contract)
+      const pollIndex = polls.findIndex(p => p.id === pollId) + 1;
+      const selectedOptions = selections[pollId];
       
-      for (let i = 0; i < polls.length; i++) {
-        const poll = polls[i]
-        const selection = selections[poll.id]
+      // Validate number of selections for this poll type
+      if (!poll.isMultiSelect && selectedOptions.length > 1) {
+        toast.error("Too many options selected", {
+          description: "You can only select one option for this poll"
+        });
+        setSubmitting(false);
+        return;
+      }
+      
+      if (poll.isMultiSelect && selectedOptions.length > poll.maxSelections) {
+        toast.error("Too many options selected", {
+          description: `You can select at most ${poll.maxSelections} options for this poll`
+        });
+        setSubmitting(false);
+        return;
+      }
+      
+      // Convert option IDs to indices (1-based)
+      const optionIndices = selectedOptions.map(optionId => {
+        const optionIndex = poll.options.findIndex(opt => opt.id === optionId);
+        return optionIndex >= 0 ? optionIndex + 1 : 0;
+      }).filter(idx => idx > 0);
+      
+      console.log("Single poll vote:", {
+        pollId,
+        pollIndex,
+        optionIndices,
+        isMultiSelect: poll.isMultiSelect
+      });
+      
+      // Use single-poll transaction
+      const transaction = suivote.castVoteTransaction(
+        params.id,
+        pollIndex,
+        optionIndices,
+        tokenBalance,
+        vote.paymentAmount || 0
+      );
+      
+      setTxStatus(TransactionStatus.SIGNING);
+      
+      const response = await suivote.executeTransaction(transaction);
+      
+      // Continue with transaction processing...
+      setTxStatus(TransactionStatus.EXECUTING);
+      setTxDigest(response.digest);
+      setTxStatus(TransactionStatus.CONFIRMING);
+      
+      // Rest of your transaction confirmation code...
+      
+    } else if (selectedPollIds.length > 1) {
+      // For multiple polls, handle each poll type correctly
+      
+      const pollIndices = [];
+      const optionIndicesPerPoll = [];
+      
+      // IMPORTANT: For testing, we'll use a different approach - vote on each poll separately
+      // This avoids any issues with mixed poll types in the same transaction
+      
+      // Find all selected polls
+      const selectedPolls = polls.filter(poll => 
+        selections[poll.id] && selections[poll.id].length > 0
+      );
+      
+      console.log("Selected polls for sequential voting:", selectedPolls.map(p => p.id));
+      
+      // Process each poll sequentially
+      for (let i = 0; i < selectedPolls.length; i++) {
+        const poll = selectedPolls[i];
+        const pollIndex = polls.findIndex(p => p.id === poll.id) + 1; // 1-based index
+        const selectedOptions = selections[poll.id];
         
-        if (selection && selection.length > 0) {
-          // Add the poll index (1-based index)
-          pollIndices.push(i + 1)
+        // Validate number of selections for this poll type
+        if (!poll.isMultiSelect && selectedOptions.length > 1) {
+          toast.error(`Too many options selected for poll ${i+1}`, {
+            description: "You can only select one option for a single-select poll"
+          });
+          setSubmitting(false);
+          return;
+        }
+        
+        if (poll.isMultiSelect && selectedOptions.length > poll.maxSelections) {
+          toast.error(`Too many options selected for poll ${i+1}`, {
+            description: `You can select at most ${poll.maxSelections} options for this poll`
+          });
+          setSubmitting(false);
+          return;
+        }
+        
+        // Convert option IDs to indices (1-based)
+        const optionIndices = selectedOptions.map(optionId => {
+          const optionIndex = poll.options.findIndex(opt => opt.id === optionId);
+          return optionIndex >= 0 ? optionIndex + 1 : 0;
+        }).filter(idx => idx > 0);
+        
+        console.log(`Voting on poll ${pollIndex}:`, {
+          pollId: poll.id,
+          optionIndices,
+          isMultiSelect: poll.isMultiSelect
+        });
+        
+        // Create and execute the transaction for this poll
+        try {
+          setTxStatus(TransactionStatus.BUILDING);
           
-          // Get option indices (convert from IDs to indices)
-          const optionIndices = selection.map(optionId => {
-            // Find the index of this option
-            const optionIndex = poll.options?.findIndex(opt => opt.id === optionId)
-            // Return 1-based index
-            return optionIndex !== undefined && optionIndex >= 0 ? optionIndex + 1 : 0
-          }).filter(idx => idx > 0)
+          // Generate status message for user
+          toast.info(`Voting on poll ${i+1} of ${selectedPolls.length}`, {
+            description: `Processing "${poll.title.substring(0, 30)}${poll.title.length > 30 ? '...' : ''}"`
+          });
           
-          optionIndicesPerPoll.push(optionIndices)
+          // Create single-poll transaction for this poll
+          const transaction = suivote.castVoteTransaction(
+            params.id,
+            pollIndex,
+            optionIndices,
+            tokenBalance,
+            i === 0 ? (vote.paymentAmount || 0) : 0 // Only include payment in first transaction
+          );
+          
+          setTxStatus(TransactionStatus.SIGNING);
+          
+          const response = await suivote.executeTransaction(transaction);
+          
+          setTxStatus(TransactionStatus.EXECUTING);
+          setTxDigest(response.digest);
+          setTxStatus(TransactionStatus.CONFIRMING);
+          
+          // Wait for confirmation (with timeout)
+          try {
+            // Simple timeout mechanism
+            const result = await Promise.race([
+              suivote.client?.waitForTransactionBlock({ 
+                digest: response.digest, 
+                options: { showEffects: true } 
+              }),
+              new Promise((_, reject) => {
+                setTimeout(() => reject(new Error("Transaction confirmation timeout")), 30000);
+              })
+            ]);
+            
+            console.log(`Poll ${i+1} vote confirmed:`, result);
+            
+            // Short delay between transactions to avoid nonce issues
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            
+          } catch (confirmError) {
+            console.error(`Error confirming poll ${i+1} vote:`, confirmError);
+            throw confirmError;
+          }
+          
+        } catch (pollError) {
+          console.error(`Error voting on poll ${i+1}:`, pollError);
+          
+          // Show error but continue with other polls
+          toast.error(`Error on poll ${i+1}`, {
+            description: pollError.message || "Failed to submit vote for this poll"
+          });
+          
+          // Optional: break the loop to stop processing
+          // break;
+          
+          // Or continue to try other polls
+          continue;
         }
       }
       
-      let transaction
-      // If we have only one poll to vote on, use castVoteTransaction
-      if (pollIndices.length === 1) {
-        transaction = suivote.castVoteTransaction(
-          params.id, 
-          pollIndices[0], 
-          optionIndicesPerPoll[0],
-          vote.paymentAmount
-        )
-      } else {
-        // Use castMultipleVotesTransaction for multiple polls
-        transaction = suivote.castMultipleVotesTransaction(
-          params.id,
-          pollIndices,
-          optionIndicesPerPoll,
-          vote.paymentAmount
-        )
-      }
+      // All polls processed
+      setTxStatus(TransactionStatus.SUCCESS);
+      setSubmitted(true);
+      setHasVoted(true);
       
-      setTxStatus(TransactionStatus.SIGNING)
+      toast.success("Votes submitted successfully!", {
+        description: `You voted on ${selectedPolls.length} polls`
+      });
       
-      // Execute the transaction
-      const response = await suivote.executeTransaction(transaction)
-      
-      // Update transaction status
-      setTxStatus(TransactionStatus.EXECUTING)
-      setTxDigest(response.digest)
-      
-      // Wait a bit to simulate confirmation
-      setTxStatus(TransactionStatus.CONFIRMING)
-      await new Promise(resolve => setTimeout(resolve, 1000))
-      
-      // Mark transaction as successful
-      setTxStatus(TransactionStatus.SUCCESS)
-      
-      // Update local state
-      setSubmitted(true)
-      setHasVoted(true)
-      
-      toast.success("Vote submitted successfully!", {
-        description: "Thank you for participating in this vote."
-      })
-      
-      // Refresh polls data to get updated results
+      // Redirect or show results based on live stats setting
       if (vote.showLiveStats) {
-        setShowingResults(true)
-        // Refetch vote data to get updated results
-        fetchVoteData()
+        setShowingResults(true);
+        // Refresh vote data
+        await fetchVoteData();
       } else {
-        // Redirect to success page if showLiveStats is false
-        router.push(`/vote/${params.id}/success?digest=${response.digest}`)
+        // Final transaction ID for redirection
+        const finalTxId = txDigest || "unknown";
+        router.push(`/vote/${params.id}/success?digest=${finalTxId}`);
       }
       
-    } catch (error) {
-      console.error("Error submitting vote:", error)
-      setTxStatus(TransactionStatus.ERROR)
-      
-      toast.error("Error submitting vote", {
-        description: error instanceof Error ? error.message : "Failed to submit vote"
-      })
-    } finally {
-      setSubmitting(false)
+    } else {
+      // No polls selected
+      toast.error("No selections made", {
+        description: "Please select options for at least one poll before submitting"
+      });
+      setSubmitting(false);
     }
+    
+  } catch (error) {
+    console.error("Error submitting vote:", error);
+    setTxStatus(TransactionStatus.ERROR);
+    
+    let errorMessage = "Error submitting vote";
+    let errorDescription = error instanceof Error ? error.message : "Failed to submit vote";
+    
+    // Better error handling with specific messages
+    if (errorDescription.includes("MoveAbort") && errorDescription.includes("validate_poll_selections")) {
+      if (errorDescription.includes("7")) { // ETooManyOptions
+        errorMessage = "Too many options selected";
+        errorDescription = "You've selected more options than allowed for one or more polls";
+      } else if (errorDescription.includes("8")) { // ERequiredOptionNotSelected
+        errorMessage = "Required option not selected";
+        errorDescription = "Please ensure you've selected options for all required polls";
+      }
+    } else if (errorDescription.includes("15")) { // ENotWhitelisted
+      errorMessage = "Not whitelisted";
+      errorDescription = "Your wallet address is not on the whitelist for this vote";
+    } else if (errorDescription.includes("17")) { // EInvalidTokenBalance
+      errorMessage = "Insufficient token balance";
+      errorDescription = "You don't have enough of the required token to vote";
+    } else if (errorDescription.includes("insufficient balance")) {
+      errorMessage = "Insufficient SUI balance";
+      errorDescription = "You don't have enough SUI to pay for this transaction";
+    } else if (errorDescription.includes("user rejected")) {
+      errorMessage = "Transaction cancelled";
+      errorDescription = "You cancelled the transaction";
+    }
+    
+    toast.error(errorMessage, {
+      description: errorDescription
+    });
+    
+  } finally {
+    setSubmitting(false);
   }
+};
   
   // Helper functions for UI
   
@@ -1405,7 +1594,7 @@ export default function VotePage() {
                           }
                         }}
                         disabled={activePollIndex === polls.length - 1}
-                        className="gap-1 transition-all duration-200 hover:translate-x-[-2px]"
+                        className="gap-1 transition-all duration-200 hover:translate-x-[2px]"
                       >
                         Next
                         <ChevronRight className="h-4 w-4" />
@@ -1441,9 +1630,9 @@ export default function VotePage() {
           >
             {polls.map((poll, pollIndex) => (
               <Card key={poll.id} className={cn(
-                "transition-all duration-300 relative overflow-hidden cursor-pointer border",
+                "transition-all duration-300 relative overflow-hidden cursor-pointer border hover:shadow-lg",
                 validationErrors[poll.id] && "border-red-500",
-                poll.isRequired && "border-amber-500/30"
+                !validationErrors[poll.id] && poll.isRequired && "border-amber-500/30"
               )}
               onClick={() => {
                 setActivePollIndex(pollIndex)
@@ -1453,7 +1642,7 @@ export default function VotePage() {
                 <div className={cn(
                   "h-1.5 w-full",
                   validationErrors[poll.id] ? "bg-red-500" : 
-                  poll.isRequired ? "bg-green-500" : "bg-blue-500",
+                  poll.isRequired ? "bg-amber-500" : "bg-blue-500",
                 )}></div>
                 <CardHeader className="pb-2">
                   <div className="flex items-start justify-between">
@@ -1467,7 +1656,14 @@ export default function VotePage() {
                         </CardDescription>
                       )}
                     </div>
-        
+                    {poll.isRequired && (
+                      <Badge 
+                        variant="outline" 
+                        className="bg-amber-100/50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 text-xs"
+                      >
+                        Required
+                      </Badge>
+                    )}
                   </div>
                 </CardHeader>
                 
@@ -1524,7 +1720,7 @@ export default function VotePage() {
                   <div className="w-full flex flex-col xs:flex-row items-center justify-between gap-2 text-xs text-muted-foreground">
                     <div className="flex items-center gap-1">
                       <Users className="h-3 w-3" />
-                      <span>{poll.totalResponses} responses</span>
+                      <span>{poll.totalResponses || 0} responses</span>
                     </div>
                     
                     {selections[poll.id]?.length > 0 ? (
@@ -1618,6 +1814,58 @@ export default function VotePage() {
           </div>
         </div>
       </motion.div>
+      
+      {/* Transaction progress dialog */}
+      <AnimatePresence>
+        {submitting && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/20 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+          >
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-background rounded-lg shadow-xl max-w-md w-full p-6"
+            >
+              <div className="text-center space-y-4">
+                <div className="mx-auto w-16 h-16 relative">
+                  <div className="absolute inset-0 rounded-full border-t-2 border-primary animate-spin"></div>
+                  <div className="absolute inset-3 rounded-full bg-primary/20"></div>
+                </div>
+                
+                <h3 className="text-xl font-medium">
+                  {txStatus === TransactionStatus.BUILDING && "Building Transaction..."}
+                  {txStatus === TransactionStatus.SIGNING && "Waiting for Signature..."}
+                  {txStatus === TransactionStatus.EXECUTING && "Executing Transaction..."}
+                  {txStatus === TransactionStatus.CONFIRMING && "Confirming Transaction..."}
+                  {txStatus === TransactionStatus.SUCCESS && "Transaction Successful!"}
+                  {txStatus === TransactionStatus.ERROR && "Transaction Failed"}
+                </h3>
+                
+                <Progress value={txProgress} className="h-2" />
+                
+                {txDigest && (
+                  <div className="text-sm text-muted-foreground">
+                    <p>Transaction ID:</p>
+                    <a
+                      href={getTransactionExplorerUrl()}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center justify-center gap-1 mt-1 text-primary hover:underline"
+                    >
+                      {truncateAddress(txDigest)}
+                      <ExternalLink className="h-3 w-3" />
+                    </a>
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
       
       {/* Share dialog */}
       <ShareDialog

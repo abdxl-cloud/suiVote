@@ -54,10 +54,9 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Progress } from "@/components/ui/progress"
-// Import components
 import { TokenSelector } from "@/components/token-selector"
 import { WhitelistSelector } from "@/components/whitelist-selector"
-import { VoteMediaHandler  } from "@/components/media-handler";
+import { VoteMediaHandler } from "@/components/media-handler";
 import { MediaFileUploader } from "@/components/file-uploader";
 
 
@@ -125,8 +124,7 @@ export default function CreateVotePage() {
   const { loading, error, executeTransaction } = useSuiVote()
   const { toast: uiToast } = useToast()
 
-  const [mediaUploadDialogOpen, setMediaUploadDialogOpen] = useState(false);
-  const [activeMediaOption, setActiveMediaOption] = useState({ poll: null, option: null });
+  // Media is now handled directly in each option component
 
   const [voteTitle, setVoteTitle] = useState("")
   const [voteDescription, setVoteDescription] = useState("")
@@ -145,19 +143,26 @@ export default function CreateVotePage() {
     },
   ])
 
+  const tenMinutesFromNow = new Date(new Date().getTime() + 10 * 60 * 1000);
+  const [startDate, setStartDate] = useState(tenMinutesFromNow);
+  const [endDate, setEndDate] = useState(
+    new Date(tenMinutesFromNow.getTime() + 7 * 24 * 60 * 60 * 1000) // 7 days after start date
+  );
+
   const [votingSettings, setVotingSettings] = useState<VotingSettings>({
     requiredToken: "none",
     requiredAmount: "",
     paymentAmount: "0",
-    startDate: new Date(),
-    endDate: addDays(new Date(), 7),
+    startDate: tenMinutesFromNow,
+    endDate: new Date(tenMinutesFromNow.getTime() + 7 * 24 * 60 * 60 * 1000),
     requireAllPolls: true,
     showLiveStats: false,
     isTokenWeighted: false,
     tokenWeight: "1",
     enableWhitelist: false,
     whitelistAddresses: []
-  })
+  });
+
 
   const [errors, setErrors] = useState<ValidationErrors>({})
   const [activeTab, setActiveTab] = useState("details")
@@ -175,23 +180,18 @@ export default function CreateVotePage() {
   const [envVarsChecked, setEnvVarsChecked] = useState(false)
   const [missingEnvVars, setMissingEnvVars] = useState<string[]>([])
 
-  
-    const [startDate, setStartDate] = useState(new Date());
-    const [endDate, setEndDate] = useState(
-      new Date(new Date().setDate(new Date().getDate() + 7))
-    );
-  
-    // Example available dates (next 14 days)
-    const availableDates = Array.from({ length: 14 }, (_, i) => {
-      const date = new Date();
-      date.setDate(date.getDate() + i);
-      return date;
-    });
 
-// Example disabled dates
-const disabledDates = [
-  new Date(new Date().setDate(new Date().getDate() + 3))
-]
+  // Example available dates (next 14 days)
+  const availableDates = Array.from({ length: 14 }, (_, i) => {
+    const date = new Date();
+    date.setDate(date.getDate() + i);
+    return date;
+  });
+
+  // Example disabled dates
+  const disabledDates = [
+    new Date(new Date().setDate(new Date().getDate() + 3))
+  ]
 
   // Check environment variables on component mount
   useEffect(() => {
@@ -374,7 +374,7 @@ const disabledDates = [
     newPolls[pollIndex].options[optionIndex].text = text
     setPolls(newPolls)
   }
-    
+
   // Enhanced validation function aligned with service validation
   // Function to check if a section is complete
   const isSectionComplete = (section: string): boolean => {
@@ -382,23 +382,23 @@ const disabledDates = [
       case "details":
         return voteTitle.trim().length > 0
       case "polls":
-        return polls.every(poll => 
-          poll.title.trim().length > 0 && 
-          poll.options.length >= 2 && 
+        return polls.every(poll =>
+          poll.title.trim().length > 0 &&
+          poll.options.length >= 2 &&
           poll.options.every(option => option.text.trim().length > 0)
         )
       case "settings":
-        const hasValidDates = votingSettings.startDate && votingSettings.endDate && 
+        const hasValidDates = votingSettings.startDate && votingSettings.endDate &&
           isAfter(votingSettings.endDate, votingSettings.startDate)
-        
-        const hasValidToken = votingSettings.requiredToken === "none" || 
-          (votingSettings.requiredToken !== "none" && 
-           votingSettings.requiredAmount && 
-           Number.parseFloat(votingSettings.requiredAmount) > 0)
-        
-        const hasValidPayment = !votingSettings.paymentAmount || 
+
+        const hasValidToken = votingSettings.requiredToken === "none" ||
+          (votingSettings.requiredToken !== "none" &&
+            votingSettings.requiredAmount &&
+            Number.parseFloat(votingSettings.requiredAmount) > 0)
+
+        const hasValidPayment = !votingSettings.paymentAmount ||
           Number.parseFloat(votingSettings.paymentAmount) >= 0
-        
+
         return hasValidDates && hasValidToken && hasValidPayment && wallet.connected
       default:
         return true
@@ -414,21 +414,21 @@ const disabledDates = [
         ...prev,
         title: "Vote title is required"
       }))
-      
+
       // Show toast notification
       toast.error("Vote title is required", {
         description: "Please enter a title for your vote before proceeding"
       })
       return
     }
-    
+
     // Check if current section is complete before allowing navigation
     if (isSectionComplete(activeTab)) {
       setActiveTab(value)
     } else {
       // Validate the current section to show errors
       validateForm()
-      
+
       // Show toast notification
       toast.error("Please complete the current section", {
         description: "Fix all errors before proceeding to the next section"
@@ -490,12 +490,29 @@ const disabledDates = [
       // Validate maxSelections for multi-select polls
       if (poll.isMultiSelect) {
         if (poll.maxSelections < 1) {
-          pollError.maxSelections = "Maximum selections must be at least 1"
-          errorTab = "polls"
+          pollError.maxSelections = "Maximum selections must be at least 1";
+          errorTab = "polls";
         } else if (poll.maxSelections >= poll.options.length) {
-          pollError.maxSelections = `Maximum selections must be less than the number of options (${poll.options.length})`
-          errorTab = "polls"
+          // Changed from >= to > to fix the edge case
+          pollError.maxSelections = `Maximum selections must be less than the number of options (${poll.options.length})`;
+          errorTab = "polls";
         }
+      }
+
+      const optionTexts = new Set();
+      let hasDuplicateOptions = false;
+
+      poll.options.forEach(option => {
+        const trimmedText = option.text.trim();
+        if (optionTexts.has(trimmedText)) {
+          hasDuplicateOptions = true;
+        }
+        optionTexts.add(trimmedText);
+      });
+
+      if (hasDuplicateOptions) {
+        pollError.options = "All poll options must be unique";
+        errorTab = "polls";
       }
 
       if (Object.keys(pollError).length > 0) {
@@ -512,13 +529,18 @@ const disabledDates = [
 
     // Validate dates
     if (votingSettings.startDate && votingSettings.endDate) {
-      if (!isAfter(votingSettings.endDate, votingSettings.startDate)) {
-        settingsErrors.dates = "End date must be after start date"
-        errorTab = "settings"
+      const now = new Date();
+
+      if (votingSettings.startDate < now) {
+        settingsErrors.dates = "Start date must be in the future";
+        errorTab = "settings";
+      } else if (!isAfter(votingSettings.endDate, votingSettings.startDate)) {
+        settingsErrors.dates = "End date must be after start date";
+        errorTab = "settings";
       }
     } else if (!votingSettings.startDate || !votingSettings.endDate) {
-      settingsErrors.dates = "Both start and end dates are required"
-      errorTab = "settings"
+      settingsErrors.dates = "Both start and end dates are required";
+      errorTab = "settings";
     }
 
     // Validate token requirements
@@ -572,40 +594,66 @@ const disabledDates = [
     return Object.keys(newErrors).length === 0
   }
 
-  const addMediaToOption = (mediaHandlers: any, pollIndex: number, optionIndex: number) => {
-    setActiveMediaOption({ poll: pollIndex, option: optionIndex });
-    setMediaUploadDialogOpen(true);
-  };
-
-  const handleMediaFileSelect = (mediaHandlers: any, file: File) => {
+  const addMediaToOption = (mediaHandlers: any, pollIndex: number, optionIndex: number, file: File) => {
     try {
-      // Add the file to the media handler and get the file ID
-      const fileId = mediaHandlers.addMediaFile(file);
-      
-      const { poll, option } = activeMediaOption;
-      if (poll !== null && option !== null) {
-        const newPolls = [...polls];
-        
-        // Use the dataUrl for preview, and store the fileId for reference
-        const mediaFile = mediaHandlers.mediaFiles.find((f: any) => f.id === fileId);
-        if (mediaFile && mediaFile.dataUrl) {
-          newPolls[poll].options[option].mediaUrl = mediaFile.dataUrl;
-          newPolls[poll].options[option].fileId = fileId;
-          setPolls(newPolls);
-          
-          // Close the dialog automatically after successful selection
-          setMediaUploadDialogOpen(false);
+      // Validate file size (max 5MB)
+      const maxSize = 5 * 1024 * 1024; // 5MB in bytes
+      if (file.size > maxSize) {
+        toast.error("File size exceeds the 5MB limit");
+        return;
+      }
+
+      // Validate file type
+      if (!file.type.startsWith('image/')) {
+        toast.error("Only image files are supported");
+        return;
+      }
+
+      // Show loading state by setting a temporary mediaUrl
+      const newPolls = [...polls];
+      newPolls[pollIndex].options[optionIndex].mediaUrl = 'loading'; // Temporary value to trigger loading state
+      setPolls(newPolls);
+
+      // Create a FileReader to generate a preview immediately
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const dataUrl = e.target?.result as string;
+        if (dataUrl) {
+          // Add the file to the media handler and get the file ID
+          const fileId = mediaHandlers.addMediaFile(file);
+
+          // Update the polls state with the dataUrl and fileId
+          const updatedPolls = [...polls];
+          updatedPolls[pollIndex].options[optionIndex].mediaUrl = dataUrl;
+          updatedPolls[pollIndex].options[optionIndex].fileId = fileId;
+          setPolls(updatedPolls);
           toast.success("Media added successfully");
         } else {
-          toast.error("Failed to process media file");
+          toast.error("Failed to generate preview");
+          // Reset the mediaUrl on error
+          const updatedPolls = [...polls];
+          updatedPolls[pollIndex].options[optionIndex].mediaUrl = null;
+          setPolls(updatedPolls);
         }
-      } else {
-        toast.error("No poll option selected for media");
-        setMediaUploadDialogOpen(false);
-      }
+      };
+
+      reader.onerror = () => {
+        toast.error("Failed to read image file");
+        // Reset the mediaUrl on error
+        const updatedPolls = [...polls];
+        updatedPolls[pollIndex].options[optionIndex].mediaUrl = null;
+        setPolls(updatedPolls);
+      };
+
+      // Start reading the file as a data URL
+      reader.readAsDataURL(file);
     } catch (error) {
       console.error("Error adding media file:", error);
       toast.error("Failed to add media file");
+      // Reset the mediaUrl on error
+      const newPolls = [...polls];
+      newPolls[pollIndex].options[optionIndex].mediaUrl = null;
+      setPolls(newPolls);
     }
   };
 
@@ -613,32 +661,73 @@ const disabledDates = [
     try {
       const newPolls = [...polls];
       const fileId = newPolls[pollIndex].options[optionIndex].fileId;
-      
-      if (fileId) {
-        // Remove the file from the media handler
-        mediaHandlers.removeMediaFile(fileId);
-      }
-      
-      // Clear the media URL and file ID from the poll option
+
+      // First update the UI to show immediate feedback
       newPolls[pollIndex].options[optionIndex].mediaUrl = null;
       newPolls[pollIndex].options[optionIndex].fileId = null;
       setPolls(newPolls);
-      
-      toast.success("Media removed successfully");
+
+      // Then remove the file from the media handler if it exists
+      if (fileId && mediaHandlers) {
+        mediaHandlers.removeMediaFile(fileId);
+        toast.success("Media removed successfully");
+      }
     } catch (error) {
       console.error("Error removing media file:", error);
       toast.error("Failed to remove media file");
+
+      // Attempt to restore the UI state if there was an error
+      try {
+        const currentPolls = [...polls];
+        if (currentPolls[pollIndex].options[optionIndex].mediaUrl === null) {
+          // Only show error if we actually failed to remove something
+          toast.error("Failed to remove media file");
+        }
+      } catch (e) {
+        // Ignore any errors in the error handler
+      }
     }
   };
 
   // Update your handleSubmit function to use the media handler
   const handleSubmit = async (mediaHandlers: any) => {
     try {
+      const now = new Date();
+      let datesUpdated = false;
+
+      // Check if startDate is not set or is in the past
+      if (!votingSettings.startDate || votingSettings.startDate < now) {
+        const newStartDate = new Date(now.getTime() + 10 * 60 * 1000);
+        setVotingSettings(prev => ({
+          ...prev,
+          startDate: newStartDate
+        }));
+        setStartDate(newStartDate);
+        datesUpdated = true;
+
+        // Also update endDate if necessary
+        if (!votingSettings.endDate || !isAfter(votingSettings.endDate, newStartDate)) {
+          const newEndDate = new Date(newStartDate.getTime() + 7 * 24 * 60 * 60 * 1000);
+          setVotingSettings(prev => ({
+            ...prev,
+            endDate: newEndDate
+          }));
+          setEndDate(newEndDate);
+        }
+      }
+
+      // If dates were auto-updated, notify the user
+      if (datesUpdated) {
+        toast.info("Voting dates updated", {
+          description: "Start and end dates have been automatically adjusted to ensure they are in the future."
+        });
+      }
+
       // Check if all sections are complete
       const detailsComplete = isSectionComplete("details");
       const pollsComplete = isSectionComplete("polls");
       const settingsComplete = isSectionComplete("settings");
-      
+
       if (!detailsComplete || !pollsComplete || !settingsComplete) {
         // Validate to show all errors
         if (!validateForm()) {
@@ -680,7 +769,12 @@ const disabledDates = [
 
       // Create the combined transaction
       setTxStatus(TransactionStatus.BUILDING);
-      
+
+      const whitelistAddressesToSend = votingSettings.enableWhitelist
+        ? votingSettings.whitelistAddresses
+        : [];
+
+      // Create the transaction with corrected whitelist handling
       const transaction = await mediaHandlers.createVoteWithMedia({
         voteTitle,
         voteDescription,
@@ -691,12 +785,10 @@ const disabledDates = [
         paymentAmount: votingSettings.paymentAmount || "0",
         requireAllPolls: votingSettings.requireAllPolls,
         showLiveStats: votingSettings.showLiveStats || false,
-        // Add token-weighted voting parameters
         isTokenWeighted: votingSettings.isTokenWeighted && votingSettings.requiredToken !== "none",
         tokenWeight: votingSettings.isTokenWeighted ? votingSettings.tokenWeight : "1",
-        // Add whitelist parameters
         enableWhitelist: votingSettings.enableWhitelist,
-        whitelistAddresses: votingSettings.enableWhitelist ? votingSettings.whitelistAddresses : [],
+        whitelistAddresses: whitelistAddressesToSend, // Use the filtered addresses
         polls: pollData,
         onSuccess: (voteId) => {
           console.log("Vote created successfully with ID:", voteId);
@@ -747,7 +839,7 @@ const disabledDates = [
     }
   };
 
-  
+
 
   // Get transaction explorer URL
   const getTransactionExplorerUrl = () => {
@@ -775,1086 +867,1136 @@ const disabledDates = [
   return (
     <VoteMediaHandler>
       {(mediaHandlers) => (
-    <motion.div initial="hidden" animate="visible" variants={fadeIn} className="container max-w-7xl py-6 px-4 md:px-6">
-      {/* Header */}
-      <motion.div
-        initial={{ opacity: 0, y: -10 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.4 }}
-        className="bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 border-b mb-6 -mx-4 px-4 py-3"
-      >
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-          <div className="flex-1">
-            <h1 className="text-2xl font-bold tracking-tight truncate">{voteTitle ? voteTitle : "Create New Vote"}</h1>
-          </div>
-          <div className="flex items-center gap-2 w-full sm:w-auto">
-            <Link href="/polls" className="w-full sm:w-auto">
-              <Button
-                variant="outline"
-                size="sm"
-                className="w-full sm:w-auto sm:text-base sm:px-6 sm:py-2 sm:h-10 transition-all hover:scale-105"
-              >
-                Cancel
-              </Button>
-            </Link>
-          </div>
-        </div>
-      </motion.div>
-
-      {/* Environment Variable Error Alert */}
-      <AnimatePresence mode="wait">
-        {errors.environment && (
+        <motion.div initial="hidden" animate="visible" variants={fadeIn} className="container max-w-7xl py-6 px-4 md:px-6">
+          {/* Header */}
           <motion.div
             initial={{ opacity: 0, y: -10 }}
             animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -10 }}
-            className="mb-4"
+            transition={{ duration: 0.4 }}
+            className="bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 border-b mb-6 -mx-4 px-4 py-3"
           >
-            <Alert variant="destructive" role="alert">
-              <AlertCircle className="h-4 w-4" />
-              <AlertTitle>Configuration Error</AlertTitle>
-              <AlertDescription>{errors.environment}</AlertDescription>
-            </Alert>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* Title Error Alert */}
-      <AnimatePresence mode="wait">
-        {errors.title && (
-          <motion.div
-            initial={{ opacity: 0, y: -10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -10 }}
-            className="mb-4"
-          >
-            <Alert variant="destructive" role="alert">
-              <AlertCircle className="h-4 w-4" />
-              <AlertDescription>{errors.title}</AlertDescription>
-            </Alert>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
-        {/* Sticky tab navigation - visible on all screen sizes */}
-        <motion.div
-          initial={{ opacity: 0, y: -5 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.3, delay: 0.1 }}
-          className="sticky top-14 md:top-16 z-30 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 border-b mb-6 -mx-4 px-4 py-3"
-        >
-          <TabsList className="grid grid-cols-3 w-full">
-            <TabsTrigger
-              value="details"
-              className="flex items-center gap-2 transition-all data-[state=active]:scale-105"
-            >
-              <FileText className="h-4 w-4" />
-              <span className="hidden sm:inline">Details</span>
-              <span className="sm:hidden">Details</span>
-            </TabsTrigger>
-            <TabsTrigger value="polls" className="flex items-center gap-2 transition-all data-[state=active]:scale-105">
-              <ListChecks className="h-4 w-4" />
-              <span className="hidden sm:inline">Polls</span>
-              <span className="sm:hidden">Polls</span>
-            </TabsTrigger>
-            <TabsTrigger
-              value="settings"
-              className="flex items-center gap-2 transition-all data-[state=active]:scale-105"
-            >
-              <Settings className="h-4 w-4" />
-              <span className="hidden sm:inline">Settings</span>
-              <span className="sm:hidden">Settings</span>
-            </TabsTrigger>
-          </TabsList>
-        </motion.div>
-
-        <div className="flex flex-col md:flex-row gap-6">
-          {/* Sidebar */}
-          <motion.div variants={slideUp} className="w-full md:w-64 lg:w-72 flex-shrink-0">
-            <div className="md:sticky md:top-32">
-              <Card className="transition-all hover:shadow-md">
-                <CardContent className="p-4">
-                  {activeTab === "polls" && (
-                    <div className="mt-4 space-y-1">
-                      <div className="flex items-center justify-between mb-2">
-                        <h3 className="text-sm font-medium">Poll List</h3>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-7 px-2 text-xs transition-all hover:scale-110"
-                          onClick={addPoll}
-                        >
-                          <PlusCircle className="h-3.5 w-3.5 mr-1" />
-                          Add
-                        </Button>
-                      </div>
-                      <div className="space-y-1 max-h-[300px] overflow-y-auto pr-1">
-                        {polls.map((poll, index) => (
-                          <div key={poll.id} className="flex items-center">
-                            <Button
-                              variant={activePollIndex === index ? "secondary" : "ghost"}
-                              size="sm"
-                              className={cn(
-                                "w-full justify-start text-left h-8 text-xs transition-all",
-                                activePollIndex === index && "bg-muted",
-                              )}
-                              onClick={() => setActivePollIndex(index)}
-                            >
-                              <span className="w-5 h-5 flex items-center justify-center rounded-full bg-muted-foreground/10 text-xs mr-2">
-                                {index + 1}
-                              </span>
-                              {poll.title
-                                ? poll.title.length > 20
-                                  ? poll.title.substring(0, 20) + "..."
-                                  : poll.title
-                                : `Poll ${index + 1}`}
-                            </Button>
-                            {polls.length > 1 && (
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="h-8 w-8 p-0 ml-1 text-muted-foreground hover:text-destructive transition-colors"
-                                onClick={() => removePoll(index)}
-                              >
-                                <X className="h-3.5 w-3.5" />
-                                <span className="sr-only">Remove poll</span>
-                              </Button>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Progress indicator */}
-                  <div className="mt-6 space-y-2">
-                    <div className="flex justify-between text-xs text-muted-foreground">
-                      <span>Progress</span>
-                      <span>{activeTab === "details" ? "1" : activeTab === "polls" ? "2" : "3"}/3</span>
-                    </div>
-                    <div className="w-full bg-muted h-1.5 rounded-full overflow-hidden">
-                      <motion.div
-                        initial={{ width: activeTab === "details" ? "33%" : activeTab === "polls" ? "66%" : "100%" }}
-                        animate={{ width: activeTab === "details" ? "33%" : activeTab === "polls" ? "66%" : "100%" }}
-                        transition={{ duration: 0.5 }}
-                        className="bg-primary h-full"
-                      ></motion.div>
-                    </div>
-                  </div>
-
-                  {/* Quick tips */}
-                  <div className="mt-6 p-3 bg-muted/30 rounded-lg">
-                    <h3 className="text-sm font-medium mb-2 flex items-center gap-1.5">
-                      <Info className="h-3.5 w-3.5 text-primary" />
-                      Tips
-                    </h3>
-                    <ul className="text-xs space-y-2 text-muted-foreground">
-                      <li className="flex gap-2">
-                        <div className="h-3.5 w-3.5 rounded-full bg-green-500 flex items-center justify-center flex-shrink-0 mt-0.5">
-                          <Check className="h-2.5 w-2.5 text-white" />
-                        </div>
-                        <span>Keep poll questions clear and concise</span>
-                      </li>
-                      <li className="flex gap-2">
-                        <div className="h-3.5 w-3.5 rounded-full bg-green-500 flex items-center justify-center flex-shrink-0 mt-0.5">
-                          <Check className="h-2.5 w-2.5 text-white" />
-                        </div>
-                        <span>Add images to make options more engaging</span>
-                      </li>
-                      <li className="flex gap-2">
-                        <div className="h-3.5 w-3.5 rounded-full bg-green-500 flex items-center justify-center flex-shrink-0 mt-0.5">
-                          <Check className="h-2.5 w-2.5 text-white" />
-                        </div>
-                        <span>Set a reasonable voting timeframe</span>
-                      </li>
-                    </ul>
-                  </div>
-                  
-                  {/* Vote Preview Card - Desktop Only */}
-                  <div className="mt-6 hidden md:block">
-                    <Card className="border-dashed transition-all hover:shadow-md">
-                      <CardHeader className="p-3">
-                        <CardTitle className="text-sm">Vote Preview</CardTitle>
-                        <CardDescription className="text-xs">How your vote will appear</CardDescription>
-                      </CardHeader>
-                      <CardContent className="p-3">
-                        <div className="rounded-lg border p-3 bg-muted/20">
-                          <div className="flex flex-col gap-2">
-                            <h3 className="font-semibold text-sm">{voteTitle || "Untitled Vote"}</h3>
-                            <p className="text-xs text-muted-foreground line-clamp-2">{voteDescription || "No description provided"}</p>
-
-                            <div className="mt-2 flex flex-wrap gap-1.5">
-                              <Badge variant="outline" className="text-xs bg-green-50 text-green-700 border-green-200">
-                                {polls.length} {polls.length === 1 ? "Poll" : "Polls"}
-                              </Badge>
-
-                              {votingSettings.requiredToken !== "none" && (
-                                <Badge variant="outline" className="text-xs bg-blue-50 text-blue-700 border-blue-200">
-                                  Requires {votingSettings.requiredToken.length > 10 
-                                    ? `${votingSettings.requiredToken.substring(0, 6)}...${votingSettings.requiredToken.substring(votingSettings.requiredToken.length - 4)}` 
-                                    : votingSettings.requiredToken.toUpperCase()}
-                                </Badge>
-                              )}
-
-                              {Number(votingSettings.paymentAmount) > 0 && (
-                                <Badge variant="outline" className="text-xs bg-amber-50 text-amber-700 border-amber-200">
-                                  Payment: {votingSettings.paymentAmount} SUI
-                                </Badge>
-                              )}
-
-                              {showLiveStats && (
-                                <Badge variant="outline" className="text-xs bg-purple-50 text-purple-700 border-purple-200">
-                                  <BarChart2 className="h-3 w-3 mr-1" />
-                                  Live Results
-                                </Badge>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  </div>
-                </CardContent>
-              </Card>
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+              <div className="flex-1">
+                <h1 className="text-2xl font-bold tracking-tight truncate">{voteTitle ? voteTitle : "Create New Vote"}</h1>
+              </div>
+              <div className="flex items-center gap-2 w-full sm:w-auto">
+                <Link href="/polls" className="w-full sm:w-auto">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="w-full sm:w-auto sm:text-base sm:px-6 sm:py-2 sm:h-10 transition-all hover:scale-105"
+                  >
+                    Cancel
+                  </Button>
+                </Link>
+              </div>
             </div>
           </motion.div>
 
-          {/* Main content area */}
-          <motion.div variants={slideUp} className="flex-1">
-            <TabsContent value="details" className="mt-0">
-              <Card className="transition-all hover:shadow-md">
-                <CardHeader>
-                  <CardTitle className="text-2xl">Vote Details</CardTitle>
-                  <CardDescription>Create a new vote with multiple polls</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-6">
-                  <div className="space-y-2">
-                    <Label htmlFor="title" className="text-base font-medium">
-                      Vote Title <span className="text-red-500">*</span>
-                    </Label>
-                    <Input
-                      id="title"
-                      placeholder="Enter a title for this vote"
-                      value={voteTitle}
-                      onChange={(e) => setVoteTitle(e.target.value)}
-                      className={cn(
-                        "h-12 transition-all focus:scale-[1.01]",
-                        errors.title && "border-red-500 focus-visible:ring-red-500",
+          {/* Environment Variable Error Alert */}
+          <AnimatePresence mode="wait">
+            {errors.environment && (
+              <motion.div
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                className="mb-4"
+              >
+                <Alert variant="destructive" role="alert">
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertTitle>Configuration Error</AlertTitle>
+                  <AlertDescription>{errors.environment}</AlertDescription>
+                </Alert>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* Title Error Alert */}
+          <AnimatePresence mode="wait">
+            {errors.title && (
+              <motion.div
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                className="mb-4"
+              >
+                <Alert variant="destructive" role="alert">
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertDescription>{errors.title}</AlertDescription>
+                </Alert>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
+            {/* Sticky tab navigation - visible on all screen sizes */}
+            <motion.div
+              initial={{ opacity: 0, y: -5 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.3, delay: 0.1 }}
+              className="sticky top-14 md:top-16 z-30 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 border-b mb-6 -mx-4 px-4 py-3"
+            >
+              <TabsList className="grid grid-cols-3 w-full">
+                <TabsTrigger
+                  value="details"
+                  className="flex items-center gap-2 transition-all data-[state=active]:scale-105"
+                >
+                  <FileText className="h-4 w-4" />
+                  <span className="hidden sm:inline">Details</span>
+                  <span className="sm:hidden">Details</span>
+                </TabsTrigger>
+                <TabsTrigger value="polls" className="flex items-center gap-2 transition-all data-[state=active]:scale-105">
+                  <ListChecks className="h-4 w-4" />
+                  <span className="hidden sm:inline">Polls</span>
+                  <span className="sm:hidden">Polls</span>
+                </TabsTrigger>
+                <TabsTrigger
+                  value="settings"
+                  className="flex items-center gap-2 transition-all data-[state=active]:scale-105"
+                >
+                  <Settings className="h-4 w-4" />
+                  <span className="hidden sm:inline">Settings</span>
+                  <span className="sm:hidden">Settings</span>
+                </TabsTrigger>
+              </TabsList>
+            </motion.div>
+
+            <div className="flex flex-col md:flex-row gap-6">
+              {/* Sidebar */}
+              <motion.div variants={slideUp} className="w-full md:w-64 lg:w-72 flex-shrink-0">
+                <div className="md:sticky md:top-32">
+                  <Card className="transition-all hover:shadow-md">
+                    <CardContent className="p-4">
+                      {activeTab === "polls" && (
+                        <div className="mt-4 space-y-1">
+                          <div className="flex items-center justify-between mb-2">
+                            <h3 className="text-sm font-medium">Poll List</h3>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 px-2 text-xs transition-all hover:scale-110"
+                              onClick={addPoll}
+                            >
+                              <PlusCircle className="h-3.5 w-3.5 mr-1" />
+                              Add
+                            </Button>
+                          </div>
+                          <div className="space-y-1 max-h-[300px] overflow-y-auto pr-1">
+                            {polls.map((poll, index) => (
+                              <div key={poll.id} className="flex items-center">
+                                <Button
+                                  variant={activePollIndex === index ? "secondary" : "ghost"}
+                                  size="sm"
+                                  className={cn(
+                                    "w-full justify-start text-left h-8 text-xs transition-all",
+                                    activePollIndex === index && "bg-muted",
+                                  )}
+                                  onClick={() => setActivePollIndex(index)}
+                                >
+                                  <span className="w-5 h-5 flex items-center justify-center rounded-full bg-muted-foreground/10 text-xs mr-2">
+                                    {index + 1}
+                                  </span>
+                                  {poll.title
+                                    ? poll.title.length > 20
+                                      ? poll.title.substring(0, 20) + "..."
+                                      : poll.title
+                                    : `Poll ${index + 1}`}
+                                </Button>
+                                {polls.length > 1 && (
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-8 w-8 p-0 ml-1 text-muted-foreground hover:text-destructive transition-colors"
+                                    onClick={() => removePoll(index)}
+                                  >
+                                    <X className="h-3.5 w-3.5" />
+                                    <span className="sr-only">Remove poll</span>
+                                  </Button>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
                       )}
-                      required
-                    />
-                  </div>
 
-                  <div className="space-y-2">
-                    <Label htmlFor="description" className="text-base font-medium">
-                      Vote Description
-                    </Label>
-                    <Textarea
-                      id="description"
-                      placeholder="Provide context or additional information about this vote"
-                      value={voteDescription}
-                      onChange={(e) => setVoteDescription(e.target.value)}
-                      className="min-h-[150px] resize-none transition-all focus:scale-[1.01]"
-                    />
-                  </div>
-                </CardContent>
-                <CardFooter className="flex justify-end p-4">
-                  <Button 
-                    onClick={() => {
-                      if (!voteTitle.trim().length) {
-                        // Show error but don't proceed
-                        toast.error("Please complete all required fields", {
-                          description: "Vote title is required"
-                        });
-                        return;
-                      }
-                      
-                      // Otherwise proceed normally
-                      if (isSectionComplete("details")) {
-                        setActiveTab("polls");
-                      } else {
-                        validateForm();
-                      }
-                    }}
-                    className="transition-all hover:scale-105"
-                  >
-                    Continue to Polls
-                    <ArrowRight className="ml-2 h-4 w-4" />
-                  </Button>
-                </CardFooter>
-              </Card>
-            </TabsContent>
-
-            <TabsContent value="polls" className="mt-0">
-              {/* Update the error alert in the polls tab to include role="alert" for accessibility */}
-
-              <AnimatePresence mode="wait">
-                {errors.polls && Object.keys(errors.polls).length > 0 && (
-                  <motion.div
-                    initial={{ opacity: 0, y: -10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -10 }}
-                    className="mb-4"
-                  >
-                    <Alert variant="destructive" role="alert">
-                      <AlertCircle className="h-4 w-4" />
-                      <AlertDescription>Please fix the errors in your polls</AlertDescription>
-                    </Alert>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-
-              {polls.length > 0 && (
-                <Card className="transition-all hover:shadow-md">
-                  <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                    <div>
-                      <CardTitle className="text-xl">
-                        Poll {activePollIndex + 1} of {polls.length}
-                      </CardTitle>
-                      <CardDescription>{polls[activePollIndex].title || "Untitled Poll"}</CardDescription>
-                    </div>
-                    {polls.length > 1 && (
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => removePoll(activePollIndex)}
-                        className="text-destructive hover:text-destructive/90 hover:bg-destructive/10 transition-all hover:scale-110"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    )}
-                  </CardHeader>
-                  <CardContent className="pt-4 space-y-6">
-                    <div className="space-y-2">
-                      <Label htmlFor={`poll-title-${activePollIndex}`} className="text-base font-medium">
-                        Poll Title <span className="text-red-500">*</span>
-                      </Label>
-                      <Input
-                        id={`poll-title-${activePollIndex}`}
-                        placeholder="Enter poll question"
-                        value={polls[activePollIndex].title}
-                        onChange={(e) => updatePollTitle(activePollIndex, e.target.value)}
-                        className={cn(
-                          "h-12 transition-all focus:scale-[1.01]",
-                          errors.polls?.[polls[activePollIndex].id]?.title &&
-                            "border-red-500 focus-visible:ring-red-500",
-                        )}
-                        required
-                      />
-                      {errors.polls?.[polls[activePollIndex].id]?.title && (
-                        <p className="text-sm text-red-500 mt-1">{errors.polls[polls[activePollIndex].id].title}</p>
-                      )}
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor={`poll-description-${activePollIndex}`} className="text-base font-medium">
-                        Poll Description (Optional)
-                      </Label>
-                      <Textarea
-                        id={`poll-description-${activePollIndex}`}
-                        placeholder="Provide additional context for this poll"
-                        value={polls[activePollIndex].description}
-                        onChange={(e) => updatePollDescription(activePollIndex, e.target.value)}
-                        className="min-h-[80px] resize-none transition-all focus:scale-[1.01]"
-                      />
-                    </div>
-
-                    <div className="space-y-4">
-                      <Label className="text-base font-medium">Selection Type</Label>
-                      <RadioGroup
-                        value={polls[activePollIndex].isMultiSelect ? "multi" : "single"}
-                        onValueChange={(value) => updatePollType(activePollIndex, value === "multi")}
-                        className="flex flex-col sm:flex-row gap-4"
-                      >
-                        <div className="flex items-center space-x-2">
-                          <RadioGroupItem value="single" id={`single-select-${activePollIndex}`} />
-                          <Label htmlFor={`single-select-${activePollIndex}`}>Single Select (Radio Buttons)</Label>
+                      {/* Progress indicator */}
+                      <div className="mt-6 space-y-2">
+                        <div className="flex justify-between text-xs text-muted-foreground">
+                          <span>Progress</span>
+                          <span>{activeTab === "details" ? "1" : activeTab === "polls" ? "2" : "3"}/3</span>
                         </div>
-                        <div className="flex items-center space-x-2">
-                          <RadioGroupItem value="multi" id={`multi-select-${activePollIndex}`} />
-                          <Label htmlFor={`multi-select-${activePollIndex}`}>Multi Select (Checkboxes)</Label>
+                        <div className="w-full bg-muted h-1.5 rounded-full overflow-hidden">
+                          <motion.div
+                            initial={{ width: activeTab === "details" ? "33%" : activeTab === "polls" ? "66%" : "100%" }}
+                            animate={{ width: activeTab === "details" ? "33%" : activeTab === "polls" ? "66%" : "100%" }}
+                            transition={{ duration: 0.5 }}
+                            className="bg-primary h-full"
+                          ></motion.div>
                         </div>
-                      </RadioGroup>
-                    </div>
+                      </div>
 
-                    {polls[activePollIndex].isMultiSelect && (
-                      <motion.div
-                        initial={{ opacity: 0, height: 0 }}
-                        animate={{ opacity: 1, height: "auto" }}
-                        exit={{ opacity: 0, height: 0 }}
-                        className="space-y-4 p-4 bg-muted/30 rounded-lg"
-                      >
-                        <div className="flex items-center justify-between">
-                          <Label htmlFor={`max-selections-${activePollIndex}`} className="text-base font-medium">
-                            Maximum Selections Allowed
-                          </Label>
-                          <span className="text-sm font-medium">
-                            {polls[activePollIndex].maxSelections} of {polls[activePollIndex].options.length}
-                          </span>
-                        </div>
-                        <Slider
-                          id={`max-selections-${activePollIndex}`}
-                          min={1}
-                          max={Math.max(1, polls[activePollIndex].options.length - 1)}
-                          step={1}
-                          value={[polls[activePollIndex].maxSelections]}
-                          onValueChange={(value) => updateMaxSelections(activePollIndex, value[0])}
+                      {/* Quick tips */}
+                      <div className="mt-6 p-3 bg-muted/30 rounded-lg">
+                        <h3 className="text-sm font-medium mb-2 flex items-center gap-1.5">
+                          <Info className="h-3.5 w-3.5 text-primary" />
+                          Tips
+                        </h3>
+                        <ul className="text-xs space-y-2 text-muted-foreground">
+                          <li className="flex gap-2">
+                            <div className="h-3.5 w-3.5 rounded-full bg-green-500 flex items-center justify-center flex-shrink-0 mt-0.5">
+                              <Check className="h-2.5 w-2.5 text-white" />
+                            </div>
+                            <span>Keep poll questions clear and concise</span>
+                          </li>
+                          <li className="flex gap-2">
+                            <div className="h-3.5 w-3.5 rounded-full bg-green-500 flex items-center justify-center flex-shrink-0 mt-0.5">
+                              <Check className="h-2.5 w-2.5 text-white" />
+                            </div>
+                            <span>Add images to make options more engaging</span>
+                          </li>
+                          <li className="flex gap-2">
+                            <div className="h-3.5 w-3.5 rounded-full bg-green-500 flex items-center justify-center flex-shrink-0 mt-0.5">
+                              <Check className="h-2.5 w-2.5 text-white" />
+                            </div>
+                            <span>Set a reasonable voting timeframe</span>
+                          </li>
+                        </ul>
+                      </div>
+
+                      {/* Vote Preview Card - Desktop Only */}
+                      <div className="mt-6 hidden md:block">
+                        <Card className="border-dashed transition-all hover:shadow-md">
+                          <CardHeader className="p-3">
+                            <CardTitle className="text-sm">Vote Preview</CardTitle>
+                            <CardDescription className="text-xs">How your vote will appear</CardDescription>
+                          </CardHeader>
+                          <CardContent className="p-3">
+                            <div className="rounded-lg border p-3 bg-muted/20">
+                              <div className="flex flex-col gap-2">
+                                <h3 className="font-semibold text-sm">{voteTitle || "Untitled Vote"}</h3>
+                                <p className="text-xs text-muted-foreground line-clamp-2">{voteDescription || "No description provided"}</p>
+
+                                <div className="mt-2 flex flex-wrap gap-1.5">
+                                  <Badge variant="outline" className="text-xs bg-green-50 text-green-700 border-green-200">
+                                    {polls.length} {polls.length === 1 ? "Poll" : "Polls"}
+                                  </Badge>
+
+                                  {votingSettings.requiredToken !== "none" && (
+                                    <Badge variant="outline" className="text-xs bg-blue-50 text-blue-700 border-blue-200">
+                                      Requires {votingSettings.requiredToken.length > 10
+                                        ? `${votingSettings.requiredToken.substring(0, 6)}...${votingSettings.requiredToken.substring(votingSettings.requiredToken.length - 4)}`
+                                        : votingSettings.requiredToken.toUpperCase()}
+                                    </Badge>
+                                  )}
+
+                                  {Number(votingSettings.paymentAmount) > 0 && (
+                                    <Badge variant="outline" className="text-xs bg-amber-50 text-amber-700 border-amber-200">
+                                      Payment: {votingSettings.paymentAmount} SUI
+                                    </Badge>
+                                  )}
+
+                                  {showLiveStats && (
+                                    <Badge variant="outline" className="text-xs bg-purple-50 text-purple-700 border-purple-200">
+                                      <BarChart2 className="h-3 w-3 mr-1" />
+                                      Live Results
+                                    </Badge>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          </CardContent>
+                        </Card>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </div>
+              </motion.div>
+
+              {/* Main content area */}
+              <motion.div variants={slideUp} className="flex-1">
+                <TabsContent value="details" className="mt-0">
+                  <Card className="transition-all hover:shadow-md">
+                    <CardHeader>
+                      <CardTitle className="text-2xl">Vote Details</CardTitle>
+                      <CardDescription>Create a new vote with multiple polls</CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-6">
+                      <div className="space-y-2">
+                        <Label htmlFor="title" className="text-base font-medium">
+                          Vote Title <span className="text-red-500">*</span>
+                        </Label>
+                        <Input
+                          id="title"
+                          placeholder="Enter a title for this vote"
+                          value={voteTitle}
+                          onChange={(e) => setVoteTitle(e.target.value)}
+                          className={cn(
+                            "h-12 transition-all focus:scale-[1.01]",
+                            errors.title && "border-red-500 focus-visible:ring-red-500",
+                          )}
+                          required
                         />
-                        <p className="text-sm text-muted-foreground">
-                          Voters can select up to {polls[activePollIndex].maxSelections} option
-                          {polls[activePollIndex].maxSelections !== 1 ? "s" : ""}
-                        </p>
+                      </div>
 
-                        {errors.polls?.[polls[activePollIndex].id]?.maxSelections && (
-                          <p className="text-sm text-red-500">
-                            {errors.polls[polls[activePollIndex].id].maxSelections}
-                          </p>
-                        )}
+                      <div className="space-y-2">
+                        <Label htmlFor="description" className="text-base font-medium">
+                          Vote Description
+                        </Label>
+                        <Textarea
+                          id="description"
+                          placeholder="Provide context or additional information about this vote"
+                          value={voteDescription}
+                          onChange={(e) => setVoteDescription(e.target.value)}
+                          className="min-h-[150px] resize-none transition-all focus:scale-[1.01]"
+                        />
+                      </div>
+                    </CardContent>
+                    <CardFooter className="flex justify-end p-4">
+                      <Button
+                        onClick={() => {
+                          if (!voteTitle.trim().length) {
+                            // Show error but don't proceed
+                            toast.error("Please complete all required fields", {
+                              description: "Vote title is required"
+                            });
+                            return;
+                          }
+
+                          // Otherwise proceed normally
+                          if (isSectionComplete("details")) {
+                            setActiveTab("polls");
+                          } else {
+                            validateForm();
+                          }
+                        }}
+                        className="transition-all hover:scale-105"
+                      >
+                        Continue to Polls
+                        <ArrowRight className="ml-2 h-4 w-4" />
+                      </Button>
+                    </CardFooter>
+                  </Card>
+                </TabsContent>
+
+                <TabsContent value="polls" className="mt-0">
+                  {/* Update the error alert in the polls tab to include role="alert" for accessibility */}
+
+                  <AnimatePresence mode="wait">
+                    {errors.polls && Object.keys(errors.polls).length > 0 && (
+                      <motion.div
+                        initial={{ opacity: 0, y: -10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -10 }}
+                        className="mb-4"
+                      >
+                        <Alert variant="destructive" role="alert">
+                          <AlertCircle className="h-4 w-4" />
+                          <AlertDescription>Please fix the errors in your polls</AlertDescription>
+                        </Alert>
                       </motion.div>
                     )}
+                  </AnimatePresence>
 
-                    {!votingSettings.requireAllPolls && (
-                      <div className="flex items-center justify-between">
-                        <div className="space-y-0.5">
-                          <Label htmlFor={`required-poll-${activePollIndex}`} className="text-base">
-                            Required Poll
-                          </Label>
-                          <p className="text-sm text-muted-foreground">Voters must answer this poll</p>
+                  {polls.length > 0 && (
+                    <Card className="transition-all hover:shadow-md">
+                      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                        <div>
+                          <CardTitle className="text-xl">
+                            Poll {activePollIndex + 1} of {polls.length}
+                          </CardTitle>
+                          <CardDescription>{polls[activePollIndex].title || "Untitled Poll"}</CardDescription>
                         </div>
-                        <Switch
-                          id={`required-poll-${activePollIndex}`}
-                          checked={polls[activePollIndex].isRequired}
-                          onCheckedChange={(checked) => updatePollRequired(activePollIndex, checked)}
-                        />
-                      </div>
-                    )}
-
-                    <Separator />
-
-                    <div className="space-y-4">
-                      <div className="flex items-center justify-between">
-                        <Label className="text-base font-medium">Poll Options</Label>
-                        <span className="text-sm text-muted-foreground">Minimum 2 options required</span>
-                      </div>
-
-                      {errors.polls?.[polls[activePollIndex].id]?.options && (
-                        <p className="text-sm text-red-500">{errors.polls[polls[activePollIndex].id].options}</p>
-                      )}
-
-                      <div className="space-y-3">
-                        {polls[activePollIndex].options.map((option, optionIndex) => (
-                          <motion.div
-                            key={option.id}
-                            className="border rounded-lg p-3"
-                            initial={{ opacity: 0, y: 10 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            transition={{ duration: 0.3 }}
+                        {polls.length > 1 && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => removePoll(activePollIndex)}
+                            className="text-destructive hover:text-destructive/90 hover:bg-destructive/10 transition-all hover:scale-110"
                           >
-                            <div className="flex items-center gap-2">
-                              <div className="w-6 h-6 flex items-center justify-center text-muted-foreground font-medium text-sm border rounded">
-                                {optionIndex + 1}
-                              </div>
-                              <Input
-                                placeholder={`Option ${optionIndex + 1}`}
-                                value={option.text}
-                                onChange={(e) => updateOption(activePollIndex, optionIndex, e.target.value)}
-                                className={cn(
-                                  "h-12 transition-all focus:scale-[1.01]",
-                                  errors.polls?.[polls[activePollIndex].id]?.optionTexts?.[optionIndex] &&
-                                    "border-red-500 focus-visible:ring-red-500",
-                                )}
-                                required
-                              />
-                              {polls[activePollIndex].options.length > 2 && (
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  onClick={() => removeOption(activePollIndex, optionIndex)}
-                                  className="text-destructive hover:text-destructive/90 hover:bg-destructive/10 flex-shrink-0 transition-all hover:scale-110"
-                                >
-                                  <Trash2 className="h-5 w-5" />
-                                </Button>
-                              )}
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        )}
+                      </CardHeader>
+                      <CardContent className="pt-4 space-y-6">
+                        <div className="space-y-2">
+                          <Label htmlFor={`poll-title-${activePollIndex}`} className="text-base font-medium">
+                            Poll Title <span className="text-red-500">*</span>
+                          </Label>
+                          <Input
+                            id={`poll-title-${activePollIndex}`}
+                            placeholder="Enter poll question"
+                            value={polls[activePollIndex].title}
+                            onChange={(e) => updatePollTitle(activePollIndex, e.target.value)}
+                            className={cn(
+                              "h-12 transition-all focus:scale-[1.01]",
+                              errors.polls?.[polls[activePollIndex].id]?.title &&
+                              "border-red-500 focus-visible:ring-red-500",
+                            )}
+                            required
+                          />
+                          {errors.polls?.[polls[activePollIndex].id]?.title && (
+                            <p className="text-sm text-red-500 mt-1">{errors.polls[polls[activePollIndex].id].title}</p>
+                          )}
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label htmlFor={`poll-description-${activePollIndex}`} className="text-base font-medium">
+                            Poll Description (Optional)
+                          </Label>
+                          <Textarea
+                            id={`poll-description-${activePollIndex}`}
+                            placeholder="Provide additional context for this poll"
+                            value={polls[activePollIndex].description}
+                            onChange={(e) => updatePollDescription(activePollIndex, e.target.value)}
+                            className="min-h-[80px] resize-none transition-all focus:scale-[1.01]"
+                          />
+                        </div>
+
+                        <div className="space-y-4">
+                          <Label className="text-base font-medium">Selection Type</Label>
+                          <RadioGroup
+                            value={polls[activePollIndex].isMultiSelect ? "multi" : "single"}
+                            onValueChange={(value) => updatePollType(activePollIndex, value === "multi")}
+                            className="flex flex-col sm:flex-row gap-4"
+                          >
+                            <div className="flex items-center space-x-2">
+                              <RadioGroupItem value="single" id={`single-select-${activePollIndex}`} />
+                              <Label htmlFor={`single-select-${activePollIndex}`}>Single Select (Radio Buttons)</Label>
                             </div>
-                            {errors.polls?.[polls[activePollIndex].id]?.optionTexts?.[optionIndex] && (
-                              <p className="text-sm text-red-500 mt-1">
-                                {errors.polls[polls[activePollIndex].id].optionTexts?.[optionIndex]}
+                            <div className="flex items-center space-x-2">
+                              <RadioGroupItem value="multi" id={`multi-select-${activePollIndex}`} />
+                              <Label htmlFor={`multi-select-${activePollIndex}`}>Multi Select (Checkboxes)</Label>
+                            </div>
+                          </RadioGroup>
+                        </div>
+
+                        {polls[activePollIndex].isMultiSelect && (
+                          <motion.div
+                            initial={{ opacity: 0, height: 0 }}
+                            animate={{ opacity: 1, height: "auto" }}
+                            exit={{ opacity: 0, height: 0 }}
+                            className="space-y-4 p-4 bg-muted/30 rounded-lg"
+                          >
+                            <div className="flex items-center justify-between">
+                              <Label htmlFor={`max-selections-${activePollIndex}`} className="text-base font-medium">
+                                Maximum Selections Allowed
+                              </Label>
+                              <span className="text-sm font-medium">
+                                {polls[activePollIndex].maxSelections} of {polls[activePollIndex].options.length}
+                              </span>
+                            </div>
+                            <Slider
+                              id={`max-selections-${activePollIndex}`}
+                              min={1}
+                              max={Math.max(1, polls[activePollIndex].options.length - 1)}
+                              step={1}
+                              value={[polls[activePollIndex].maxSelections]}
+                              onValueChange={(value) => updateMaxSelections(activePollIndex, value[0])}
+                            />
+                            <p className="text-sm text-muted-foreground">
+                              Voters can select up to {polls[activePollIndex].maxSelections} option
+                              {polls[activePollIndex].maxSelections !== 1 ? "s" : ""}
+                            </p>
+
+                            {errors.polls?.[polls[activePollIndex].id]?.maxSelections && (
+                              <p className="text-sm text-red-500">
+                                {errors.polls[polls[activePollIndex].id].maxSelections}
                               </p>
                             )}
-
-{option.mediaUrl ? (
-            <div className="relative mt-2 rounded-md overflow-hidden">
-              <img
-                src={option.mediaUrl}
-                alt={`Media for ${option.text || `Option ${optionIndex + 1}`}`}
-                className="w-full h-auto max-h-[200px] object-contain rounded-md"
-              />
-              <Button
-                variant="destructive"
-                size="sm"
-                className="absolute top-2 right-2 transition-all hover:scale-105"
-                onClick={() => removeMediaFromOption(mediaHandlers, activePollIndex, optionIndex)}
-              >
-                Remove Media
-              </Button>
-              {option.fileId && mediaHandlers.uploadProgress[option.fileId] > 0 && mediaHandlers.uploadProgress[option.fileId] < 100 && (
-                <div className="absolute inset-0 bg-background/80 flex flex-col items-center justify-center">
-                  <Progress value={mediaHandlers.uploadProgress[option.fileId]} className="w-3/4 h-2" />
-                  <p className="text-xs mt-2">{mediaHandlers.uploadProgress[option.fileId]}% ready</p>
-                </div>
-              )}
-            </div>
-          ) : (
-            <Button
-              variant="outline"
-              size="sm"
-              className="mt-2 gap-2 transition-all hover:scale-105"
-              onClick={() => addMediaToOption(mediaHandlers, activePollIndex, optionIndex)}
-            >
-              <ImageIcon className="h-4 w-4" />
-              Add Media
-            </Button>
-          )}
-          
-                          </motion.div>
-                        ))}
-                      </div>
-
-                      <Button
-                        variant="outline"
-                        onClick={() => addOption(activePollIndex)}
-                        className="w-full h-12 border-dashed transition-all hover:bg-muted/50"
-                      >
-                        <PlusCircle className="mr-2 h-4 w-4" />
-                        Add Option
-                      </Button>
-                    </div>
-                  </CardContent>
-                  <CardFooter className="flex justify-between p-4">
-                    <div className="flex items-center gap-2">
-                      <Button
-                        variant="outline"
-                        size="icon"
-                        className="rounded-full h-8 w-8 transition-all hover:scale-110"
-                        onClick={() => {
-                          if (activePollIndex > 0) {
-                            setActivePollIndex(activePollIndex - 1)
-                          }
-                        }}
-                        disabled={activePollIndex === 0}
-                        title="Previous poll"
-                      >
-                        <ChevronLeft className="h-4 w-4" />
-                        <span className="sr-only">Previous poll</span>
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="icon"
-                        className="rounded-full h-8 w-8 transition-all hover:scale-110"
-                        onClick={() => {
-                          if (activePollIndex < polls.length - 1) {
-                            setActivePollIndex(activePollIndex + 1)
-                          }
-                        }}
-                        disabled={activePollIndex === polls.length - 1}
-                        title="Next poll"
-                      >
-                        <ChevronRight className="h-4 w-4" />
-                        <span className="sr-only">Next poll</span>
-                      </Button>
-                      <span className="text-xs text-muted-foreground ml-1">Navigate between polls</span>
-                    </div>
-                    <Button onClick={() => {
-                      if (isSectionComplete("polls")) {
-                        setActiveTab("settings");
-                      } else {
-                        validateForm();
-                        toast.error("Please complete all poll options", {
-                          description: "All polls must have a title and at least 2 options with text"
-                        });
-                      }
-                    }} className="gap-2 transition-all hover:scale-105">
-                      Continue
-                      <ArrowRight className="h-4 w-4" />
-                    </Button>
-                  </CardFooter>
-                </Card>
-              )}
-            </TabsContent>
-
-            <TabsContent value="settings" className="mt-0">
-              <Card className="transition-all hover:shadow-md">
-                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                  <div>
-                    <CardTitle className="text-2xl">Voting Settings</CardTitle>
-                    <CardDescription>Configure how voting works for this poll</CardDescription>
-                  </div>
-                  <div className="bg-primary/10 p-2 rounded-full">
-                    <Settings className="h-5 w-5 text-primary" />
-                  </div>
-                </CardHeader>
-                <CardContent className="space-y-6 pt-6">
-                  <div className="grid gap-6 md:grid-cols-2">
-                    {/* Voting Timeframe */}
-                    <div className="md:col-span-2 space-y-4">
-                      <Label className="text-base font-medium flex items-center gap-2">
-                        <Calendar className="h-4 w-4" />
-                        Voting Timeframe <span className="text-red-500">*</span>
-                      </Label>
-
-                      <AnimatePresence mode="wait">
-                        {errors.votingSettings?.dates && (
-                          <motion.div
-                            initial={{ opacity: 0, y: -10 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            exit={{ opacity: 0, y: -10 }}
-                          >
-                            <p className="text-sm text-red-500">{errors.votingSettings.dates}</p>
                           </motion.div>
                         )}
-                      </AnimatePresence>
 
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                      <DateTimePicker
-        id="start-date"
-        value={startDate}
-        onChange={(date) => {
-          setStartDate(date);
-          setVotingSettings(prev => ({
-            ...prev,
-            startDate: date
-          }));
-        }}
-        label="Start date and time"
-      />
-      
-      <DateTimePicker
-        id="end-date"
-        value={endDate}
-        onChange={(date) => {
-          setEndDate(date);
-          setVotingSettings(prev => ({
-            ...prev,
-            endDate: date
-          }));
-        }}
-        label="End date and time"
-      />
-                      </div>
-                    </div>
+                        {!votingSettings.requireAllPolls && (
+                          <div className="flex items-center justify-between">
+                            <div className="space-y-0.5">
+                              <Label htmlFor={`required-poll-${activePollIndex}`} className="text-base">
+                                Required Poll
+                              </Label>
+                              <p className="text-sm text-muted-foreground">Voters must answer this poll</p>
+                            </div>
+                            <Switch
+                              id={`required-poll-${activePollIndex}`}
+                              checked={polls[activePollIndex].isRequired}
+                              onCheckedChange={(checked) => updatePollRequired(activePollIndex, checked)}
+                            />
+                          </div>
+                        )}
 
-                    {/* Token Requirements */}
-                    <div className="space-y-4 p-4 bg-muted/30 rounded-lg">
-                      <Label className="text-base font-medium flex items-center gap-2">
-                        <Wallet className="h-4 w-4" />
-                        Token Requirements
-                      </Label>
-                      <div className="space-y-4">
-                        <TokenSelector
-                          value={votingSettings.requiredToken}
-                          onValueChange={(value) => {
-                            setVotingSettings({
-                              ...votingSettings,
-                              requiredToken: value,
-                              // Reset token weighted settings if no token is required
-                              isTokenWeighted: value === "none" ? false : votingSettings.isTokenWeighted,
-                            })
-                          }}
-                          onAmountChange={(amount) => setVotingSettings({ ...votingSettings, requiredAmount: amount })}
-                          amount={votingSettings.requiredAmount}
-                          error={errors.votingSettings?.token}
-                          required={false}
-                          // Token weighted voting props
-                          enableTokenWeighted={votingSettings.isTokenWeighted}
-                          onTokenWeightedChange={(enabled) => {
-                            setVotingSettings({
-                              ...votingSettings,
-                              isTokenWeighted: enabled,
-                            })
-                          }}
-                          tokenWeight={votingSettings.tokenWeight}
-                          onTokenWeightChange={(weight) => {
-                            setVotingSettings({
-                              ...votingSettings,
-                              tokenWeight: weight,
-                            })
-                          }}
-                        />
-                        
-                        {/* Separate whitelist section */}
-                        <div className="mt-8 pt-6 border-t">
-                          <h3 className="text-base font-medium mb-4">Voter Whitelist</h3>
-                          <WhitelistSelector
-                            enableWhitelist={votingSettings.enableWhitelist}
-                            onWhitelistChange={(enabled) => {
-                              setVotingSettings({
-                                ...votingSettings,
-                                enableWhitelist: enabled,
-                              })
-                            }}
-                            whitelistAddresses={votingSettings.whitelistAddresses}
-                            onWhitelistAddressesChange={(addresses) => {
-                              setVotingSettings({
-                                ...votingSettings,
-                                whitelistAddresses: addresses,
-                              })
-                            }}
-                          />
+                        <Separator />
+
+                        <div className="space-y-4">
+                          <div className="flex items-center justify-between">
+                            <Label className="text-base font-medium">Poll Options</Label>
+                            <span className="text-sm text-muted-foreground">Minimum 2 options required</span>
+                          </div>
+
+                          {errors.polls?.[polls[activePollIndex].id]?.options && (
+                            <p className="text-sm text-red-500">{errors.polls[polls[activePollIndex].id].options}</p>
+                          )}
+
+                          <div className="space-y-3">
+                            {polls[activePollIndex].options.map((option, optionIndex) => (
+                              <motion.div
+                                key={option.id}
+                                className="border rounded-lg p-3"
+                                initial={{ opacity: 0, y: 10 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                transition={{ duration: 0.3 }}
+                              >
+                                <div className="flex items-center gap-2">
+                                  <div className="w-6 h-6 flex items-center justify-center text-muted-foreground font-medium text-sm border rounded">
+                                    {optionIndex + 1}
+                                  </div>
+                                  <Input
+                                    placeholder={`Option ${optionIndex + 1}`}
+                                    value={option.text}
+                                    onChange={(e) => updateOption(activePollIndex, optionIndex, e.target.value)}
+                                    className={cn(
+                                      "h-12 transition-all focus:scale-[1.01]",
+                                      errors.polls?.[polls[activePollIndex].id]?.optionTexts?.[optionIndex] &&
+                                      "border-red-500 focus-visible:ring-red-500",
+                                    )}
+                                    required
+                                  />
+                                  {polls[activePollIndex].options.length > 2 && (
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      onClick={() => removeOption(activePollIndex, optionIndex)}
+                                      className="text-destructive hover:text-destructive/90 hover:bg-destructive/10 flex-shrink-0 transition-all hover:scale-110"
+                                    >
+                                      <Trash2 className="h-5 w-5" />
+                                    </Button>
+                                  )}
+                                </div>
+                                {errors.polls?.[polls[activePollIndex].id]?.optionTexts?.[optionIndex] && (
+                                  <p className="text-sm text-red-500 mt-1">
+                                    {errors.polls[polls[activePollIndex].id].optionTexts?.[optionIndex]}
+                                  </p>
+                                )}
+
+                                <div className="mt-2">
+                  
+                                  {option.mediaUrl ? (
+                                    <div className="flex items-center gap-3">
+                                      <div className="relative group h-20 w-20 rounded-md border overflow-hidden bg-muted">
+                                        {/* Add loading state */}
+                                        {option.mediaUrl === 'loading' && (
+                                          <div className="absolute inset-0 flex items-center justify-center bg-background/50 z-10">
+                                            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                                          </div>
+                                        )}
+                                        {option.mediaUrl && option.mediaUrl !== 'loading' && (
+                                          <img
+                                            src={option.mediaUrl}
+                                            alt={`Option ${optionIndex + 1} media`}
+                                            className="h-full w-full object-cover"
+                                            onError={(e) => {
+                                              // Handle image loading errors
+                                              console.error("Image failed to load:", option.mediaUrl);
+                                              e.currentTarget.src = "/placeholder.svg";
+                                            }}
+                                          />
+                                        )}
+
+                                        <Button
+                                          type="button"
+                                          variant="destructive"
+                                          size="icon"
+                                          className="absolute top-1 right-1 h-5 w-5 rounded-full opacity-0 group-hover:opacity-100 transition-opacity z-20"
+                                          onClick={() => mediaHandlers && removeMediaFromOption(mediaHandlers, activePollIndex, optionIndex)}
+                                        >
+                                          <X className="h-3 w-3" />
+                                        </Button>
+
+                                        {option.fileId && mediaHandlers.uploadProgress[option.fileId] > 0 && mediaHandlers.uploadProgress[option.fileId] < 100 && (
+                                          <div className="absolute inset-0 bg-background/80 flex flex-col items-center justify-center">
+                                            <Progress value={mediaHandlers.uploadProgress[option.fileId]} className="w-3/4 h-2" />
+                                            <p className="text-xs mt-2">{mediaHandlers.uploadProgress[option.fileId]}% ready</p>
+                                          </div>
+                                        )}
+                                      </div>
+                                      <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="sm"
+                                        className="h-8 text-xs"
+                                        onClick={() => {
+                                          // Create a file input and trigger it
+                                          const input = document.createElement('input');
+                                          input.type = 'file';
+                                          input.accept = 'image/*';
+                                          input.onchange = (e) => {
+                                            const file = (e.target as HTMLInputElement).files?.[0];
+                                            if (file && mediaHandlers) {
+                                              addMediaToOption(mediaHandlers, activePollIndex, optionIndex, file);
+                                            }
+                                          };
+                                          input.click();
+                                        }}
+                                      >
+                                        Change Image
+                                      </Button>
+                                    </div>
+                                  ) : (
+                                    <div className="flex items-center">
+                                      <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="sm"
+                                        className="h-9 text-xs flex items-center gap-1.5"
+                                        onClick={() => {
+                                          // Create a file input and trigger it
+                                          const input = document.createElement('input');
+                                          input.type = 'file';
+                                          input.accept = 'image/*';
+                                          input.onchange = (e) => {
+                                            const file = (e.target as HTMLInputElement).files?.[0];
+                                            if (file && mediaHandlers) {
+                                              addMediaToOption(mediaHandlers, activePollIndex, optionIndex, file);
+                                            }
+                                          };
+                                          input.click();
+                                        }}
+                                      >
+                                        <ImageIcon className="h-3.5 w-3.5" />
+                                        Add Image
+                                      </Button>
+                                      <p className="text-xs text-muted-foreground ml-3">JPG, PNG, GIF (max 5MB)</p>
+                                    </div>
+                                  )}
+                                </div>
+
+                              </motion.div>
+                            ))}
+                          </div>
+
+                          <Button
+                            variant="outline"
+                            onClick={() => addOption(activePollIndex)}
+                            className="w-full h-12 border-dashed transition-all hover:bg-muted/50"
+                          >
+                            <PlusCircle className="mr-2 h-4 w-4" />
+                            Add Option
+                          </Button>
                         </div>
-                      </div>
-                    </div>
+                      </CardContent>
+                      <CardFooter className="flex justify-between p-4">
+                        <div className="flex items-center gap-2">
+                          <Button
+                            variant="outline"
+                            size="icon"
+                            className="rounded-full h-8 w-8 transition-all hover:scale-110"
+                            onClick={() => {
+                              if (activePollIndex > 0) {
+                                setActivePollIndex(activePollIndex - 1)
+                              }
+                            }}
+                            disabled={activePollIndex === 0}
+                            title="Previous poll"
+                          >
+                            <ChevronLeft className="h-4 w-4" />
+                            <span className="sr-only">Previous poll</span>
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="icon"
+                            className="rounded-full h-8 w-8 transition-all hover:scale-110"
+                            onClick={() => {
+                              if (activePollIndex < polls.length - 1) {
+                                setActivePollIndex(activePollIndex + 1)
+                              }
+                            }}
+                            disabled={activePollIndex === polls.length - 1}
+                            title="Next poll"
+                          >
+                            <ChevronRight className="h-4 w-4" />
+                            <span className="sr-only">Next poll</span>
+                          </Button>
+                          <span className="text-xs text-muted-foreground ml-1">Navigate between polls</span>
+                        </div>
+                        <Button onClick={() => {
+                          if (isSectionComplete("polls")) {
+                            setActiveTab("settings");
+                          } else {
+                            validateForm();
+                            toast.error("Please complete all poll options", {
+                              description: "All polls must have a title and at least 2 options with text"
+                            });
+                          }
+                        }} className="gap-2 transition-all hover:scale-105">
+                          Continue
+                          <ArrowRight className="h-4 w-4" />
+                        </Button>
+                      </CardFooter>
+                    </Card>
+                  )}
+                </TabsContent>
 
-                    {/* Payment Amount */}
-                    <div className="space-y-4 p-4 bg-muted/30 rounded-lg">
-                      <Label className="text-base font-medium flex items-center gap-2">
-                        <Coins className="h-4 w-4" />
-                        Payment Amount
-                      </Label>
+                <TabsContent value="settings" className="mt-0">
+                  <Card className="transition-all hover:shadow-md">
+                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                       <div>
-                        <Label htmlFor="payment-amount" className="text-sm">
-                          Amount to Pay by Voter
-                        </Label>
-                        <div className="flex items-center">
-                          <Input
-                            id="payment-amount"
-                            type="number"
-                            min="0"
-                            step="0.01"
-                            placeholder="0.00"
-                            value={votingSettings.paymentAmount}
-                            onChange={(e) => setVotingSettings({ ...votingSettings, paymentAmount: e.target.value })}
-                            className={cn(
-                              "h-10 transition-all focus:scale-[1.01]",
-                              errors.votingSettings?.amount && "border-red-500 focus-visible:ring-red-500",
+                        <CardTitle className="text-2xl">Voting Settings</CardTitle>
+                        <CardDescription>Configure how voting works for this poll</CardDescription>
+                      </div>
+                      <div className="bg-primary/10 p-2 rounded-full">
+                        <Settings className="h-5 w-5 text-primary" />
+                      </div>
+                    </CardHeader>
+                    <CardContent className="space-y-6 pt-6">
+                      <div className="grid gap-6 md:grid-cols-2">
+                        {/* Voting Timeframe */}
+                        <div className="md:col-span-2 space-y-4">
+                          <Label className="text-base font-medium flex items-center gap-2">
+                            <Calendar className="h-4 w-4" />
+                            Voting Timeframe <span className="text-red-500">*</span>
+                          </Label>
+
+                          <AnimatePresence mode="wait">
+                            {errors.votingSettings?.dates && (
+                              <motion.div
+                                initial={{ opacity: 0, y: -10 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                exit={{ opacity: 0, y: -10 }}
+                              >
+                                <p className="text-sm text-red-500">{errors.votingSettings.dates}</p>
+                              </motion.div>
                             )}
-                          />
-                          <div className="ml-2 text-sm font-medium">
-                            <Coins className="h-4 w-4" />
+                          </AnimatePresence>
+
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <DateTimePicker
+                              id="start-date"
+                              value={startDate}
+                              onChange={(date) => {
+                                // Ensure date is in the future
+                                const now = new Date();
+                                const validDate = date && date > now ? date : new Date(now.getTime() + 10 * 60 * 1000);
+
+                                setStartDate(validDate);
+                                setVotingSettings(prev => ({
+                                  ...prev,
+                                  startDate: validDate
+                                }));
+
+                                // If end date is now before or equal to start date, update it too
+                                if (!isAfter(endDate, validDate)) {
+                                  const newEndDate = new Date(validDate.getTime() + 24 * 60 * 60 * 1000); // 1 day after
+                                  setEndDate(newEndDate);
+                                  setVotingSettings(prev => ({
+                                    ...prev,
+                                    endDate: newEndDate
+                                  }));
+                                }
+                              }}
+                              label="Start date and time"
+                            />
+
+                            <DateTimePicker
+                              id="end-date"
+                              value={endDate}
+                              onChange={(date) => {
+                                // Ensure date is after start date
+                                const validDate = date && isAfter(date, startDate) ? date : new Date(startDate.getTime() + 24 * 60 * 60 * 1000);
+
+                                setEndDate(validDate);
+                                setVotingSettings(prev => ({
+                                  ...prev,
+                                  endDate: validDate
+                                }));
+                              }}
+                              label="End date and time"
+                            />
                           </div>
                         </div>
-                        <p className="text-xs text-muted-foreground mt-1">
-                          Amount in SUI that voters need to pay to participate (0 for free voting)
-                        </p>
-                        {errors.votingSettings?.amount && (
-                          <p className="text-sm text-red-500 mt-1">{errors.votingSettings.amount}</p>
+
+                        {/* Token Requirements */}
+                        <div className="space-y-4 p-4 bg-muted/30 rounded-lg">
+                          <Label className="text-base font-medium flex items-center gap-2">
+                            <Wallet className="h-4 w-4" />
+                            Token Requirements
+                          </Label>
+                          <div className="space-y-4">
+                            <TokenSelector
+                              value={votingSettings.requiredToken}
+                              onValueChange={(value) => {
+                                setVotingSettings({
+                                  ...votingSettings,
+                                  requiredToken: value,
+                                  // Reset token weighted settings if no token is required
+                                  isTokenWeighted: value === "none" ? false : votingSettings.isTokenWeighted,
+                                })
+                              }}
+                              onAmountChange={(amount) => setVotingSettings({ ...votingSettings, requiredAmount: amount })}
+                              amount={votingSettings.requiredAmount}
+                              error={errors.votingSettings?.token}
+                              required={false}
+                              // Token weighted voting props
+                              enableTokenWeighted={votingSettings.isTokenWeighted}
+                              onTokenWeightedChange={(enabled) => {
+                                setVotingSettings({
+                                  ...votingSettings,
+                                  isTokenWeighted: enabled,
+                                })
+                              }}
+                              tokenWeight={votingSettings.tokenWeight}
+                              onTokenWeightChange={(weight) => {
+                                setVotingSettings({
+                                  ...votingSettings,
+                                  tokenWeight: weight,
+                                })
+                              }}
+                            />
+
+                            {/* Separate whitelist section */}
+                            <div className="mt-8 pt-6 border-t">
+                              <h3 className="text-base font-medium mb-4">Voter Whitelist</h3>
+                              <WhitelistSelector
+                                enableWhitelist={votingSettings.enableWhitelist}
+                                onWhitelistChange={(enabled) => {
+                                  setVotingSettings({
+                                    ...votingSettings,
+                                    enableWhitelist: enabled,
+                                  })
+                                }}
+                                whitelistAddresses={votingSettings.whitelistAddresses}
+                                onWhitelistAddressesChange={(addresses) => {
+                                  setVotingSettings({
+                                    ...votingSettings,
+                                    whitelistAddresses: addresses,
+                                  })
+                                }}
+                              />
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Payment Amount */}
+                        <div className="space-y-4 p-4 bg-muted/30 rounded-lg">
+                          <Label className="text-base font-medium flex items-center gap-2">
+                            <Coins className="h-4 w-4" />
+                            Payment Amount
+                          </Label>
+                          <div>
+                            <Label htmlFor="payment-amount" className="text-sm">
+                              Amount to Pay by Voter
+                            </Label>
+                            <div className="flex items-center">
+                              <Input
+                                id="payment-amount"
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                placeholder="0.00"
+                                value={votingSettings.paymentAmount}
+                                onChange={(e) => setVotingSettings({ ...votingSettings, paymentAmount: e.target.value })}
+                                className={cn(
+                                  "h-10 transition-all focus:scale-[1.01]",
+                                  errors.votingSettings?.amount && "border-red-500 focus-visible:ring-red-500",
+                                )}
+                              />
+                              <div className="ml-2 text-sm font-medium">
+                                <Coins className="h-4 w-4" />
+                              </div>
+                            </div>
+                            <p className="text-xs text-muted-foreground mt-1">
+                              Amount in SUI that voters need to pay to participate (0 for free voting)
+                            </p>
+                            {errors.votingSettings?.amount && (
+                              <p className="text-sm text-red-500 mt-1">{errors.votingSettings.amount}</p>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* General Settings */}
+                        <div className="md:col-span-2 space-y-6 p-4 bg-muted/30 rounded-lg">
+                          <Label className="text-base font-medium flex items-center gap-2">
+                            <Settings className="h-4 w-4" />
+                            General Settings
+                          </Label>
+
+                          <div className="flex items-center justify-between">
+                            <div className="space-y-0.5">
+                              <Label htmlFor="require-all-polls" className="text-base">
+                                Require voters to answer all polls
+                              </Label>
+                              <p className="text-sm text-muted-foreground">Voters must complete every poll to submit</p>
+                            </div>
+                            <Switch
+                              id="require-all-polls"
+                              checked={votingSettings.requireAllPolls}
+                              onCheckedChange={(checked) => {
+                                setVotingSettings({ ...votingSettings, requireAllPolls: checked })
+                                // If requiring all polls, set all polls to required
+                                if (checked) {
+                                  const newPolls = [...polls]
+                                  newPolls.forEach((poll) => (poll.isRequired = true))
+                                  setPolls(newPolls)
+                                }
+                              }}
+                            />
+                          </div>
+
+                          <div className="flex items-center justify-between">
+                            <div className="space-y-0.5">
+                              <Label htmlFor="live-stats" className="text-base">
+                                Show live voting statistics
+                              </Label>
+                              <p className="text-sm text-muted-foreground">Voters can see results before the vote closes</p>
+                            </div>
+                            <Switch
+                              id="live-stats"
+                              checked={showLiveStats}
+                              onCheckedChange={(checked) => {
+                                setShowLiveStats(checked)
+                                setVotingSettings({ ...votingSettings, showLiveStats: checked })
+                              }}
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    </CardContent>
+                    <CardFooter className="flex justify-between p-4">
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        className="rounded-full h-8 w-8 transition-all hover:scale-110"
+                        onClick={() => {
+                          if (isSectionComplete("settings")) {
+                            setActiveTab("polls");
+                          } else {
+                            validateForm();
+                            toast.error("Please complete all settings", {
+                              description: "Ensure all voting settings are properly configured"
+                            });
+                          }
+                        }}
+                      >
+                        <ChevronLeft className="h-4 w-4" />
+                      </Button>
+                      {/* Update your submit button to use the media handlers */}
+                      {/* Find the button that calls handleSubmit and replace with: */}
+                      <Button
+                        size="lg"
+                        className="gap-2 transition-all hover:scale-105"
+                        onClick={() => handleSubmit(mediaHandlers)}
+                        disabled={txStatus !== TransactionStatus.IDLE && txStatus !== TransactionStatus.ERROR}
+                      >
+                        {txStatus !== TransactionStatus.IDLE && txStatus !== TransactionStatus.ERROR ? (
+                          <>
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                            Creating Vote...
+                          </>
+                        ) : (
+                          <>
+                            Create Vote
+                            <ArrowRight className="h-4 w-4" />
+                          </>
                         )}
-                      </div>
-                    </div>
+                      </Button>
+                    </CardFooter>
+                  </Card>
 
-                    {/* General Settings */}
-                    <div className="md:col-span-2 space-y-6 p-4 bg-muted/30 rounded-lg">
-                      <Label className="text-base font-medium flex items-center gap-2">
-                        <Settings className="h-4 w-4" />
-                        General Settings
-                      </Label>
+                  {/* Preview Card - Mobile Only */}
+                  <Card className="mt-6 border-dashed transition-all hover:shadow-md md:hidden">
+                    <CardHeader>
+                      <CardTitle className="text-lg">Vote Preview</CardTitle>
+                      <CardDescription>How your vote will appear to participants</CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="rounded-lg border p-4 bg-muted/20">
+                        <div className="flex flex-col gap-2">
+                          <h3 className="font-semibold text-lg">{voteTitle || "Untitled Vote"}</h3>
+                          <p className="text-sm text-muted-foreground">{voteDescription || "No description provided"}</p>
 
-                      <div className="flex items-center justify-between">
-                        <div className="space-y-0.5">
-                          <Label htmlFor="require-all-polls" className="text-base">
-                            Require voters to answer all polls
-                          </Label>
-                          <p className="text-sm text-muted-foreground">Voters must complete every poll to submit</p>
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">
+                              {polls.length} {polls.length === 1 ? "Poll" : "Polls"}
+                            </Badge>
+
+                            {votingSettings.requiredToken !== "none" && (
+                              <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">
+                                Requires {votingSettings.requiredToken.length > 10
+                                  ? `${votingSettings.requiredToken.substring(0, 6)}...${votingSettings.requiredToken.substring(votingSettings.requiredToken.length - 4)}`
+                                  : votingSettings.requiredToken.toUpperCase()}
+                                {votingSettings.isTokenWeighted && " (Weighted)"}
+                              </Badge>
+                            )}
+
+                            {votingSettings.isTokenWeighted && votingSettings.requiredToken !== "none" && (
+                              <Badge variant="outline" className="bg-indigo-50 text-indigo-700 border-indigo-200">
+                                {votingSettings.tokenWeight} tokens = 1 vote
+                              </Badge>
+                            )}
+
+                            {Number(votingSettings.paymentAmount) > 0 && (
+                              <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200">
+                                Payment: {votingSettings.paymentAmount} SUI
+                              </Badge>
+                            )}
+
+                            {showLiveStats && (
+                              <Badge variant="outline" className="bg-purple-50 text-purple-700 border-purple-200">
+                                <BarChart2 className="h-3 w-3 mr-1" />
+                                Live Results
+                              </Badge>
+                            )}
+                          </div>
                         </div>
-                        <Switch
-                          id="require-all-polls"
-                          checked={votingSettings.requireAllPolls}
-                          onCheckedChange={(checked) => {
-                            setVotingSettings({ ...votingSettings, requireAllPolls: checked })
-                            // If requiring all polls, set all polls to required
-                            if (checked) {
-                              const newPolls = [...polls]
-                              newPolls.forEach((poll) => (poll.isRequired = true))
-                              setPolls(newPolls)
-                            }
-                          }}
-                        />
                       </div>
+                    </CardContent>
+                  </Card>
+                </TabsContent>
+              </motion.div>
+            </div>
+          </Tabs>
 
-                      <div className="flex items-center justify-between">
-                        <div className="space-y-0.5">
-                          <Label htmlFor="live-stats" className="text-base">
-                            Show live voting statistics
-                          </Label>
-                          <p className="text-sm text-muted-foreground">Voters can see results before the vote closes</p>
-                        </div>
-                        <Switch
-                          id="live-stats"
-                          checked={showLiveStats}
-                          onCheckedChange={(checked) => {
-                            setShowLiveStats(checked)
-                            setVotingSettings({ ...votingSettings, showLiveStats: checked })
-                          }}
-                        />
-                      </div>
+          {/* Transaction Status Dialog */}
+          <Dialog open={txStatusDialogOpen} onOpenChange={setTxStatusDialogOpen}>
+            <DialogContent className="sm:max-w-md">
+              <DialogHeader>
+                <DialogTitle>
+                  {txStatus === TransactionStatus.SUCCESS
+                    ? "Vote Created Successfully!"
+                    : txStatus === TransactionStatus.ERROR
+                      ? "Error Creating Vote"
+                      : "Creating Vote"}
+                </DialogTitle>
+                <DialogDescription>
+                  {txStatus === TransactionStatus.SUCCESS
+                    ? "Your vote has been published to the blockchain."
+                    : txStatus === TransactionStatus.ERROR
+                      ? "There was an error creating your vote."
+                      : "Please wait while we create your vote on the blockchain."}
+                </DialogDescription>
+              </DialogHeader>
+
+              <div className="space-y-4 py-4">
+                <Progress value={txProgress} className="h-2 w-full" />
+
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="flex items-center gap-2">
+                      {txStatus === TransactionStatus.BUILDING || txStatus === TransactionStatus.IDLE ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Check className="h-4 w-4 text-green-500" />
+                      )}
+                      Building Transaction
+                    </span>
+                    <span className="text-muted-foreground">Step 1/4</span>
+                  </div>
+
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="flex items-center gap-2">
+                      {txStatus === TransactionStatus.SIGNING ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : txStatus > TransactionStatus.SIGNING ? (
+                        <Check className="h-4 w-4 text-green-500" />
+                      ) : (
+                        <div className="h-4 w-4" />
+                      )}
+                      Signing Transaction
+                    </span>
+                    <span className="text-muted-foreground">Step 2/4</span>
+                  </div>
+
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="flex items-center gap-2">
+                      {txStatus === TransactionStatus.EXECUTING ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : txStatus > TransactionStatus.EXECUTING ? (
+                        <Check className="h-4 w-4 text-green-500" />
+                      ) : (
+                        <div className="h-4 w-4" />
+                      )}
+                      Executing Transaction
+                    </span>
+                    <span className="text-muted-foreground">Step 3/4</span>
+                  </div>
+
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="flex items-center gap-2">
+                      {txStatus === TransactionStatus.CONFIRMING ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : txStatus > TransactionStatus.CONFIRMING ? (
+                        <Check className="h-4 w-4 text-green-500" />
+                      ) : (
+                        <div className="h-4 w-4" />
+                      )}
+                      Confirming Transaction
+                    </span>
+                    <span className="text-muted-foreground">Step 4/4</span>
+                  </div>
+                </div>
+
+                {txStatus === TransactionStatus.ERROR && (
+                  <Alert variant="destructive">
+                    <AlertCircle className="h-4 w-4" />
+                    <AlertTitle>Error</AlertTitle>
+                    <AlertDescription>{transactionError}</AlertDescription>
+                  </Alert>
+                )}
+
+                {txDigest && (
+                  <div className="pt-2">
+                    <Label className="text-sm">Transaction ID</Label>
+                    <div className="flex items-center gap-2 mt-1">
+                      <code className="bg-muted p-2 rounded text-xs w-full overflow-x-auto">{txDigest}</code>
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        className="flex-shrink-0"
+                        onClick={() => window.open(getTransactionExplorerUrl(), "_blank")}
+                      >
+                        <ExternalLink className="h-4 w-4" />
+                      </Button>
                     </div>
                   </div>
-                </CardContent>
-                <CardFooter className="flex justify-between p-4">
+                )}
+              </div>
+
+              <DialogFooter className="sm:justify-between">
+                {txStatus === TransactionStatus.ERROR ? (
                   <Button
-                    variant="outline"
-                    size="icon"
-                    className="rounded-full h-8 w-8 transition-all hover:scale-110"
+                    variant="default"
                     onClick={() => {
-                      if (isSectionComplete("settings")) {
-                        setActiveTab("polls");
-                      } else {
-                        validateForm();
-                        toast.error("Please complete all settings", {
-                          description: "Ensure all voting settings are properly configured"
-                        });
-                      }
+                      setTxStatusDialogOpen(false)
+                      setTxStatus(TransactionStatus.IDLE)
                     }}
                   >
-                    <ChevronLeft className="h-4 w-4" />
+                    Try Again
                   </Button>
-                  {/* Update your submit button to use the media handlers */}
-          {/* Find the button that calls handleSubmit and replace with: */}
-          <Button 
-            size="lg" 
-            className="gap-2 transition-all hover:scale-105" 
-            onClick={() => handleSubmit(mediaHandlers)}
-            disabled={txStatus !== TransactionStatus.IDLE && txStatus !== TransactionStatus.ERROR}
-          >
-            {txStatus !== TransactionStatus.IDLE && txStatus !== TransactionStatus.ERROR ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Creating Vote...
-              </>
-            ) : (
-              <>
-                Create Vote
-                <ArrowRight className="h-4 w-4" />
-              </>
-            )}
-          </Button>
-                </CardFooter>
-              </Card>
-
-              {/* Preview Card - Mobile Only */}
-              <Card className="mt-6 border-dashed transition-all hover:shadow-md md:hidden">
-                <CardHeader>
-                  <CardTitle className="text-lg">Vote Preview</CardTitle>
-                  <CardDescription>How your vote will appear to participants</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="rounded-lg border p-4 bg-muted/20">
-                    <div className="flex flex-col gap-2">
-                      <h3 className="font-semibold text-lg">{voteTitle || "Untitled Vote"}</h3>
-                      <p className="text-sm text-muted-foreground">{voteDescription || "No description provided"}</p>
-
-                      <div className="mt-2 flex flex-wrap gap-2">
-                        <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">
-                          {polls.length} {polls.length === 1 ? "Poll" : "Polls"}
-                        </Badge>
-
-                        {votingSettings.requiredToken !== "none" && (
-                          <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">
-                            Requires {votingSettings.requiredToken.length > 10 
-                              ? `${votingSettings.requiredToken.substring(0, 6)}...${votingSettings.requiredToken.substring(votingSettings.requiredToken.length - 4)}` 
-                              : votingSettings.requiredToken.toUpperCase()}
-                            {votingSettings.isTokenWeighted && " (Weighted)"}
-                          </Badge>
-                        )}
-                        
-                        {votingSettings.isTokenWeighted && votingSettings.requiredToken !== "none" && (
-                          <Badge variant="outline" className="bg-indigo-50 text-indigo-700 border-indigo-200">
-                            {votingSettings.tokenWeight} tokens = 1 vote
-                          </Badge>
-                        )}
-
-                        {Number(votingSettings.paymentAmount) > 0 && (
-                          <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200">
-                            Payment: {votingSettings.paymentAmount} SUI
-                          </Badge>
-                        )}
-
-                        {showLiveStats && (
-                          <Badge variant="outline" className="bg-purple-50 text-purple-700 border-purple-200">
-                            <BarChart2 className="h-3 w-3 mr-1" />
-                            Live Results
-                          </Badge>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            </TabsContent>
-          </motion.div>
-        </div>
-      </Tabs>
-
-      {/* Transaction Status Dialog */}
-      <Dialog open={txStatusDialogOpen} onOpenChange={setTxStatusDialogOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>
-              {txStatus === TransactionStatus.SUCCESS
-                ? "Vote Created Successfully!"
-                : txStatus === TransactionStatus.ERROR
-                  ? "Error Creating Vote"
-                  : "Creating Vote"}
-            </DialogTitle>
-            <DialogDescription>
-              {txStatus === TransactionStatus.SUCCESS
-                ? "Your vote has been published to the blockchain."
-                : txStatus === TransactionStatus.ERROR
-                  ? "There was an error creating your vote."
-                  : "Please wait while we create your vote on the blockchain."}
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-4 py-4">
-            <Progress value={txProgress} className="h-2 w-full" />
-
-            <div className="space-y-2">
-              <div className="flex items-center justify-between text-sm">
-                <span className="flex items-center gap-2">
-                  {txStatus === TransactionStatus.BUILDING || txStatus === TransactionStatus.IDLE ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Check className="h-4 w-4 text-green-500" />
-                  )}
-                  Building Transaction
-                </span>
-                <span className="text-muted-foreground">Step 1/4</span>
-              </div>
-
-              <div className="flex items-center justify-between text-sm">
-                <span className="flex items-center gap-2">
-                  {txStatus === TransactionStatus.SIGNING ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : txStatus > TransactionStatus.SIGNING ? (
-                    <Check className="h-4 w-4 text-green-500" />
-                  ) : (
-                    <div className="h-4 w-4" />
-                  )}
-                  Signing Transaction
-                </span>
-                <span className="text-muted-foreground">Step 2/4</span>
-              </div>
-
-              <div className="flex items-center justify-between text-sm">
-                <span className="flex items-center gap-2">
-                  {txStatus === TransactionStatus.EXECUTING ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : txStatus > TransactionStatus.EXECUTING ? (
-                    <Check className="h-4 w-4 text-green-500" />
-                  ) : (
-                    <div className="h-4 w-4" />
-                  )}
-                  Executing Transaction
-                </span>
-                <span className="text-muted-foreground">Step 3/4</span>
-              </div>
-
-              <div className="flex items-center justify-between text-sm">
-                <span className="flex items-center gap-2">
-                  {txStatus === TransactionStatus.CONFIRMING ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : txStatus > TransactionStatus.CONFIRMING ? (
-                    <Check className="h-4 w-4 text-green-500" />
-                  ) : (
-                    <div className="h-4 w-4" />
-                  )}
-                  Confirming Transaction
-                </span>
-                <span className="text-muted-foreground">Step 4/4</span>
-              </div>
-            </div>
-
-            {txStatus === TransactionStatus.ERROR && (
-              <Alert variant="destructive">
-                <AlertCircle className="h-4 w-4" />
-                <AlertTitle>Error</AlertTitle>
-                <AlertDescription>{transactionError}</AlertDescription>
-              </Alert>
-            )}
-
-            {txDigest && (
-              <div className="pt-2">
-                <Label className="text-sm">Transaction ID</Label>
-                <div className="flex items-center gap-2 mt-1">
-                  <code className="bg-muted p-2 rounded text-xs w-full overflow-x-auto">{txDigest}</code>
+                ) : txStatus === TransactionStatus.SUCCESS ? (
+                  <Button variant="default" onClick={() => router.push(`/success?digest=${txDigest}`)}>
+                    View Vote
+                  </Button>
+                ) : (
                   <Button
                     variant="outline"
-                    size="icon"
-                    className="flex-shrink-0"
+                    onClick={() => setTxStatusDialogOpen(false)}
+                    disabled={txStatus !== TransactionStatus.ERROR && txStatus !== TransactionStatus.SUCCESS}
+                  >
+                    Close
+                  </Button>
+                )}
+
+                {txDigest && (
+                  <Button
+                    variant="outline"
+                    className="gap-2"
                     onClick={() => window.open(getTransactionExplorerUrl(), "_blank")}
                   >
                     <ExternalLink className="h-4 w-4" />
+                    View in Explorer
                   </Button>
-                </div>
-              </div>
-            )}
-          </div>
-
-          <DialogFooter className="sm:justify-between">
-            {txStatus === TransactionStatus.ERROR ? (
-              <Button
-                variant="default"
-                onClick={() => {
-                  setTxStatusDialogOpen(false)
-                  setTxStatus(TransactionStatus.IDLE)
-                }}
-              >
-                Try Again
-              </Button>
-            ) : txStatus === TransactionStatus.SUCCESS ? (
-              <Button variant="default" onClick={() => router.push(`/success?digest=${txDigest}`)}>
-                View Vote
-              </Button>
-            ) : (
-              <Button
-                variant="outline"
-                onClick={() => setTxStatusDialogOpen(false)}
-                disabled={txStatus !== TransactionStatus.ERROR && txStatus !== TransactionStatus.SUCCESS}
-              >
-                Close
-              </Button>
-            )}
-
-            {txDigest && (
-              <Button
-                variant="outline"
-                className="gap-2"
-                onClick={() => window.open(getTransactionExplorerUrl(), "_blank")}
-              >
-                <ExternalLink className="h-4 w-4" />
-                View in Explorer
-              </Button>
-            )}
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-      {/* Add this dialog for media upload */}
-      <Dialog open={mediaUploadDialogOpen} onOpenChange={setMediaUploadDialogOpen}>
-  <DialogContent className="sm:max-w-md">
-    <DialogHeader>
-      <DialogTitle>Upload Media</DialogTitle>
-      <DialogDescription>
-        Add an image to enhance your poll option.
-      </DialogDescription>
-    </DialogHeader>
-    <div className="py-4">
-      <MediaFileUploader 
-        onFileSelect={(file) => {
-          if (file) {
-            handleMediaFileSelect(mediaHandlers, file);
-          }
-        }}
-        disabled={mediaHandlers.loading}
-      />
-    </div>
-    <DialogFooter>
-      <Button variant="outline" onClick={() => setMediaUploadDialogOpen(false)}>
-        Cancel
-      </Button>
-    </DialogFooter>
-  </DialogContent>
-</Dialog>
-    </motion.div>
+                )}
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+          {/* Media upload is now handled inline in each option */}
+        </motion.div>
       )}
     </VoteMediaHandler>
   )

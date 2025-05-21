@@ -111,13 +111,13 @@ export function DateTimePicker({
     selectedDateTime.setHours(parseInt(hrs, 10), parseInt(mins, 10), 0, 0);
     
     // Check if the selected time is at least 10 minutes ahead
-    const minAllowedTime = addMinutes(now, 10);
+    const minAllowedTime = addMinutes(now, 5);
     
     if (isAfter(selectedDateTime, minAllowedTime)) {
       setTimeError("");
       onChange?.(selectedDateTime);
     } else {
-      setTimeError("Time must be at least 10 minutes from now");
+      setTimeError("Time must be at least 5 minutes from now");
     }
   };
   

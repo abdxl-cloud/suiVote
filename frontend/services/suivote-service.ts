@@ -441,8 +441,9 @@ export class SuiVoteService {
     })
 
     if (!data || !data.content || data.content.dataType !== "moveObject") {
-      console.warn(`Vote object not found or invalid: ${voteId}`)
-      return null
+      const error = new Error(`Vote object not found or invalid: ${voteId}`);
+      console.error(error);
+      throw error;
     }
 
     const objectType = data.type as string
@@ -510,8 +511,16 @@ export class SuiVoteService {
 
     return voteDetails
   } catch (error) {
-    console.error(`Failed to fetch vote details for ${voteId}:`, error)
-    return null
+    if (error.message?.includes("not found")) {
+      console.error(`Vote ${voteId} not found:`, error);
+      throw new Error(`Vote ${voteId} not found. It may have been deleted or never existed.`);
+    } else if (error.message?.includes("network")) {
+      console.error(`Network error fetching vote ${voteId}:`, error);
+      throw new Error("Network error. Please check your connection and try again.");
+    } else {
+      console.error(`Failed to fetch vote details for ${voteId}:`, error);
+      throw new Error(`Failed to fetch vote details: ${error.message || "Unknown error"}`);
+    }
   }
 }
 
@@ -566,7 +575,6 @@ export class SuiVoteService {
                 totalResponses: Number(pollFields.total_responses || 0),
                 options: [], // Will be populated separately if needed
               }
-
               polls.push(pollDetails)
             } catch (error) {
               console.warn(`Failed to fetch poll at index ${index} for vote ${voteId}:`, error)
@@ -1260,8 +1268,8 @@ export class SuiVoteService {
           tx.object(voteId),
           tx.object(ADMIN_ID),
           tx.pure.u64(pollIndex),
-          tx.pure.vector("u64", optionIndices),
           tx.pure.u64(tokenBalance),
+          tx.pure.vector("u64", optionIndices),
           paymentCoin,
           clockObj,
         ],
@@ -1274,99 +1282,124 @@ export class SuiVoteService {
     }
   }
 
-  /**
-   * Cast votes on multiple polls at once
-   * @param voteId Vote object ID
-   * @param pollIndices Poll indices (1-based)
-   * @param optionIndicesPerPoll Selected option indices for each poll (1-based)
-   * @param payment SUI payment amount (if required)
-   * @returns Transaction to be signed
-   */
-  castMultipleVotesTransaction(
-    voteId: string,
-    pollIndices: number[],
-    optionIndicesPerPoll: number[][],
-    tokenBalance: number = 0,
-    payment = 0,
-  ): Transaction {
-    try {
-      this.checkInitialization()
+  
+/**
+ * Cast votes on multiple polls at once
+ * @param voteId Vote object ID
+ * @param pollIndices Poll indices (1-based)
+ * @param optionIndicesPerPoll Selected option indices for each poll (1-based)
+ * @param tokenBalance Token balance for weighted voting
+ * @param payment SUI payment amount (if required)
+ * @returns Transaction to be signed
+ */
+castMultipleVotesTransaction(
+  voteId: string,
+  pollIndices: number[],
+  optionIndicesPerPoll: number[][],
+  tokenBalance: number = 0,
+  payment = 0,
+): Transaction {
+  try {
+    this.checkInitialization()
 
-      // Validate inputs
-      if (!voteId) {
-        throw new Error("Vote ID is required")
-      }
-
-      if (!pollIndices || !Array.isArray(pollIndices) || pollIndices.length === 0) {
-        throw new Error("At least one poll index must be specified")
-      }
-
-      if (!optionIndicesPerPoll || !Array.isArray(optionIndicesPerPoll) || optionIndicesPerPoll.length === 0) {
-        throw new Error("Option indices for each poll must be provided")
-      }
-
-      if (pollIndices.length !== optionIndicesPerPoll.length) {
-        throw new Error("Number of poll indices must match number of option index arrays")
-      }
-
-      for (let i = 0; i < pollIndices.length; i++) {
-        if (pollIndices[i] < 1) {
-          throw new Error(`Poll index at position ${i} must be 1 or greater`)
-        }
-
-        if (
-          !optionIndicesPerPoll[i] ||
-          !Array.isArray(optionIndicesPerPoll[i]) ||
-          optionIndicesPerPoll[i].length === 0
-        ) {
-          throw new Error(`At least one option must be selected for poll index ${pollIndices[i]}`)
-        }
-      }
-
-      if (payment < 0) {
-        throw new Error("Payment amount must be non-negative")
-      }
-
-      if (tokenBalance <= 0) {
-      // Just set a high default value for the transaction to pass validation
-      // The contract will still require the user to actually have the tokens
-        tokenBalance = 1000000000000; // Very high default value
-      }
-
-      const tx = new Transaction()
-
-      // Create payment coin if needed
-      let paymentCoin
-      if (payment > 0) {
-        // Split payment from gas coin
-        ;[paymentCoin] = tx.splitCoins(tx.gas, [tx.pure.u64(payment)])
-      } else {
-        // Create an empty coin if no payment is required
-        ;[paymentCoin] = tx.splitCoins(tx.gas, [tx.pure.u64(0)])
-      }
-
-      // Get the clock object
-      const clockObj = tx.object(SUI_CLOCK_OBJECT_ID)
-
-      tx.moveCall({
-        target: `${PACKAGE_ID}::voting::cast_multiple_votes`,
-        arguments: [
-          tx.object(voteId),
-          tx.object(ADMIN_ID),
-          tx.pure.vector("u64", pollIndices),
-          tx.pure.vector("vector<u64>", optionIndicesPerPoll),
-          tx.pure.u64(tokenBalance),
-          paymentCoin,
-          clockObj,
-        ],
-      })
-
-      return tx
-    } catch (error) {
-      console.error(`Failed to create cast multiple votes transaction:`, error)
-      throw new Error(`Failed to cast multiple votes: ${error instanceof Error ? error.message : String(error)}`)
+    // Validate inputs
+    if (!voteId) {
+      throw new Error("Vote ID is required")
     }
+
+    if (!pollIndices || !Array.isArray(pollIndices) || pollIndices.length === 0) {
+      throw new Error("At least one poll index must be specified")
+    }
+
+    if (!optionIndicesPerPoll || !Array.isArray(optionIndicesPerPoll) || optionIndicesPerPoll.length === 0) {
+      throw new Error("Option indices for each poll must be provided")
+    }
+
+    if (pollIndices.length !== optionIndicesPerPoll.length) {
+      throw new Error("Number of poll indices must match number of option index arrays")
+    }
+
+    // Enhanced validation
+    for (let i = 0; i < pollIndices.length; i++) {
+      if (pollIndices[i] < 1) {
+        throw new Error(`Poll index at position ${i} must be 1 or greater`)
+      }
+
+      if (
+        !optionIndicesPerPoll[i] ||
+        !Array.isArray(optionIndicesPerPoll[i]) ||
+        optionIndicesPerPoll[i].length === 0
+      ) {
+        throw new Error(`At least one option must be selected for poll index ${pollIndices[i]}`)
+      }
+      
+      // Make sure option indices are valid
+      for (let j = 0; j < optionIndicesPerPoll[i].length; j++) {
+        if (optionIndicesPerPoll[i][j] < 1) {
+          throw new Error(`Option index must be 1 or greater for poll ${pollIndices[i]}`)
+        }
+      }
+      
+      // Ensure no duplicate option indices for the same poll
+      const uniqueOptionIndices = new Set(optionIndicesPerPoll[i])
+      if (uniqueOptionIndices.size !== optionIndicesPerPoll[i].length) {
+        throw new Error(`Duplicate option indices for poll ${pollIndices[i]} are not allowed`)
+      }
+    }
+
+    if (payment < 0) {
+      throw new Error("Payment amount must be non-negative")
+    }
+
+    // Set a default token balance if none provided
+    if (tokenBalance <= 0) {
+      // Use a reasonable default value (the contract will check actual balance)
+      tokenBalance = 1;
+    }
+
+    const tx = new Transaction()
+
+    // Create payment coin if needed
+    let paymentCoin
+    if (payment > 0) {
+      // Split payment from gas coin
+      ;[paymentCoin] = tx.splitCoins(tx.gas, [tx.pure.u64(payment)])
+    } else {
+      // Create an empty coin if no payment is required
+      ;[paymentCoin] = tx.splitCoins(tx.gas, [tx.pure.u64(0)])
+    }
+
+    // Get the clock object
+    const clockObj = tx.object(SUI_CLOCK_OBJECT_ID)
+    
+    // Log the data being sent to the transaction for debugging
+    console.log("Multi-poll transaction data:", {
+      voteId,
+      pollIndices,
+      optionIndicesPerPoll,
+      tokenBalance,
+      payment
+    })
+
+    tx.moveCall({
+      target: `${PACKAGE_ID}::voting::cast_multiple_votes`,
+      arguments: [
+        tx.object(voteId),
+        tx.object(ADMIN_ID),
+        tx.pure.vector("u64", pollIndices),
+        tx.pure.vector("vector<u64>", optionIndicesPerPoll),
+        tx.pure.u64(tokenBalance),
+        paymentCoin,
+        clockObj,
+      ],
+    })
+
+    return tx
+  } catch (error) {
+    console.error(`Failed to create cast multiple votes transaction:`, error)
+    throw new Error(`Failed to cast multiple votes: ${error instanceof Error ? error.message : String(error)}`)
   }
+}
 
     calculateVoteWeight(tokenBalance: number, tokensPerVote: number, minimumTokenAmount: number = 0): number {
     if (tokenBalance <= 0 || tokensPerVote <= 0) {
