@@ -178,7 +178,7 @@ export function WalletConnectButton({ variant = "default", size = "default", cla
                 </div>
                 <Button asChild variant="outline" size="sm">
                   <a
-                    href="https://suiet.app"
+                    href="https://chromewebstore.google.com/detail/khpkpbbcccdmmclmpigdgddabeilkdpd?utm_source=item-share-cb"
                     target="_blank"
                     rel="noopener noreferrer"
                     className="flex items-center justify-center gap-2"

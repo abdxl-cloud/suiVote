@@ -1513,6 +1513,39 @@ castMultipleVotesTransaction(
   }
 
   /**
+   * Create a transaction to start a vote when its start time has passed
+   * @param voteId Vote object ID
+   * @returns Transaction to be signed
+   */
+  startVoteTransaction(voteId: string): Transaction {
+    try {
+      this.checkInitialization()
+
+      if (!voteId) {
+        throw new Error("Vote ID is required")
+      }
+
+      const tx = new Transaction()
+
+      // Get the clock object
+      const clockObj = tx.object(SUI_CLOCK_OBJECT_ID)
+
+      tx.moveCall({
+        target: `${PACKAGE_ID}::voting::start_vote`,
+        arguments: [
+          tx.object(voteId),
+          clockObj,
+        ],
+      })
+
+      return tx
+    } catch (error) {
+      console.error(`Failed to create start vote transaction:`, error)
+      throw new Error(`Failed to start vote: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+
+  /**
  * Check if a user has voted on a specific vote
  * @param userAddress User address
  * @param voteId Vote object ID

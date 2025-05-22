@@ -51,13 +51,13 @@ export function MediaPreview({
           <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
         </div>
       )}
-      
+
       {error && (
         <div className="absolute inset-0 flex items-center justify-center bg-background">
           <ImageIcon className="h-6 w-6 text-muted-foreground" />
         </div>
       )}
-      
+
       <img
         src={mediaUrl}
         alt="Media preview"
@@ -72,7 +72,7 @@ export function MediaPreview({
           setError(true)
         }}
       />
-      
+
       <Button
         type="button"
         variant="destructive"

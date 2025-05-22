@@ -282,33 +282,48 @@ export default function CreateVotePage() {
   }, [txStatus])
 
   // Update the addPoll function to use timestamp-based unique ID
-  const addPoll = () => {
-    const timestamp = Date.now()
-    const newPoll: PollType = {
-      id: `poll-${timestamp}`,
-      title: "",
-      description: "",
-      options: [
-        { id: `option-${timestamp}-1`, text: "", mediaUrl: null },
-        { id: `option-${timestamp}-2`, text: "", mediaUrl: null },
-      ],
-      isMultiSelect: false,
-      maxSelections: 1,
-      isRequired: true,
-    }
-    setPolls([...polls, newPoll])
-    setActivePollIndex(polls.length)
-    setActiveTab("polls")
+// 3. Add poll with better ordering
+const addPoll = () => {
+  const timestamp = Date.now()
+  const pollNumber = polls.length + 1 // Ensure sequential numbering
+  const newPoll: PollType = {
+    id: `poll-${timestamp}`,
+    title: `Poll ${pollNumber}`, // Default title shows the order
+    description: "",
+    options: [
+      { id: `option-${timestamp}-1`, text: "", mediaUrl: null },
+      { id: `option-${timestamp}-2`, text: "", mediaUrl: null },
+    ],
+    isMultiSelect: false,
+    maxSelections: 1,
+    isRequired: true,
   }
+  setPolls([...polls, newPoll])
+  setActivePollIndex(polls.length) // Set to the newly added poll
+  setActiveTab("polls")
+}
 
   const removePoll = (pollIndex: number) => {
     if (polls.length > 1) {
       const newPolls = [...polls]
       newPolls.splice(pollIndex, 1)
       setPolls(newPolls)
-      if (activePollIndex >= pollIndex && activePollIndex > 0) {
+      
+      // Fixed: Better logic for active poll index after removal
+      if (activePollIndex === pollIndex) {
+        // If removing the currently active poll
+        if (pollIndex === polls.length - 1) {
+          // If removing the last poll, go to the previous one
+          setActivePollIndex(Math.max(0, pollIndex - 1))
+        } else {
+          // Otherwise, keep the same index (which now points to the next poll)
+          setActivePollIndex(pollIndex)
+        }
+      } else if (activePollIndex > pollIndex) {
+        // If removing a poll before the active one, decrement active index
         setActivePollIndex(activePollIndex - 1)
       }
+      // If removing a poll after the active one, keep active index unchanged
     }
   }
 
@@ -345,34 +360,71 @@ export default function CreateVotePage() {
 
   // Update the addOption function to use timestamp-based unique IDs
   const addOption = (pollIndex: number) => {
-    const timestamp = Date.now()
     const newPolls = [...polls]
-    const newOptionId = `option-${timestamp}-${newPolls[pollIndex].options.length + 1}`
-    newPolls[pollIndex].options.push({ id: newOptionId, text: "", mediaUrl: null })
+    const currentOptions = newPolls[pollIndex].options
+    const optionNumber = currentOptions.length + 1
+    
+    // Use sequential numbering instead of timestamp for better ordering
+    const newOptionId = `poll-${pollIndex}-option-${optionNumber}-${Date.now()}`
+    
+    const newOption = { 
+      id: newOptionId, 
+      text: "", 
+      mediaUrl: null,
+      fileId: null // Add fileId tracking
+    }
+    
+    newPolls[pollIndex].options.push(newOption)
+    
+    // Adjust maxSelections if needed for multi-select polls
+    if (newPolls[pollIndex].isMultiSelect) {
+      const maxPossible = newPolls[pollIndex].options.length - 1
+      if (newPolls[pollIndex].maxSelections >= maxPossible) {
+        newPolls[pollIndex].maxSelections = maxPossible
+      }
+    }
+    
+    console.log(`Added option ${optionNumber} to poll ${pollIndex + 1}:`, newOption)
     setPolls(newPolls)
   }
 
   const removeOption = (pollIndex: number, optionIndex: number) => {
     const newPolls = [...polls]
-    if (newPolls[pollIndex].options.length > 2) {
+    const currentOptions = newPolls[pollIndex].options
+    
+    if (currentOptions.length > 2) {
+      console.log(`Removing option ${optionIndex + 1} from poll ${pollIndex + 1}`)
+      
+      // Remove the option at the specified index
       newPolls[pollIndex].options.splice(optionIndex, 1)
-
-      // Adjust maxSelections if needed
-      if (
-        newPolls[pollIndex].isMultiSelect &&
-        newPolls[pollIndex].maxSelections >= newPolls[pollIndex].options.length
-      ) {
-        newPolls[pollIndex].maxSelections = newPolls[pollIndex].options.length - 1
+  
+      // Adjust maxSelections if needed for multi-select polls
+      if (newPolls[pollIndex].isMultiSelect) {
+        const newMaxPossible = newPolls[pollIndex].options.length - 1
+        if (newPolls[pollIndex].maxSelections > newMaxPossible) {
+          newPolls[pollIndex].maxSelections = newMaxPossible
+        }
       }
-
+  
       setPolls(newPolls)
+      
+      console.log(`Poll ${pollIndex + 1} now has ${newPolls[pollIndex].options.length} options`)
     }
   }
 
   const updateOption = (pollIndex: number, optionIndex: number, text: string) => {
     const newPolls = [...polls]
-    newPolls[pollIndex].options[optionIndex].text = text
-    setPolls(newPolls)
+    
+    // Validate indices
+    if (pollIndex >= 0 && pollIndex < newPolls.length &&
+        optionIndex >= 0 && optionIndex < newPolls[pollIndex].options.length) {
+      
+      newPolls[pollIndex].options[optionIndex].text = text
+      console.log(`Updated poll ${pollIndex + 1}, option ${optionIndex + 1}: "${text}"`)
+      setPolls(newPolls)
+    } else {
+      console.error(`Invalid indices: poll ${pollIndex}, option ${optionIndex}`)
+    }
   }
 
   // Enhanced validation function aligned with service validation
@@ -435,6 +487,58 @@ export default function CreateVotePage() {
       })
     }
   }
+
+  // 4. Enhanced poll validation before submission
+const validatePollOrder = (): boolean => {
+  // Ensure polls are properly ordered and complete
+  for (let i = 0; i < polls.length; i++) {
+    const poll = polls[i]
+    
+    // Check if poll has required fields
+    if (!poll.title.trim()) {
+      console.error(`Poll ${i + 1} is missing a title`)
+      return false
+    }
+    
+    // Check if poll has minimum options
+    if (poll.options.length < 2) {
+      console.error(`Poll ${i + 1} needs at least 2 options`)
+      return false
+    }
+    
+    // Check if all options have text
+    for (let j = 0; j < poll.options.length; j++) {
+      if (!poll.options[j].text.trim()) {
+        console.error(`Poll ${i + 1}, Option ${j + 1} is missing text`)
+        return false
+      }
+    }
+  }
+  return true
+}
+
+// 5. Fixed poll data preparation for submission
+const preparePollDataForSubmission = () => {
+  // Ensure polls are processed in the correct order
+  return polls.map((poll, pollIndex) => {
+    
+    return {
+      title: poll.title.trim(),
+      description: poll.description.trim(),
+      isMultiSelect: poll.isMultiSelect,
+      maxSelections: poll.maxSelections,
+      isRequired: poll.isRequired,
+      options: poll.options.map((option, optionIndex) => {
+        return {
+          text: option.text.trim(),
+          mediaUrl: option.mediaUrl || undefined,
+          fileId: option.fileId || undefined
+        }
+      })
+    }
+  })
+}
+
 
   const validateForm = (navigateToErrors: boolean = true): boolean => {
     const newErrors: ValidationErrors = {}
@@ -596,104 +700,114 @@ export default function CreateVotePage() {
 
   const addMediaToOption = (mediaHandlers: any, pollIndex: number, optionIndex: number, file: File) => {
     try {
+      console.log(`Adding media to poll ${pollIndex + 1}, option ${optionIndex + 1}`)
+      
       // Validate file size (max 5MB)
-      const maxSize = 5 * 1024 * 1024; // 5MB in bytes
+      const maxSize = 5 * 1024 * 1024
       if (file.size > maxSize) {
-        toast.error("File size exceeds the 5MB limit");
-        return;
+        toast.error("File size exceeds the 5MB limit")
+        return
       }
-
+  
       // Validate file type
       if (!file.type.startsWith('image/')) {
-        toast.error("Only image files are supported");
-        return;
+        toast.error("Only image files are supported")
+        return
       }
-
-      // Show loading state by setting a temporary mediaUrl
-      const newPolls = [...polls];
-      newPolls[pollIndex].options[optionIndex].mediaUrl = 'loading'; // Temporary value to trigger loading state
-      setPolls(newPolls);
-
-      // Create a FileReader to generate a preview immediately
-      const reader = new FileReader();
+  
+      // Validate indices
+      if (pollIndex >= polls.length || optionIndex >= polls[pollIndex].options.length) {
+        toast.error("Invalid poll or option index")
+        return
+      }
+  
+      const newPolls = [...polls]
+      
+      // Show loading state
+      newPolls[pollIndex].options[optionIndex].mediaUrl = 'loading'
+      setPolls(newPolls)
+  
+      // Create FileReader for preview
+      const reader = new FileReader()
       reader.onload = (e) => {
-        const dataUrl = e.target?.result as string;
+        const dataUrl = e.target?.result as string
         if (dataUrl) {
-          // Add the file to the media handler and get the file ID
-          const fileId = mediaHandlers.addMediaFile(file);
-
-          // Update the polls state with the dataUrl and fileId
-          const updatedPolls = [...polls];
-          updatedPolls[pollIndex].options[optionIndex].mediaUrl = dataUrl;
-          updatedPolls[pollIndex].options[optionIndex].fileId = fileId;
-          setPolls(updatedPolls);
-          toast.success("Media added successfully");
+          // Add file to media handler
+          const fileId = mediaHandlers.addMediaFile(file)
+  
+          // Update the specific option with proper indexing
+          const updatedPolls = [...polls]
+          updatedPolls[pollIndex].options[optionIndex].mediaUrl = dataUrl
+          updatedPolls[pollIndex].options[optionIndex].fileId = fileId
+          
+          setPolls(updatedPolls)
+          toast.success(`Media added to option ${optionIndex + 1}`)
+          
+          console.log(`Media successfully added to poll ${pollIndex + 1}, option ${optionIndex + 1}`)
         } else {
-          toast.error("Failed to generate preview");
-          // Reset the mediaUrl on error
-          const updatedPolls = [...polls];
-          updatedPolls[pollIndex].options[optionIndex].mediaUrl = null;
-          setPolls(updatedPolls);
+          // Reset on error
+          const errorPolls = [...polls]
+          errorPolls[pollIndex].options[optionIndex].mediaUrl = null
+          setPolls(errorPolls)
+          toast.error("Failed to generate preview")
         }
-      };
-
+      }
+  
       reader.onerror = () => {
-        toast.error("Failed to read image file");
-        // Reset the mediaUrl on error
-        const updatedPolls = [...polls];
-        updatedPolls[pollIndex].options[optionIndex].mediaUrl = null;
-        setPolls(updatedPolls);
-      };
-
-      // Start reading the file as a data URL
-      reader.readAsDataURL(file);
+        const errorPolls = [...polls]
+        errorPolls[pollIndex].options[optionIndex].mediaUrl = null
+        setPolls(errorPolls)
+        toast.error("Failed to read image file")
+      }
+  
+      reader.readAsDataURL(file)
     } catch (error) {
-      console.error("Error adding media file:", error);
-      toast.error("Failed to add media file");
-      // Reset the mediaUrl on error
-      const newPolls = [...polls];
-      newPolls[pollIndex].options[optionIndex].mediaUrl = null;
-      setPolls(newPolls);
+      console.error(`Error adding media to poll ${pollIndex + 1}, option ${optionIndex + 1}:`, error)
+      toast.error("Failed to add media file")
+      
+      // Reset on error
+      const errorPolls = [...polls]
+      errorPolls[pollIndex].options[optionIndex].mediaUrl = null
+      setPolls(errorPolls)
     }
-  };
-
+  }
+  
+  // 5. Fixed removeMediaFromOption function
   const removeMediaFromOption = (mediaHandlers: any, pollIndex: number, optionIndex: number) => {
     try {
-      const newPolls = [...polls];
-      const fileId = newPolls[pollIndex].options[optionIndex].fileId;
-
-      // First update the UI to show immediate feedback
-      newPolls[pollIndex].options[optionIndex].mediaUrl = null;
-      newPolls[pollIndex].options[optionIndex].fileId = null;
-      setPolls(newPolls);
-
-      // Then remove the file from the media handler if it exists
+      console.log(`Removing media from poll ${pollIndex + 1}, option ${optionIndex + 1}`)
+      
+      const newPolls = [...polls]
+      const fileId = newPolls[pollIndex].options[optionIndex].fileId
+  
+      // Update UI immediately
+      newPolls[pollIndex].options[optionIndex].mediaUrl = null
+      newPolls[pollIndex].options[optionIndex].fileId = null
+      setPolls(newPolls)
+  
+      // Remove from media handler if it exists
       if (fileId && mediaHandlers) {
-        mediaHandlers.removeMediaFile(fileId);
-        toast.success("Media removed successfully");
+        mediaHandlers.removeMediaFile(fileId)
+        toast.success("Media removed successfully")
       }
     } catch (error) {
-      console.error("Error removing media file:", error);
-      toast.error("Failed to remove media file");
-
-      // Attempt to restore the UI state if there was an error
-      try {
-        const currentPolls = [...polls];
-        if (currentPolls[pollIndex].options[optionIndex].mediaUrl === null) {
-          // Only show error if we actually failed to remove something
-          toast.error("Failed to remove media file");
-        }
-      } catch (e) {
-        // Ignore any errors in the error handler
-      }
+      console.error(`Error removing media from poll ${pollIndex + 1}, option ${optionIndex + 1}:`, error)
+      toast.error("Failed to remove media file")
     }
-  };
+  }
 
   // Update your handleSubmit function to use the media handler
   const handleSubmit = async (mediaHandlers: any) => {
     try {
       const now = new Date();
       let datesUpdated = false;
+      if (!validatePollOrder()) {
+        toast.error("Please fix poll validation errors before submitting")
+        return
+      }
+      
+      // Prepare poll data with proper ordering
+      const pollData = preparePollDataForSubmission()
 
       // Check if startDate is not set or is in the past
       if (!votingSettings.startDate || votingSettings.startDate < now) {
@@ -754,18 +868,7 @@ export default function CreateVotePage() {
       setTxStatus(TransactionStatus.BUILDING);
       setTxStatusDialogOpen(true);
 
-      // Convert poll data to the format expected by the service
-      const pollData = polls.map((poll) => ({
-        title: poll.title,
-        description: poll.description,
-        isMultiSelect: poll.isMultiSelect,
-        maxSelections: poll.maxSelections,
-        isRequired: poll.isRequired,
-        options: poll.options.map((option) => ({
-          text: option.text,
-          mediaUrl: option.mediaUrl || undefined,
-        })),
-      }));
+      
 
       // Create the combined transaction
       setTxStatus(TransactionStatus.BUILDING);

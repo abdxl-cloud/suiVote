@@ -55,7 +55,7 @@ export function MediaFileUploader({
     if (acceptedTypes !== "*") {
       const fileType = file.type
       const acceptedTypeArray = acceptedTypes.split(",")
-      
+
       const isAccepted = acceptedTypeArray.some(type => {
         // Handle wildcards, e.g., image/*
         if (type.endsWith("/*")) {
@@ -149,10 +149,10 @@ export function MediaFileUploader({
     <div className={cn("space-y-2", className)}>
       {previewUrl ? (
         <div className="flex items-center gap-3">
-          <MediaPreview 
-            mediaUrl={previewUrl} 
-            onRemove={handleRemoveFile} 
-            size="md" 
+          <MediaPreview
+            mediaUrl={previewUrl}
+            onRemove={handleRemoveFile}
+            size="md"
           />
           <Button
             type="button"
