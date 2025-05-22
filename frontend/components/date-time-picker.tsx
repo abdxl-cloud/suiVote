@@ -17,13 +17,13 @@ export function DateTimePicker({
 }) {
   // Create a unique ID for this calendar instance
   const [instanceId] = React.useState(() => externalId || generateId());
-  
+
   // Set default time 10 minutes ahead of current time
   const getDefaultDateTime = () => {
     const now = new Date();
     return addMinutes(now, 10); // Handles day boundaries correctly
   };
-  
+
   // Local state for this specific calendar instance
   const [isOpen, setIsOpen] = React.useState(false);
   const [selectedDate, setSelectedDate] = React.useState(value || getDefaultDateTime());
@@ -33,13 +33,13 @@ export function DateTimePicker({
   const [minute, setMinute] = React.useState(
     value ? format(value, "mm") : format(getDefaultDateTime(), "mm")
   );
-  
+
   // State for time validation
   const [timeError, setTimeError] = React.useState("");
-  
+
   // Refs specific to this calendar instance
   const containerRef = React.useRef(null);
-  
+
   // Effect to update the component when the external value changes
   React.useEffect(() => {
     if (value) {
@@ -48,7 +48,7 @@ export function DateTimePicker({
       setMinute(format(value, "mm"));
     }
   }, [value]);
-  
+
   // Close the dropdown when clicking outside
   React.useEffect(() => {
     function handleClickOutside(event) {
@@ -56,36 +56,36 @@ export function DateTimePicker({
         setIsOpen(false);
       }
     }
-    
+
     document.addEventListener("mousedown", handleClickOutside);
     return () => {
       document.removeEventListener("mousedown", handleClickOutside);
     }
   }, []);
-  
+
   // Update parent component when selection changes
   React.useEffect(() => {
     validateTimeSelection(selectedDate, hour, minute);
     // We validate on each change but don't auto-adjust here
   }, [selectedDate, hour, minute]);
-  
+
   // Check if a date is in the past (before today)
   const isDateInPast = (date) => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     return date < today;
   };
-  
+
   // Check if a date is disabled
   const isDateDisabled = (date) => {
     return isDateInPast(date) || disabledDates.some(disabledDate => isSameDay(disabledDate, date));
   };
-  
+
   // Check if a date is selected
   const isDateSelected = (date) => {
     return selectedDate && isSameDay(date, selectedDate);
   };
-  
+
   // Handle hour change with validation
   const handleHourChange = (e) => {
     const newHour = e.target.value;
@@ -94,7 +94,7 @@ export function DateTimePicker({
       validateTimeSelection(selectedDate, newHour, minute);
     }
   };
-  
+
   // Handle minute change with validation
   const handleMinuteChange = (e) => {
     const newMinute = e.target.value;
@@ -103,68 +103,68 @@ export function DateTimePicker({
       validateTimeSelection(selectedDate, hour, newMinute);
     }
   };
-  
+
   // Validate time is at least 10 minutes in the future
   const validateTimeSelection = (date, hrs, mins) => {
     const now = new Date();
     const selectedDateTime = new Date(date);
     selectedDateTime.setHours(parseInt(hrs, 10), parseInt(mins, 10), 0, 0);
-    
+
     // Check if the selected time is at least 10 minutes ahead
-    const minAllowedTime = addMinutes(now, 10);
-    
+    const minAllowedTime = addMinutes(now, 5);
+
     if (isAfter(selectedDateTime, minAllowedTime)) {
       setTimeError("");
       onChange?.(selectedDateTime);
     } else {
-      setTimeError("Time must be at least 10 minutes from now");
+      setTimeError("Time must be at least 5 minutes from now");
     }
   };
-  
+
   // Generate calendar grid
   const generateCalendarDays = () => {
     const result = [];
     const year = selectedDate.getFullYear();
     const month = selectedDate.getMonth();
-    
+
     // First day of month
     const firstDay = new Date(year, month, 1);
     const firstDayOfWeek = firstDay.getDay();
-    
+
     // Previous month days
     for (let i = 0; i < firstDayOfWeek; i++) {
       const prevMonthDay = new Date(year, month, -i);
       result.unshift(prevMonthDay);
     }
-    
+
     // Current month days
     const daysInMonth = new Date(year, month + 1, 0).getDate();
     for (let i = 1; i <= daysInMonth; i++) {
       result.push(new Date(year, month, i));
     }
-    
+
     // Next month days to complete the grid (6 rows of 7 days)
     const remainingDays = 42 - result.length;
     for (let i = 1; i <= remainingDays; i++) {
       result.push(new Date(year, month + 1, i));
     }
-    
+
     return result;
   };
-  
+
   // Days of the week header
   const daysOfWeek = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
-  
+
   // Calendar days
   const calendarDays = generateCalendarDays();
-  
+
   return (
     <div className={`relative ${className}`} ref={containerRef} data-calendar-id={instanceId}>
       {/* Label above the input */}
       <label htmlFor={`datetime-input-${instanceId}`} className="block text-sm font-medium text-foreground mb-2">
         {label}
       </label>
-      
+
       {/* Main trigger button */}
       <button
         id={`datetime-input-${instanceId}`}
@@ -175,8 +175,8 @@ export function DateTimePicker({
         <div className="flex items-center gap-2">
           <CalendarIcon className="h-4 w-4 text-muted-foreground" />
           <span>
-            {value 
-              ? format(value, "MMM d, yyyy 'at' h:mm a") 
+            {value
+              ? format(value, "MMM d, yyyy 'at' h:mm a")
               : "Select date and time"}
           </span>
         </div>
@@ -186,7 +186,7 @@ export function DateTimePicker({
           </svg>
         </div>
       </button>
-      
+
       {/* Calendar dropdown */}
       {isOpen && (
         <div className="absolute z-50 mt-1 w-[320px] bg-popover border border-border rounded-md shadow-lg animate-fade-in">
@@ -199,11 +199,11 @@ export function DateTimePicker({
             >
               <ChevronLeft className="h-5 w-5" />
             </button>
-            
+
             <h2 className="text-sm font-medium text-foreground">
               {format(selectedDate, "MMMM yyyy")}
             </h2>
-            
+
             <button
               type="button"
               onClick={() => setSelectedDate(date => addMonths(date, 1))}
@@ -212,14 +212,14 @@ export function DateTimePicker({
               <ChevronRight className="h-5 w-5" />
             </button>
           </div>
-          
+
           {/* Days of week */}
           <div className="grid grid-cols-7 text-center text-xs text-muted-foreground py-2 px-1">
             {daysOfWeek.map(day => (
               <div key={`${instanceId}-dow-${day}`}>{day}</div>
             ))}
           </div>
-          
+
           {/* Calendar grid */}
           <div className="p-1 grid grid-cols-7 gap-1">
             {calendarDays.map((day, index) => {
@@ -227,7 +227,7 @@ export function DateTimePicker({
               const isDisabled = isDateDisabled(day);
               const isSelected = isDateSelected(day);
               const isTodayDate = isToday(day);
-              
+
               return (
                 <button
                   key={`${instanceId}-day-${index}`}
@@ -239,7 +239,7 @@ export function DateTimePicker({
                       newDate.setHours(
                         selectedDate.getHours(),
                         selectedDate.getMinutes(),
-                        0, 
+                        0,
                         0
                       );
                       setSelectedDate(newDate);
@@ -263,14 +263,14 @@ export function DateTimePicker({
               );
             })}
           </div>
-          
+
           {/* Time selection with number inputs */}
           <div className="px-4 py-3 border-t border-border">
             <div className="flex justify-between items-center mb-2">
               <label className="text-sm font-medium text-foreground">Select Time</label>
               <Clock className="h-4 w-4 text-muted-foreground" />
             </div>
-            
+
             {/* Hour and minute inputs */}
             <div className="flex items-center space-x-2">
               <div className="w-1/2">
@@ -296,7 +296,7 @@ export function DateTimePicker({
                 />
               </div>
             </div>
-            
+
             {/* Time validation error */}
             {timeError && (
               <div className="mt-2 text-xs text-red-500">

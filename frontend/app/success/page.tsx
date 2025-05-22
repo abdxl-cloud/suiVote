@@ -60,43 +60,201 @@ export default function SuccessPage() {
   const wallet = useWallet()
   const shareButtonRef = useRef(null)
 
-  const [voteDetails, setVoteDetails] = useState<any>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  // Get transaction digest from URL params
+  const txDigest = searchParams.get("digest")
+
+  // Improved state management
+  const [fetchState, setFetchState] = useState({
+    loading: true,
+    error: null,
+    voteId: null,
+    voteDetails: null,
+    attemptCount: 0
+  });
+
+  // UI states
   const [shareDialogOpen, setShareDialogOpen] = useState(false)
   const [copied, setCopied] = useState(false)
   const [qrVisible, setQrVisible] = useState(false)
   const [activeTab, setActiveTab] = useState<string>("share")
   const [confettiLaunched, setConfettiLaunched] = useState(false)
-  const [voteId, setVoteId] = useState<string | null>(null)
-  // Get transaction digest and vote ID from URL params
-  const txDigest = searchParams.get("digest")
 
-  async function getSecondVoteObjectId(digest: string) {
-    const client = new SuiClient({ url: getFullnodeUrl('testnet') });
+  // Convenience references for components
+  const loading = fetchState.loading;
+  const error = fetchState.error;
+  const voteDetails = fetchState.voteDetails;
+  const voteId = fetchState.voteId;
 
-    const tx = await client.getTransactionBlock({
-      digest,
-      options: { showEffects: true }
-    });
-
-    // Get created objects array
-    const createdObjects = tx.effects?.created || [];
-
-    // Get second object (index 1)
-    const secondObject = createdObjects[1]?.reference?.objectId;
-
-    if (!secondObject) {
-      throw new Error('No second created object found');
-    }
-
-    // Optional: Verify object type
-    const objectData = await client.getObject({
-      id: secondObject,
-      options: { showType: true }
-    });
-    return secondObject;
-  }
+  // Comprehensive vote data fetching
+  useEffect(() => {
+    let isMounted = true;
+    
+    const fetchVoteData = async () => {
+      // Skip if we've already loaded successfully or tried too many times
+      if (fetchState.voteDetails || fetchState.attemptCount > 5) return;
+      
+      try {
+        // Start with transaction digest from URL
+        const digest = searchParams.get("digest");
+        if (!digest) {
+          throw new Error("Transaction digest not found in URL");
+        }
+        
+        // If we don't have a vote ID yet, try to extract it from the transaction
+        let targetVoteId = fetchState.voteId;
+        
+        if (!targetVoteId) {
+          console.log("Attempting to extract vote ID from transaction:", digest);
+          
+          // Create new client directly using network from config
+          const client = new SuiClient({ 
+            url: getFullnodeUrl(SUI_CONFIG.NETWORK.toLowerCase()) 
+          });
+          
+          // Fetch transaction with all details
+          const txResult = await client.getTransactionBlock({
+            digest,
+            options: { 
+              showEffects: true,
+              showObjectChanges: true,  // Important to get created objects
+              showEvents: true
+            }
+          });
+          
+          console.log("Transaction data received:", 
+            txResult.effects?.created?.length || 0, "created objects",
+            txResult.objectChanges?.length || 0, "object changes",
+            txResult.events?.length || 0, "events"
+          );
+          
+          // Look for Vote object in object changes (better than effects)
+          let voteObjectId = null;
+          
+          // Check object changes first (most reliable)
+          if (txResult.objectChanges && txResult.objectChanges.length > 0) {
+            const voteObject = txResult.objectChanges.find(change => 
+              change.type === 'created' && 
+              change.objectType && 
+              change.objectType.includes('::voting::Vote')
+            );
+            
+            if (voteObject) {
+              voteObjectId = voteObject.objectId;
+              console.log("Found vote ID from object changes:", voteObjectId);
+            }
+          }
+          
+          // Fall back to created objects in effects
+          if (!voteObjectId && txResult.effects?.created && txResult.effects.created.length > 0) {
+            // Try to identify the Vote object from the list of created objects
+            // We'll look at each object's type if available
+            for (const obj of txResult.effects.created) {
+              if (obj.owner?.AddressOwner === 'Shared') {
+                // Most likely this is our vote object (votes are shared)
+                voteObjectId = obj.reference.objectId;
+                console.log("Found vote ID from shared object:", voteObjectId);
+                break;
+              }
+            }
+            
+            // If we still don't have an ID, take the second object as a fallback
+            if (!voteObjectId && txResult.effects.created.length > 1) {
+              voteObjectId = txResult.effects.created[1].reference.objectId;
+              console.log("Falling back to second created object:", voteObjectId);
+            }
+          }
+          
+          // Also check for vote creation events
+          if (!voteObjectId && txResult.events && txResult.events.length > 0) {
+            const voteCreatedEvent = txResult.events.find(event => 
+              event.type && event.type.includes('::voting::VoteCreated')
+            );
+            
+            if (voteCreatedEvent && voteCreatedEvent.parsedJson && voteCreatedEvent.parsedJson.vote_id) {
+              voteObjectId = voteCreatedEvent.parsedJson.vote_id;
+              console.log("Found vote ID from VoteCreated event:", voteObjectId);
+            }
+          }
+          
+          // If we found a vote ID, update state
+          if (voteObjectId) {
+            targetVoteId = voteObjectId;
+            if (isMounted) {
+              setFetchState(prev => ({
+                ...prev, 
+                voteId: voteObjectId,
+                attemptCount: prev.attemptCount + 1
+              }));
+            }
+          } else {
+            console.error("Could not find vote ID in transaction");
+            throw new Error("Could not identify vote object in transaction");
+          }
+        }
+        
+        // Now try to fetch details if we have a vote ID
+        if (targetVoteId) {
+          console.log("Fetching vote details for ID:", targetVoteId);
+          const details = await suivote.getVoteDetails(targetVoteId);
+          
+          if (details) {
+            console.log("Successfully retrieved vote details:", details.title);
+            if (isMounted) {
+              setFetchState(prev => ({
+                ...prev,
+                loading: false,
+                voteDetails: details
+              }));
+              
+              document.title = `Vote Created: ${details.title} - SuiVote`;
+              
+              // Launch confetti with a slight delay for better UX
+              setTimeout(() => {
+                launchConfetti();
+              }, 500);
+            }
+          } else {
+            console.warn("Vote details returned null for ID:", targetVoteId);
+            if (isMounted) {
+              // Increment attempt count but keep trying
+              setFetchState(prev => ({
+                ...prev,
+                attemptCount: prev.attemptCount + 1,
+                // Don't set error yet, we'll retry
+              }));
+              
+              // If we've made a few attempts without success, add a delay
+              if (fetchState.attemptCount >= 2) {
+                console.log(`Attempt ${fetchState.attemptCount + 1} failed, retrying in 2 seconds...`);
+                setTimeout(() => {
+                  if (isMounted) {
+                    // Force a re-render to trigger the effect again
+                    setFetchState(prev => ({ ...prev }));
+                  }
+                }, 2000);
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.error("Error in fetch flow:", err);
+        if (isMounted) {
+          setFetchState(prev => ({
+            ...prev,
+            loading: false,
+            error: err instanceof Error ? err.message : "Failed to load vote details",
+            attemptCount: prev.attemptCount + 1
+          }));
+        }
+      }
+    };
+    
+    fetchVoteData();
+    
+    return () => {
+      isMounted = false;
+    };
+  }, [fetchState.voteId, fetchState.attemptCount, searchParams, suivote]);
 
   // Format date
   const formatDate = (timestamp: number) => {
@@ -234,48 +392,6 @@ export default function SuccessPage() {
       })
     }, 250)
   }
-
-  // Fetch vote details
-  useEffect(() => {
-    const fetchVoteDetails = async () => {
-      try {
-      if (!voteId) {
-          if (txDigest) {
-            // You could implement logic here to get the vote ID from the transaction
-            // For now, we'll just show what we have
-            const id = await getSecondVoteObjectId(txDigest);
-            setVoteId(id);
-            setLoading(false)
-            return
-          } else {
-            throw new Error("Vote ID and transaction digest not found")
-          }
-        }
-
-        // Fetch vote details
-        const details = await suivote.getVoteDetails(voteId)
-
-        if (details) {
-          setVoteDetails(details)
-          document.title = `Vote Created: ${details.title} - SuiVote`
-
-          // Launch confetti with a slight delay for better UX
-          setTimeout(() => {
-            launchConfetti()
-          }, 500)
-        } else {
-          console.warn("Vote details not found for ID:", voteId)
-        }
-      } catch (err) {
-        console.error("Error fetching vote details:", err)
-        setError(err instanceof Error ? err.message : "Failed to load vote details")
-      } finally {
-        setLoading(false)
-      }
-    }
-
-    fetchVoteDetails()
-  }, [voteId, txDigest, suivote])
 
   // Handle share dialog
   const handleShare = () => {

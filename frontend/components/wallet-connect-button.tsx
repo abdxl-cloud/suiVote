@@ -2,7 +2,7 @@
 
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
-import { Loader2, ChevronDown, Copy, ExternalLink, LogOut, AlertCircle } from "lucide-react"
+import { Loader2, ChevronDown, Copy, ExternalLink, LogOut, AlertCircle, Wallet } from "lucide-react"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -27,52 +27,98 @@ interface WalletConnectButtonProps {
   className?: string
 }
 
-// WalletConnectButton component with improved error handling
+// WalletConnectButton component with improved error handling and wallet selection
 export function WalletConnectButton({ variant = "default", size = "default", className }: WalletConnectButtonProps) {
   const [isLoading, setIsLoading] = useState(false)
   const [showNoWalletDialog, setShowNoWalletDialog] = useState(false)
+  const [showWalletSelectionDialog, setShowWalletSelectionDialog] = useState(false)
+  const [connectingWallet, setConnectingWallet] = useState<string | null>(null)
 
   const { connected, connecting, disconnect, address, detectedWallets, select, configuredWallets } = useWallet()
 
+  // Get wallet icon URL
+  const getWalletIcon = (wallet: any) => {
+    // Map of known wallet icons
+    const knownWalletIcons: Record<string, string> = {
+      "Sui Wallet": "/images/sui-wallet-logo.png",
+      "Suiet": "/images/suiet-logo.jpeg",
+      "Ethos Wallet": "/images/ethos-logo.jpeg",
+      "Slush Wallet": "/images/slush-logo.png",
+      "suiVote": "/images/slush-logo.png", // Slush wallet might appear with this name
+      // Add more wallet icons as needed
+    }
+
+    // Check if we have a known icon for this wallet
+    if (knownWalletIcons[wallet.name]) {
+      return knownWalletIcons[wallet.name]
+    }
+
+    // Use wallet's provided icon if available
+    if (wallet.iconUrl) {
+      return wallet.iconUrl
+    }
+
+    // Use wallet's icon property if available
+    if (wallet.icon) {
+      return wallet.icon
+    }
+
+    // Default icon
+    return "/images/sui-logo.png"
+  }
+  const getAvailableWallets = () => {
+    const allWallets = [...configuredWallets, ...detectedWallets]
+    // Remove duplicates based on wallet name
+    const uniqueWallets = allWallets.filter((wallet, index, self) =>
+      index === self.findIndex((w) => w.name === wallet.name)
+    )
+    return uniqueWallets.filter((wallet) => wallet.installed)
+  }
+
   const handleConnect = async () => {
+    const availableWallets = getAvailableWallets()
+
+    if (availableWallets.length === 0) {
+      // No wallets detected
+      setShowNoWalletDialog(true)
+      return
+    }
+
+    if (availableWallets.length === 1) {
+      // Only one wallet available, connect directly
+      await connectWallet(availableWallets[0].name)
+    } else {
+      // Multiple wallets available, show selection dialog
+      setShowWalletSelectionDialog(true)
+    }
+  }
+
+  const connectWallet = async (walletName: string) => {
     setIsLoading(true)
+    setConnectingWallet(walletName)
     try {
-      // Check if there are any wallets available
-      const availableWallets = [...configuredWallets, ...detectedWallets].filter((wallet) => wallet.installed)
+      await select(walletName)
 
-      if (availableWallets.length === 0) {
-        // No wallets detected
-        setShowNoWalletDialog(true)
-        return
-      }
-
-      // Select the first available wallet
-      await select(availableWallets[0].name)
-
-      // Only show success toast if we have an address
-      if (address) {
-        toast({
-          title: "Wallet connected",
-          description: `Connected to wallet.`,
-        })
-      }
+      // Close the dialog immediately after successful selection
+      setShowWalletSelectionDialog(false)
+      
+      // Show success toast
+      toast({
+        title: "Wallet connected",
+        description: `Connected to ${walletName}.`,
+      })
     } catch (error: any) {
       console.error("Failed to connect wallet:", error)
 
-      // Convert error to string for better pattern matching
       const errorString = (error.message || error.toString()).toLowerCase()
 
-      // Check for specific error conditions
-      if (errorString.includes("no sui wallets detected") || detectedWallets.length === 0) {
-        setShowNoWalletDialog(true)
-      }
-      // Handle user rejection specifically
-      else if (errorString.includes("user rejection") || errorString.includes("user denied")) {
+      // Handle user rejection
+      if (errorString.includes("user rejection") || errorString.includes("user denied")) {
         toast({
           title: "Connection cancelled",
           description: "You cancelled the wallet connection request.",
-          // Using regular variant instead of destructive for user cancellations
         })
+        // Keep the wallet selection dialog open so user can try another wallet
       }
       // Handle timeout errors
       else if (errorString.includes("timeout")) {
@@ -92,6 +138,7 @@ export function WalletConnectButton({ variant = "default", size = "default", cla
       }
     } finally {
       setIsLoading(false)
+      setConnectingWallet(null)
     }
   }
 
@@ -154,97 +201,141 @@ export function WalletConnectButton({ variant = "default", size = "default", cla
     )
   }
 
-  // NoWalletDialog component to guide users to install a wallet
-  const NoWalletDialog = () => (
-    <Dialog open={showNoWalletDialog} onOpenChange={setShowNoWalletDialog}>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <AlertCircle className="h-5 w-5 text-yellow-500" />
-            No Sui Wallet Detected
-          </DialogTitle>
-          <DialogDescription>You need to install a Sui wallet to connect to this app.</DialogDescription>
-        </DialogHeader>
-        <div className="py-4">
-          <div className="space-y-4">
-            {/* Suiet Wallet - Mobile-friendly layout */}
-            <div className="border rounded-lg p-4 hover:bg-muted/50 transition-colors">
-              <div className="flex items-center gap-4">
-                <div className="h-10 w-10 flex-shrink-0 bg-black rounded-md flex items-center justify-center">
-                  <img src="/images/suiet-logo.jpeg" alt="Suiet" className="h-10 w-10 rounded-md" />
-                </div>
-                <div className="flex-grow">
-                  <h3 className="text-base font-semibold">Suiet Wallet</h3>
-                </div>
-                <Button asChild variant="outline" size="sm">
-                  <a
-                    href="https://suiet.app"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-center justify-center gap-2"
-                  >
-                    <ExternalLink className="h-3 w-3" />
-                    Visit
-                  </a>
-                </Button>
-              </div>
-            </div>
+  // WalletSelectionDialog component for choosing between available wallets
+  const WalletSelectionDialog = () => {
+    const availableWallets = getAvailableWallets()
 
-            {/* Sui Wallet - Mobile-friendly layout */}
-            <div className="border rounded-lg p-4 hover:bg-muted/50 transition-colors">
-              <div className="flex items-center gap-4">
-                <div className="h-10 w-10 flex-shrink-0 rounded-md overflow-hidden">
-                  <img src="/images/sui-wallet-logo.png" alt="Sui Wallet" className="h-10 w-10 object-cover" />
-                </div>
-                <div className="flex-grow">
-                  <h3 className="text-base font-semibold">Sui Wallet</h3>
-                </div>
-                <Button asChild variant="outline" size="sm">
-                  <a
-                    href="https://suiwallet.com/"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-center justify-center gap-2"
-                  >
-                    <ExternalLink className="h-3 w-3" />
-                    Visit
-                  </a>
+    return (
+      <Dialog open={showWalletSelectionDialog} onOpenChange={setShowWalletSelectionDialog}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Wallet className="h-5 w-5" />
+              Select a Wallet
+            </DialogTitle>
+            <DialogDescription>Choose a wallet to connect to the app.</DialogDescription>
+          </DialogHeader>
+          <div className="py-4">
+            <div className="space-y-2">
+              {availableWallets.map((wallet) => (
+                <Button
+                  key={wallet.name}
+                  variant="outline"
+                  className="w-full justify-start gap-3 h-auto p-4"
+                  onClick={() => connectWallet(wallet.name)}
+                  disabled={connectingWallet === wallet.name}
+                >
+                  <img 
+                    src={getWalletIcon(wallet)} 
+                    alt={wallet.name} 
+                    className="h-8 w-8 rounded-md object-cover"
+                    onError={(e) => {
+                      (e.target as HTMLImageElement).src = "/images/sui-logo.png"
+                    }}
+                  />
+                  <span className="flex-grow text-left">
+                    <div className="font-medium">{wallet.name}</div>
+                    {wallet.installed && (
+                      <div className="text-xs text-muted-foreground">Installed</div>
+                    )}
+                  </span>
+                  {connectingWallet === wallet.name && (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  )}
                 </Button>
-              </div>
-            </div>
-
-            {/* Ethos Wallet - Mobile-friendly layout */}
-            <div className="border rounded-lg p-4 hover:bg-muted/50 transition-colors">
-              <div className="flex items-center gap-4">
-                <div className="h-10 w-10 flex-shrink-0 rounded-md overflow-hidden">
-                  <img src="/images/ethos-logo.jpeg" alt="Ethos" className="h-10 w-10 object-cover" />
-                </div>
-                <div className="flex-grow">
-                  <h3 className="text-base font-semibold">Ethos Wallet</h3>
-                </div>
-                <Button asChild variant="outline" size="sm">
-                  <a
-                    href="https://ethoswallet.xyz"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-center justify-center gap-2"
-                  >
-                    <ExternalLink className="h-3 w-3" />
-                    Visit
-                  </a>
-                </Button>
-              </div>
+              ))}
             </div>
           </div>
-        </div>
-        <DialogFooter className="sm:justify-center">
-          <Button variant="outline" onClick={() => setShowNoWalletDialog(false)}>
-            Close
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  )
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowWalletSelectionDialog(false)}>
+              Cancel
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    )
+  }
+
+  // NoWalletDialog component to guide users to install a wallet
+  const NoWalletDialog = () => {
+    const allWallets = [...configuredWallets, ...detectedWallets];
+    const uniqueWallets = allWallets.filter((wallet, index, self) =>
+      index === self.findIndex((w) => w.name === wallet.name)
+    );
+  
+    return (
+      <Dialog open={showNoWalletDialog} onOpenChange={setShowNoWalletDialog}>
+        <DialogContent className="sm:max-w-2xl max-h-[90vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertCircle className="h-5 w-5 text-yellow-500" />
+              No Sui Wallet Detected
+            </DialogTitle>
+            <DialogDescription>
+              You need to install a Sui wallet to connect to this app.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex-1 overflow-y-auto py-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 px-2">
+              {uniqueWallets.map((wallet) => (
+                <div 
+                  key={wallet.name} 
+                  className="border rounded-lg p-3 hover:bg-muted/50 transition-colors flex items-center gap-3"
+                >
+                  <div className="h-8 w-8 flex-shrink-0 rounded-md overflow-hidden">
+                    <img 
+                      src={getWalletIcon(wallet)} 
+                      alt={wallet.name} 
+                      className="h-8 w-8 object-cover"
+                      onError={(e) => {
+                        (e.target as HTMLImageElement).src = "/images/sui-logo.png";
+                      }}
+                    />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <h3 className="text-sm font-semibold truncate">{wallet.name}</h3>
+                  </div>
+                  {(wallet.downloadUrl || wallet.homepage) && (
+                    <Button 
+                      asChild 
+                      variant="outline" 
+                      size="sm"
+                      className="shrink-0"
+                    >
+                      <a
+                        href={
+                          wallet.downloadUrl
+                            ? (typeof wallet.downloadUrl === 'string' 
+                                ? wallet.downloadUrl 
+                                : wallet.downloadUrl.browserExtension || wallet.downloadUrl.browser || Object.values(wallet.downloadUrl)[0])
+                            : wallet.homepage
+                        }
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center justify-center gap-1.5"
+                      >
+                        <ExternalLink className="h-3.5 w-3.5" />
+                        <span className="hidden sm:inline">Install</span>
+                      </a>
+                    </Button>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+          <DialogFooter className="mt-4">
+            <Button 
+              variant="outline" 
+              onClick={() => setShowNoWalletDialog(false)}
+              className="w-full sm:w-auto"
+            >
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    );
+  };
 
   // Show connect button when not connected, otherwise show account info
   return (
@@ -270,6 +361,7 @@ export function WalletConnectButton({ variant = "default", size = "default", cla
           )}
         </Button>
       )}
+      <WalletSelectionDialog />
       <NoWalletDialog />
     </>
   )

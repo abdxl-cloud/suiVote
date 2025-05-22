@@ -55,7 +55,7 @@ export function MediaFileUploader({
     if (acceptedTypes !== "*") {
       const fileType = file.type
       const acceptedTypeArray = acceptedTypes.split(",")
-      
+
       const isAccepted = acceptedTypeArray.some(type => {
         // Handle wildcards, e.g., image/*
         if (type.endsWith("/*")) {
@@ -146,89 +146,84 @@ export function MediaFileUploader({
   }
 
   return (
-    <div className="space-y-4">
-      <div
-        className={cn(
-          "border-2 border-dashed rounded-lg p-4 text-center cursor-pointer transition-all",
-          isDragging ? "border-primary bg-primary/5" : "border-muted-foreground/20",
-          disabled ? "opacity-50 cursor-not-allowed" : "hover:border-primary/50 hover:bg-muted/30",
-          error ? "border-red-500/50" : ""
-        )}
-        onDragOver={handleDragOver}
-        onDragLeave={handleDragLeave}
-        onDrop={handleDrop}
-        onClick={disabled ? undefined : triggerFileInput}
-      >
-        <Input
-          ref={fileInputRef}
-          type="file"
-          accept={acceptedTypes}
-          className="hidden"
-          onChange={handleFileInputChange}
-          disabled={disabled}
-        />
-
-        <div className="py-4 flex flex-col items-center gap-2">
-          {isProcessing ? (
-            <Loader2 className="h-10 w-10 text-muted-foreground animate-spin" />
-          ) : previewUrl ? (
-            <div className="flex flex-col items-center">
-              <div className="relative mb-2">
-                <img src={previewUrl} alt="Preview" className="w-auto h-32 object-contain rounded-md" />
-              </div>
-              <FileCheck className="h-6 w-6 text-green-500" />
-              <span className="text-sm text-muted-foreground mt-1">File ready for Walrus storage</span>
-            </div>
-          ) : (
-            <>
-              {error ? (
-                <AlertCircle className="h-10 w-10 text-red-500" />
-              ) : (
-                <>
-                  {acceptedTypes === "image/*" || acceptedTypes.includes("image/") ? (
-                    <FileImage className="h-10 w-10 text-muted-foreground" />
-                  ) : (
-                    <Upload className="h-10 w-10 text-muted-foreground" />
-                  )}
-                </>
-              )}
-              <div className="mt-2 space-y-1">
-                {error ? (
-                  <p className="text-sm font-medium text-red-500">{error}</p>
-                ) : (
-                  <>
-                    <p className="text-sm font-medium">
-                      {acceptedTypes === "image/*"
-                        ? "Drag & drop an image or click to browse"
-                        : "Drag & drop a file or click to browse"}
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      Files will be stored on Walrus decentralized storage
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      {`Maximum file size: ${maxSize}MB`}
-                    </p>
-                  </>
-                )}
-              </div>
-            </>
-          )}
-        </div>
-      </div>
-
-      {previewUrl && (
-        <div className="flex justify-end">
+    <div className={cn("space-y-2", className)}>
+      {previewUrl ? (
+        <div className="flex items-center gap-3">
+          <MediaPreview
+            mediaUrl={previewUrl}
+            onRemove={handleRemoveFile}
+            size="md"
+          />
           <Button
+            type="button"
             variant="outline"
             size="sm"
-            onClick={(e) => {
-              e.stopPropagation()
-              clearFile()
-            }}
-            disabled={disabled}
+            onClick={() => !disabled && fileInputRef.current?.click()}
+            disabled={disabled || isProcessing}
+            className="h-9 text-xs"
           >
-            Remove File
+            {isProcessing ? (
+              <>
+                <Loader2 className="mr-2 h-3 w-3 animate-spin" />
+                Processing...
+              </>
+            ) : (
+              <>Change Media</>
+            )}
           </Button>
+        </div>
+      ) : (
+        <div
+          className={cn(
+            "border-2 border-dashed rounded-lg p-4 transition-colors",
+            isDragging ? "border-primary bg-primary/5" : "border-muted-foreground/25",
+            disabled && "opacity-50 cursor-not-allowed",
+            "relative"
+          )}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
+          onClick={() => !disabled && fileInputRef.current?.click()}
+        >
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept={acceptedTypes}
+            onChange={handleFileInputChange}
+            disabled={disabled}
+            className="sr-only"
+          />
+
+          <div className="flex flex-col items-center justify-center space-y-2 py-3 text-center">
+            {isProcessing ? (
+              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+            ) : (
+              <>
+                <div className="rounded-full bg-primary/10 p-2">
+                  <ImageIcon className="h-5 w-5 text-primary" />
+                </div>
+                <div className="space-y-1">
+                  <p className="text-sm font-medium">
+                    {disabled ? "Upload disabled" : buttonText}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {acceptedTypes === "image/*"
+                      ? `Images up to ${maxSize}MB`
+                      : `Files up to ${maxSize}MB`}
+                  </p>
+                </div>
+              </>
+            )}
+          </div>
+
+          {error && (
+            <div className="absolute bottom-0 left-0 right-0 bg-destructive/90 text-destructive-foreground p-2 text-xs">
+              <div className="flex items-center space-x-1">
+                <AlertCircle className="h-3 w-3" />
+                <span>{error}</span>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>

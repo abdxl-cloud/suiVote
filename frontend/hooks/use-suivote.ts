@@ -537,6 +537,25 @@ export function useSuiVote() {
     }
   }, [])
 
+  /**
+   * Create a transaction to start a vote when its start time has passed
+   */
+  const startVoteTransaction = useCallback((voteId: string): Transaction => {
+    try {
+      setLoading(true)
+      setError(null)
+
+      const transaction = suiVoteService.startVoteTransaction(voteId)
+      return transaction
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err)
+      setError(errorMessage)
+      throw err
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
   return {
     loading,
     error,
@@ -553,6 +572,7 @@ export function useSuiVote() {
     closeVoteTransaction,
     cancelVoteTransaction,
     extendVotingPeriodTransaction,
+    startVoteTransaction,
     hasVoted,
     getVoteResults,
     executeTransaction,
