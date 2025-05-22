@@ -288,7 +288,7 @@ const addPoll = () => {
   const pollNumber = polls.length + 1 // Ensure sequential numbering
   const newPoll: PollType = {
     id: `poll-${timestamp}`,
-    title: `Poll ${pollNumber}`, // Default title shows the order
+    title: ``, 
     description: "",
     options: [
       { id: `option-${timestamp}-1`, text: "", mediaUrl: null },

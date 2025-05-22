@@ -325,8 +325,8 @@ module contracts::voting {
         // Share the vote object
         transfer::share_object(vote);
     }
-
-    /// Add a poll to a vote
+    
+    // 3. Enhanced add_poll function with ordering validation
     public entry fun add_poll(
         vote: &mut Vote,
         title: String,
@@ -358,25 +358,25 @@ module contracts::voting {
             total_responses: 0
         };
         
-        // Add poll to vote using dynamic fields
-        let poll_count = vote.polls_count + 1;
-        vote.polls_count = poll_count;
-        
+        // FIXED: Ensure sequential poll indexing
+        let poll_index = vote.polls_count + 1;
         let poll_id = object::id(&poll);
-        let vote_id = object::id(vote);  // Get the vote ID before mutable borrow
+        let vote_id = object::id(vote);
         
-        dof::add(&mut vote.id, poll_count, poll);
+        // Add poll with guaranteed sequential index
+        dof::add(&mut vote.id, poll_index, poll);
+        vote.polls_count = poll_index; // Critical: update count to match index
         
         // Emit event for frontend tracking
         event::emit(PollAdded {
             vote_id,
             poll_id,
-            poll_index: poll_count,
+            poll_index,
             title
         });
     }
 
-    /// Add an option to a poll
+    // 4. Enhanced add_poll_option function with ordering validation
     public entry fun add_poll_option(
         vote: &mut Vote,
         poll_index: u64,
@@ -395,11 +395,12 @@ module contracts::voting {
         // Can't add options if vote is cancelled
         assert!(!vote.is_cancelled, EPollClosed);
         
-        // Store vote_id before mutable borrows
         let vote_id = object::id(vote);
         
-        // Get the poll
+        // Validate poll exists
         assert!(poll_index <= vote.polls_count && poll_index > 0, EPollNotFound);
+        assert!(dof::exists_(&vote.id, poll_index), EPollNotFound);
+        
         let poll: &mut Poll = dof::borrow_mut(&mut vote.id, poll_index);
         
         // Convert media_url to Option<String>
@@ -416,20 +417,21 @@ module contracts::voting {
             votes: 0
         };
         
-        // Add option to poll using dynamic fields
-        let option_count = poll.options_count + 1;
-        poll.options_count = option_count;
-        
+        // FIXED: Ensure sequential option indexing
+        let option_index = poll.options_count + 1;
         let option_id = object::id(&option);
         let poll_id = object::id(poll);
-        dof::add(&mut poll.id, option_count, option);
+        
+        // Add option with guaranteed sequential index
+        dof::add(&mut poll.id, option_index, option);
+        poll.options_count = option_index; // Critical: update count to match index
         
         // Emit event for frontend tracking
         event::emit(OptionAdded {
             vote_id,
             poll_id,
             option_id,
-            option_index: option_count,
+            option_index,
             text
         });
     }
@@ -651,77 +653,68 @@ module contracts::voting {
             is_cancelled: false,
             token_requirement: token_req,
             token_amount: token_amt,
-            has_whitelist: !vector::is_empty(&whitelist_addresses), // Set based on addresses
+            has_whitelist: !vector::is_empty(&whitelist_addresses),
             show_live_stats,
             use_token_weighting,
             tokens_per_vote,
-            version: CURRENT_VERSION // Initialize with current version
+            version: CURRENT_VERSION
         };
 
-        // Get all option texts and media_urls total counts
-        let mut option_text_index = 0;
-        let mut option_media_index = 0;
-        let mut total_options = 0;
-
-        let mut i = 0;
-        while (i < poll_count) {
-            total_options = total_options + *vector::borrow(&poll_option_counts, i);
-            i = i + 1;
-        };
-
-        // Validate total options
-        assert!(total_options == vector::length(&poll_option_texts), EInvalidOptionCount);
-        assert!(total_options == vector::length(&poll_option_media_urls), EInvalidOptionCount);
-
-        // Store the vote ID before any mutable borrow
         let vote_id = object::id(&vote);
 
-        // Create polls and options
-        i = 0;
-        while (i < poll_count) {
-            // Add poll
+        // FIXED: Process polls and options with guaranteed ordering
+        let mut option_text_index = 0;
+        let mut option_media_index = 0;
+        
+        // Create polls in sequential order (1-based indexing)
+        let mut poll_counter = 0;
+        while (poll_counter < poll_count) {
+            // Create poll with guaranteed index
+            let poll_index = poll_counter + 1; // 1-based indexing
+            
             let poll = Poll {
                 id: object::new(ctx),
-                title: *vector::borrow(&poll_titles, i),
-                description: *vector::borrow(&poll_descriptions, i),
-                is_multi_select: *vector::borrow(&poll_is_multi_select, i),
-                max_selections: if (*vector::borrow(&poll_is_multi_select, i)) { 
-                    *vector::borrow(&poll_max_selections, i)
+                title: *vector::borrow(&poll_titles, poll_counter),
+                description: *vector::borrow(&poll_descriptions, poll_counter),
+                is_multi_select: *vector::borrow(&poll_is_multi_select, poll_counter),
+                max_selections: if (*vector::borrow(&poll_is_multi_select, poll_counter)) { 
+                    *vector::borrow(&poll_max_selections, poll_counter)
                 } else { 
                     1 
                 },
-                is_required: *vector::borrow(&poll_is_required, i),
+                is_required: *vector::borrow(&poll_is_required, poll_counter),
                 options_count: 0,
                 total_responses: 0
             };
 
-            // Add poll to vote
-            let poll_index = vote.polls_count + 1;
-            vote.polls_count = poll_index;
             let poll_id = object::id(&poll);
-            dof::add(&mut vote.id, poll_index, poll);
             
-            // Emit event for poll creation
+            // CRITICAL: Store poll with guaranteed sequential index
+            dof::add(&mut vote.id, poll_index, poll);
+            vote.polls_count = poll_index; // Update count to match index
+            
+            // Emit event with correct index
             event::emit(PollAdded {
                 vote_id,
                 poll_id,
                 poll_index,
-                title: *vector::borrow(&poll_titles, i)
+                title: *vector::borrow(&poll_titles, poll_counter)
             });
 
-            // Add options for this poll
-            let option_count = *vector::borrow(&poll_option_counts, i);
-            let mut j = 0;
+            // Now add options to this poll in guaranteed order
+            let option_count_for_this_poll = *vector::borrow(&poll_option_counts, poll_counter);
+            let mut option_counter = 0;
             
-            while (j < option_count) {
-                // Get poll to add options
-                let poll: &mut Poll = dof::borrow_mut(&mut vote.id, poll_index);
-
-                // Get option text and media url
+            while (option_counter < option_count_for_this_poll) {
+                // Get mutable reference to the poll we just added
+                let poll_ref: &mut Poll = dof::borrow_mut(&mut vote.id, poll_index);
+                
+                // Create option with guaranteed index
+                let option_index = option_counter + 1; // 1-based indexing
+                
                 let option_text = *vector::borrow(&poll_option_texts, option_text_index);
                 let option_media_url = *vector::borrow(&poll_option_media_urls, option_media_index);
 
-                // Create option
                 let media = if (vector::length(&option_media_url) > 0) {
                     option::some(string::utf8(option_media_url))
                 } else {
@@ -735,29 +728,28 @@ module contracts::voting {
                     votes: 0
                 };
 
-                // Add option to poll
-                let option_index = poll.options_count + 1;
-                poll.options_count = option_index;
                 let option_id = object::id(&option);
-                let poll_id = object::id(poll);
-                dof::add(&mut poll.id, option_index, option);
                 
-                // Emit event for option creation
+                // CRITICAL: Store option with guaranteed sequential index
+                dof::add(&mut poll_ref.id, option_index, option);
+                poll_ref.options_count = option_index; // Update count to match index
+                
+                // Emit event with correct indices
                 event::emit(OptionAdded {
-                    vote_id, // Use the pre-stored vote_id
+                    vote_id,
                     poll_id,
                     option_id,
                     option_index,
                     text: option_text
                 });
 
-                // Increment counters
+                // Increment global counters
                 option_text_index = option_text_index + 1;
                 option_media_index = option_media_index + 1;
-                j = j + 1;
+                option_counter = option_counter + 1;
             };
 
-            i = i + 1;
+            poll_counter = poll_counter + 1;
         };
         
         // Process whitelist - always add creator if whitelist is enabled

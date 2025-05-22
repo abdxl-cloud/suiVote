@@ -133,17 +133,17 @@ export default function VotePage() {
         <DialogHeader>
           <DialogTitle>
             {txStatus === TransactionStatus.SUCCESS
-              ? "Vote Started Successfully!"
+              ? "Transaction Successful!"
               : txStatus === TransactionStatus.ERROR
-                ? "Error Starting Vote"
-                : "Starting Vote"}
+                ? "Transaction Failed"
+                : "Processing Transaction"}
           </DialogTitle>
           <DialogDescription>
             {txStatus === TransactionStatus.SUCCESS
-              ? "The vote has been activated on the blockchain."
+              ? "Your transaction has been confirmed on the blockchain."
               : txStatus === TransactionStatus.ERROR
-                ? "There was an error starting the vote."
-                : "Please wait while we activate the vote on the blockchain."}
+                ? "There was an error processing your transaction."
+                : "Please wait while we process your transaction on the blockchain."}
           </DialogDescription>
         </DialogHeader>
 
@@ -654,8 +654,10 @@ const handleSubmitVote = async () => {
   try {
     // Set UI state to submitting
     setSubmitting(true);
+    setTxStatusDialogOpen(true);
+    setTransactionError(null);
     setTxStatus(TransactionStatus.BUILDING);
-    // setErrorMessage(null);
+    setTxProgress(20);
     
     // Clear any previous validation errors
     setValidationErrors({});
@@ -666,7 +668,8 @@ const handleSubmitVote = async () => {
     // STEP 1: Validate wallet is connected
     if (!wallet || !wallet.address) {
       console.error("[Vote Debug] Wallet not connected");
-      // setErrorMessage("Please connect your wallet to vote");
+      setTransactionError("Please connect your wallet to vote");
+      setTxStatus(TransactionStatus.ERROR);
       setSubmitting(false);
       return;
     }
@@ -707,6 +710,8 @@ const handleSubmitVote = async () => {
     if (Object.keys(validationErrors).length > 0) {
       console.error("[Vote Debug] Validation failed:", validationErrors);
       setValidationErrors(validationErrors);
+      setTxStatus(TransactionStatus.ERROR);
+      setTransactionError("Please fix validation errors before submitting");
       setSubmitting(false);
       return;
     }
@@ -762,6 +767,8 @@ const handleSubmitVote = async () => {
     if (pollIndices.length === 0) {
       console.error("[Vote Debug] No valid poll mappings to submit");
       setValidationErrors({ general: "Error processing your selections. Please try again." });
+      setTxStatus(TransactionStatus.ERROR);
+      setTransactionError("Error processing your selections. Please try again.");
       setSubmitting(false);
       return;
     }
@@ -824,12 +831,24 @@ const handleSubmitVote = async () => {
     // STEP 6: Execute the transaction
     console.log("[Vote Debug] Sending transaction to wallet for signing");
     setTxStatus(TransactionStatus.SIGNING);
+    setTxProgress(40);
     
     // Send single transaction to wallet (no multiple signatures needed)
     const response = await suivote.executeTransaction(transaction);
     
+    // Update progress
+    setTxStatus(TransactionStatus.EXECUTING);
+    setTxProgress(60);
+    setTxDigest(response.digest);
+    
+    // Wait for confirmation
+    setTxStatus(TransactionStatus.CONFIRMING);
+    setTxProgress(80);
+    
+    // Transaction successful
     console.log("[Vote Debug] Transaction complete:", response);
     setTxStatus(TransactionStatus.SUCCESS);
+    setTxProgress(100);
     
     // Update UI on success
     toast.success("Vote submitted successfully!");
@@ -846,6 +865,7 @@ const handleSubmitVote = async () => {
     
     // Redirect to success page or show results based on vote settings
     setTimeout(() => {
+      setTxStatusDialogOpen(false);
       if (vote?.showLiveStats) {
         // If live stats are enabled, just show results on this page
         setShowingResults(true);
@@ -887,7 +907,7 @@ const handleSubmitVote = async () => {
       }
     }
     
-    // setErrorMessage(userErrorMessage);
+    setTransactionError(userErrorMessage);
     setSubmitting(false);
     
     // Show error toast
@@ -1006,24 +1026,16 @@ const handleSubmitVote = async () => {
     return (
       <div className="container max-w-4xl py-6 md:py-10 px-4 md:px-6 mx-auto">
         <div className="flex flex-col items-center justify-center min-h-[70vh] gap-6">
-          <motion.div
-            initial={{ opacity: 0, scale: 0.9 }}
-            animate={{ opacity: 1, scale: 1 }}
-            transition={{ duration: 0.5 }}
-            className="relative h-24 w-24"
-          >
-            <div className="absolute inset-0 rounded-full border-t-2 border-primary animate-spin"></div>
-            <div className="absolute inset-3 rounded-full bg-primary/20 animate-pulse shadow-lg"></div>
-          </motion.div>
-          <motion.div
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5, delay: 0.2 }}
-            className="text-center space-y-3"
-          >
-            <h3 className="text-2xl font-medium">Loading Vote</h3>
-            <p className="text-muted-foreground text-base">Please wait while we retrieve the vote data...</p>
-          </motion.div>
+          <div className="flex items-center justify-center">
+            <div className="relative">
+              <div className="h-16 w-16 rounded-full border-4 border-muted animate-pulse"></div>
+              <div className="absolute inset-0 h-16 w-16 rounded-full border-t-4 border-primary animate-spin"></div>
+            </div>
+          </div>
+          <div className="text-center space-y-3">
+            <h3 className="text-xl font-medium">Loading Vote</h3>
+            <p className="text-muted-foreground text-sm">Please wait while we retrieve the vote data...</p>
+          </div>
         </div>
       </div>
     )
@@ -1314,7 +1326,7 @@ const handleSubmitVote = async () => {
                   <div className="flex items-start justify-between">
                     <div>
                       <CardTitle className="text-xl">
-                        {index + 1}. {poll.title}
+                      {poll.title}
                       </CardTitle>
                       {poll.description && <CardDescription className="mt-1">{poll.description}</CardDescription>}
                     </div>
@@ -1352,9 +1364,6 @@ const handleSubmitVote = async () => {
                             </div>
                             <div className="text-base truncate flex-1 flex items-center gap-2">
                               {option.text}
-                              <span className="text-xs text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
-                                #{optionIndex + 1}
-                              </span>
                             </div>
                           </div>
                         );

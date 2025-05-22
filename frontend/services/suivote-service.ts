@@ -532,69 +532,88 @@ export class SuiVoteService {
   async getVotePolls(voteId: string): Promise<PollDetails[]> {
     try {
       this.checkInitialization()
-
+  
       if (!voteId) {
         throw new Error("Vote ID is required")
       }
-
+  
       // First get the vote details to check pollsCount
       const voteDetails = await this.getVoteDetails(voteId)
       if (!voteDetails) throw new Error(`Vote ${voteId} not found`)
-
-      const polls: PollDetails[] = []
-      const pollPromises: Promise<void>[] = []
-
-      // Query each poll by its index using dynamic fields in parallel
-      for (let i = 1; i <= voteDetails.pollsCount; i++) {
-        pollPromises.push(
-          (async (index) => {
-            try {
-              // Get the dynamic field (poll) by name
-              const pollField = await this.client.getDynamicFieldObject({
-                parentId: voteId,
-                name: {
-                  type: "u64",
-                  value: index.toString(),
-                },
-              })
-
-              if (!pollField.data || !pollField.data.content || pollField.data.content.dataType !== "moveObject") return
-
-              const pollFields = pollField.data.content.fields as Record<string, any>
-              const pollId = pollField.data.objectId
-
-              // Build poll details
-              const pollDetails: PollDetails = {
-                id: pollId,
-                title: pollFields.title,
-                description: pollFields.description,
-                isMultiSelect: !!pollFields.is_multi_select,
-                maxSelections: Number(pollFields.max_selections || 1),
-                isRequired: !!pollFields.is_required,
-                optionsCount: Number(pollFields.options_count || 0),
-                totalResponses: Number(pollFields.total_responses || 0),
-                options: [], // Will be populated separately if needed
-              }
-              polls.push(pollDetails)
-            } catch (error) {
-              console.warn(`Failed to fetch poll at index ${index} for vote ${voteId}:`, error)
-              // Continue with other polls if one fails
+  
+      console.log(`Fetching ${voteDetails.pollsCount} polls for vote ${voteId}`)
+  
+      const polls: (PollDetails | null)[] = new Array(voteDetails.pollsCount).fill(null)
+      
+      // Fetch all polls in parallel but maintain order
+      const pollPromises = Array.from({ length: voteDetails.pollsCount }, (_, i) => {
+        const pollIndex = i + 1 // 1-based indexing
+        
+        return (async () => {
+          try {
+            console.log(`Fetching poll at index ${pollIndex}`)
+            
+            // Get the dynamic field (poll) by name
+            const pollField = await this.client.getDynamicFieldObject({
+              parentId: voteId,
+              name: {
+                type: "u64",
+                value: pollIndex.toString(),
+              },
+            })
+  
+            if (!pollField.data || !pollField.data.content || pollField.data.content.dataType !== "moveObject") {
+              console.warn(`Poll at index ${pollIndex} not found`)
+              return null
             }
-          })(i),
-        )
-      }
-
+  
+            const pollFields = pollField.data.content.fields as Record<string, any>
+            const pollId = pollField.data.objectId
+  
+            // Build poll details
+            const pollDetails: PollDetails = {
+              id: pollId,
+              title: pollFields.title,
+              description: pollFields.description,
+              isMultiSelect: !!pollFields.is_multi_select,
+              maxSelections: Number(pollFields.max_selections || 1),
+              isRequired: !!pollFields.is_required,
+              optionsCount: Number(pollFields.options_count || 0),
+              totalResponses: Number(pollFields.total_responses || 0),
+              options: [], // Will be populated separately if needed
+            }
+            
+            console.log(`Poll ${pollIndex} fetched: "${pollDetails.title}" with ${pollDetails.optionsCount} options`)
+            
+            // Store in the correct position
+            polls[i] = pollDetails
+            
+            return pollDetails
+          } catch (error) {
+            console.error(`Failed to fetch poll at index ${pollIndex} for vote ${voteId}:`, error)
+            return null
+          }
+        })()
+      })
+  
       // Wait for all polls to be fetched
       await Promise.all(pollPromises)
-
-      // Sort polls by index (though they should already be in order)
-      polls.sort((a, b) => a.id.localeCompare(b.id))
-
-      return polls
+  
+      // Filter out null values and ensure order is preserved
+      const orderedPolls = polls.filter((poll): poll is PollDetails => poll !== null)
+      
+      console.log(`Successfully fetched ${orderedPolls.length} polls in order:`)
+      orderedPolls.forEach((poll, index) => {
+        console.log(`  ${index + 1}. "${poll.title}" (${poll.optionsCount} options)`)
+      })
+  
+      return orderedPolls
     } catch (error) {
+      console.error(`Failed to fetch polls for vote ${voteId}:`, error)
       throw new Error(`Failed to fetch polls: ${error instanceof Error ? error.message : String(error)}`)
     }
   }
+  
 
   /**
    * Get detailed information about a poll's options
@@ -605,71 +624,88 @@ export class SuiVoteService {
   async getPollOptions(voteId: string, pollIndex: number): Promise<PollOptionDetails[]> {
     try {
       this.checkInitialization()
-
+  
       if (!voteId) {
         throw new Error("Vote ID is required")
       }
-
+  
       if (pollIndex < 1) {
         throw new Error("Poll index must be 1 or greater")
       }
-
+  
+      console.log(`Fetching options for vote ${voteId}, poll ${pollIndex}`)
+  
       // First get the poll details
       const polls = await this.getVotePolls(voteId)
       if (!polls || polls.length < pollIndex) {
         throw new Error(`Poll index ${pollIndex} not found for vote ${voteId}`)
       }
-
+  
       const poll = polls[pollIndex - 1] // Convert to 0-based index
       const pollId = poll.id
-
-      const options: PollOptionDetails[] = []
-      const optionPromises: Promise<void>[] = []
-
-      // Query each option by its index using dynamic fields in parallel
-      for (let i = 1; i <= poll.optionsCount; i++) {
-        optionPromises.push(
-          (async (index) => {
-            try {
-              // Get the dynamic field (option) by name
-              const optionField = await this.client.getDynamicFieldObject({
-                parentId: pollId,
-                name: {
-                  type: "u64",
-                  value: index.toString(),
-                },
-              })
-
-              if (!optionField.data || !optionField.data.content || optionField.data.content.dataType !== "moveObject")
-                return
-
-              const optionFields = optionField.data.content.fields as Record<string, any>
-              const optionId = optionField.data.objectId
-
-              // Build option details
-              const optionDetails: PollOptionDetails = {
-                id: optionId,
-                text: optionFields.text,
-                mediaUrl: optionFields.media_url?.fields?.value || undefined,
-                votes: Number(optionFields.votes || 0),
-              }
-
-              options.push(optionDetails)
-            } catch (error) {
-              console.warn(`Failed to fetch option at index ${index} for poll ${pollId}:`, error)
-              // Continue with other options if one fails
+  
+      console.log(`Poll ${pollIndex} has ${poll.optionsCount} options`)
+  
+      const options: (PollOptionDetails | null)[] = new Array(poll.optionsCount).fill(null)
+  
+      // Fetch all options in parallel but maintain order
+      const optionPromises = Array.from({ length: poll.optionsCount }, (_, i) => {
+        const optionIndex = i + 1 // 1-based indexing
+        
+        return (async () => {
+          try {
+            console.log(`Fetching option at index ${optionIndex} for poll ${pollId}`)
+            
+            // Get the dynamic field (option) by name
+            const optionField = await this.client.getDynamicFieldObject({
+              parentId: pollId,
+              name: {
+                type: "u64",
+                value: optionIndex.toString(),
+              },
+            })
+  
+            if (!optionField.data || !optionField.data.content || optionField.data.content.dataType !== "moveObject") {
+              console.warn(`Option at index ${optionIndex} not found for poll ${pollId}`)
+              return null
             }
-          })(i),
-        )
-      }
-
+  
+            const optionFields = optionField.data.content.fields as Record<string, any>
+            const optionId = optionField.data.objectId
+  
+            // Build option details
+            const optionDetails: PollOptionDetails = {
+              id: optionId,
+              text: optionFields.text,
+              mediaUrl: optionFields.media_url?.fields?.value || undefined,
+              votes: Number(optionFields.votes || 0),
+            }
+  
+            console.log(`Option ${optionIndex}: "${optionDetails.text}" (${optionDetails.votes} votes)`)
+            
+            // Store in the correct position
+            options[i] = optionDetails
+            
+            return optionDetails
+          } catch (error) {
+            console.error(`Failed to fetch option at index ${optionIndex} for poll ${pollId}:`, error)
+            return null
+          }
+        })()
+      })
+  
       // Wait for all options to be fetched
       await Promise.all(optionPromises)
-
-      // Sort options by index (though they should already be in order)
-      options.sort((a, b) => a.id.localeCompare(b.id))
-
-      return options
+  
+      // Filter out null values and ensure order is preserved
+      const orderedOptions = options.filter((option): option is PollOptionDetails => option !== null)
+      
+      console.log(`Successfully fetched ${orderedOptions.length} options in order:`)
+      orderedOptions.forEach((option, index) => {
+        console.log(`  ${index + 1}. "${option.text}" (${option.votes} votes)`)
+      })
+  
+      return orderedOptions
     } catch (error) {
       console.error(`Failed to fetch options for poll ${pollIndex} in vote ${voteId}:`, error)
       throw new Error(`Failed to fetch poll options: ${error instanceof Error ? error.message : String(error)}`)
@@ -734,36 +770,41 @@ export class SuiVoteService {
       const pollIsRequired: boolean[] = []
       const pollOptionCounts: number[] = []
       const pollOptionTexts: string[] = []
-      const pollOptionMediaUrls: number[][] = [] // Changed to number[][]
+      const pollOptionMediaUrls: number[][] = []
 
-      // Process each poll
-      for (const poll of pollData) {
+      for (let pollIndex = 0; pollIndex < pollData.length; pollIndex++) {
+        const poll = pollData[pollIndex]
+        
+        console.log(`Processing poll ${pollIndex + 1}/${pollData.length}: "${poll.title}"`)
+        
         pollTitles.push(poll.title || "")
         pollDescriptions.push(poll.description || "")
         pollIsMultiSelect.push(!!poll.isMultiSelect)
         pollIsRequired.push(!!poll.isRequired)
-
+  
         // Handle maxSelections for single/multi-select polls
         const maxSelections = poll.isMultiSelect
           ? Math.min(Math.max(1, poll.maxSelections), poll.options.length - 1)
           : 1
         pollMaxSelections.push(maxSelections)
-
+  
         // Record option count for this poll
         pollOptionCounts.push(poll.options.length)
-
-        // Process options for this poll
-        for (const option of poll.options) {
+  
+        // Process options for this poll in strict sequential order
+        console.log(`  Processing ${poll.options.length} options:`)
+        for (let optionIndex = 0; optionIndex < poll.options.length; optionIndex++) {
+          const option = poll.options[optionIndex]
+          
+          console.log(`    Option ${optionIndex + 1}/${poll.options.length}: "${option.text}"`)
+          
           pollOptionTexts.push(option.text || "")
-
+  
           // Convert media URL to bytes (empty array if none)
           if (option.mediaUrl) {
-            // Convert string to Uint8Array, then to regular array
             const mediaUrlBytes = new TextEncoder().encode(option.mediaUrl)
-            // Convert Uint8Array to regular array
             pollOptionMediaUrls.push(Array.from(mediaUrlBytes))
           } else {
-            // Empty array if no media URL
             pollOptionMediaUrls.push([])
           }
         }
@@ -849,6 +890,27 @@ export class SuiVoteService {
       if (!pollData || !Array.isArray(pollData) || pollData.length === 0) {
         throw new Error("At least one poll is required")
       }
+      for (let i = 0; i < pollData.length; i++) {
+        const poll = pollData[i]
+        console.log(`Poll ${i + 1}: "${poll.title}"`)
+        
+        if (!poll.title) {
+          throw new Error(`Poll ${i + 1} is missing a title`)
+        }
+        
+        if (!poll.options || poll.options.length < 2) {
+          throw new Error(`Poll ${i + 1} must have at least 2 options`)
+        }
+        
+        for (let j = 0; j < poll.options.length; j++) {
+          const option = poll.options[j]
+          console.log(`  Option ${j + 1}: "${option.text}"`)
+          
+          if (!option.text) {
+            throw new Error(`Poll ${i + 1}, Option ${j + 1} is missing text`)
+          }
+        }
+      }
 
       const tx = new Transaction()
 
@@ -914,48 +976,39 @@ export class SuiVoteService {
       const pollOptionMediaUrls: number[][] = []
 
       // Process each poll
-      for (const poll of pollData) {
+      for (let pollIndex = 0; pollIndex < pollData.length; pollIndex++) {
+        const poll = pollData[pollIndex]
+        
+        console.log(`Processing poll ${pollIndex + 1}/${pollData.length}: "${poll.title}"`)
+        
         pollTitles.push(poll.title || "")
         pollDescriptions.push(poll.description || "")
         pollIsMultiSelect.push(!!poll.isMultiSelect)
         pollIsRequired.push(!!poll.isRequired)
-
+  
         // Handle maxSelections for single/multi-select polls
         const maxSelections = poll.isMultiSelect
           ? Math.min(Math.max(1, poll.maxSelections), poll.options.length - 1)
           : 1
         pollMaxSelections.push(maxSelections)
-
+  
         // Record option count for this poll
         pollOptionCounts.push(poll.options.length)
-
-        // Process options for this poll
-        for (const option of poll.options) {
+  
+        // Process options for this poll in strict sequential order
+        console.log(`  Processing ${poll.options.length} options:`)
+        for (let optionIndex = 0; optionIndex < poll.options.length; optionIndex++) {
+          const option = poll.options[optionIndex]
+          
+          console.log(`    Option ${optionIndex + 1}/${poll.options.length}: "${option.text}"`)
+          
           pollOptionTexts.push(option.text || "")
-
-          // If option has mediaUrl and it references a blob ID placeholder
-          if (option.mediaUrl && option.mediaUrl.startsWith("[MEDIA_FILE_") && option.mediaUrl.endsWith("]")) {
-            // Extract file ID from reference
-            const fileId = option.mediaUrl.substring(12, option.mediaUrl.length - 1)
-
-            // Check if we have this file in our map
-            if (blobIdMap.has(fileId)) {
-              // Create the Sui blob URL
-              const placeholderUrl = `sui://blob/${blobIdMap.get(fileId)}`
-
-              // Convert to byte array for the Move call
-              const mediaUrlBytes = new TextEncoder().encode(placeholderUrl)
-              pollOptionMediaUrls.push(Array.from(mediaUrlBytes))
-            } else {
-              // File not found, use empty URL
-              pollOptionMediaUrls.push([])
-            }
-          } else if (option.mediaUrl) {
-            // Regular URL (external or previously uploaded)
+  
+          // Convert media URL to bytes (empty array if none)
+          if (option.mediaUrl) {
             const mediaUrlBytes = new TextEncoder().encode(option.mediaUrl)
             pollOptionMediaUrls.push(Array.from(mediaUrlBytes))
           } else {
-            // No media URL
             pollOptionMediaUrls.push([])
           }
         }
