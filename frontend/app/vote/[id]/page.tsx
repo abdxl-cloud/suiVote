@@ -118,6 +118,7 @@ export default function VotePage() {
           setTxStatusDialogOpen(false);
           // If transaction was successful, refresh the page data
           if (txStatus === TransactionStatus.SUCCESS) {
+            setTxStatusDialogOpen(false); // Explicitly close the dialog
             router.refresh();
             fetchVoteData();
           }
