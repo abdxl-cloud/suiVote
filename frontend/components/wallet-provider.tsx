@@ -15,7 +15,10 @@ const slushWebWalletConfig = defineSlushWallet({
 
 export function SuiWalletProvider({ children }: { children: ReactNode }) {
   return (
-    <WalletProvider defaultWallets={AllDefaultWallets}>
+    <WalletProvider defaultWallets={[
+      ...AllDefaultWallets,
+      slushWebWalletConfig,
+    ]}>
       {children}
     </WalletProvider>
   );

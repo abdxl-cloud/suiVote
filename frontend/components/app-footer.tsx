@@ -7,8 +7,8 @@ import { Github, Twitter, ExternalLink } from "lucide-react"
 export function AppFooter() {
   const pathname = usePathname()
 
-  // Don't render the footer on the landing page
-  if (pathname === "/") return null
+  // Don't render the footer on the landing page or vote pages
+  if (pathname === "/" || pathname.startsWith("/vote/")) return null
 
   return (
     <footer className="w-full py-6 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 border-t transition-all duration-300 animate-fade-in">
