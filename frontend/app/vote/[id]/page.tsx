@@ -2190,12 +2190,10 @@ export default function VotePage() {
                         className="gap-2 transition-all duration-300 hover:translate-x-[-2px] h-10 px-4 shadow-sm"
                       >
                         <ChevronLeft className="h-4 w-4" />
-                        Previous Poll
+                        
                       </Button>
 
-                      <div className="text-sm font-medium bg-muted/50 px-3 py-1.5 rounded-full">
-                        Poll {activePollIndex + 1} of {polls.length}
-                      </div>
+                      
 
                       <Button
                         variant="outline"
@@ -2208,7 +2206,7 @@ export default function VotePage() {
                         disabled={activePollIndex === polls.length - 1}
                         className="gap-2 transition-all duration-300 hover:translate-x-[2px] h-10 px-4 shadow-sm"
                       >
-                        Next Poll
+                        
                         <ChevronRight className="h-4 w-4" />
                       </Button>
                     </div>
