@@ -1907,7 +1907,6 @@ export default function VotePage() {
                       title="Previous poll"
                     >
                       <ChevronLeft className="h-4 w-4" />
-                      <span className="sr-only">Previous poll</span>
                     </Button>
                     <span className="text-sm">
                       Poll {activePollIndex + 1} of {polls.length}
@@ -1925,7 +1924,6 @@ export default function VotePage() {
                       title="Next poll"
                     >
                       <ChevronRight className="h-4 w-4" />
-                      <span className="sr-only">Next poll</span>
                     </Button>
                   </div>
 
