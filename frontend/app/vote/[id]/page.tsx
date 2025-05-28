@@ -37,7 +37,11 @@ import {
   ChevronRight,
   Check,
   Circle,
-  Play
+  Play,
+  HelpCircle,
+  Wifi,
+  X,
+  RefreshCw
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
@@ -96,6 +100,76 @@ export default function VotePage() {
   const [userHasRequiredTokens, setUserHasRequiredTokens] = useState(true)
   const [tokenBalance, setTokenBalance] = useState(0)
 
+  const [timeRemaining, setTimeRemaining] = useState({
+    days: 0,
+    hours: 0,
+    minutes: 0,
+    seconds: 0,
+    hasStarted: false
+  });
+  const calculateTimeRemaining = (startTimestamp: number) => {
+    const now = Date.now();
+    const difference = startTimestamp - now;
+
+    if (difference <= 0) {
+      return { hasStarted: true };
+    }
+
+    return {
+      days: Math.floor(difference / (1000 * 60 * 60 * 24)),
+      hours: Math.floor((difference % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60)),
+      minutes: Math.floor((difference % (1000 * 60 * 60)) / (1000 * 60)),
+      seconds: Math.floor((difference % (1000 * 60)) / 1000),
+      hasStarted: false
+    };
+  };
+  useEffect(() => {
+    if (!vote || vote.status !== 'upcoming') return;
+
+    const timer = setInterval(() => {
+      const newTime = calculateTimeRemaining(vote.startTimestamp);
+
+      if (newTime.hasStarted) {
+        // If time has come, refresh the vote status
+        clearInterval(timer);
+        fetchVoteData();
+        toast.success("Vote has started!");
+      } else {
+        setTimeRemaining(newTime);
+      }
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [vote?.status, vote?.startTimestamp]);
+
+  const CountdownTimer = () => {
+    if (!timeRemaining || timeRemaining.hasStarted) return null;
+
+    return (
+      <div className="flex items-center gap-3 bg-blue-50 dark:bg-blue-900/20 p-4 rounded-lg border border-blue-200 dark:border-blue-800">
+        <div className="flex items-center gap-2 font-mono">
+          {timeRemaining.days > 0 && (
+            <div className="text-center">
+              <div className="text-xl font-bold">{timeRemaining.days}</div>
+              <div className="text-xs text-muted-foreground">days</div>
+            </div>
+          )}
+          <div className="text-center">
+            <div className="text-xl font-bold">{timeRemaining.hours}</div>
+            <div className="text-xs text-muted-foreground">hours</div>
+          </div>
+          <div className="text-center">
+            <div className="text-xl font-bold">{timeRemaining.minutes}</div>
+            <div className="text-xs text-muted-foreground">minutes</div>
+          </div>
+          <div className="text-center">
+            <div className="text-xl font-bold">{timeRemaining.seconds}</div>
+            <div className="text-xs text-muted-foreground">seconds</div>
+          </div>
+        </div>
+      </div>
+    );
+  };
   // Transaction state
   const [txStatus, setTxStatus] = useState(TransactionStatus.IDLE)
   const [txDigest, setTxDigest] = useState(null)
@@ -107,39 +181,57 @@ export default function VotePage() {
   // Transaction dialog state
   const [txStatusDialogOpen, setTxStatusDialogOpen] = useState(false)
   const [transactionError, setTransactionError] = useState<string | null>(null)
-  
+
   // Dialog component for transaction status
   const TransactionStatusDialog = () => (
-    <Dialog 
-      open={txStatusDialogOpen} 
+    <Dialog
+      open={txStatusDialogOpen}
       onOpenChange={(open) => {
         // Only allow closing the dialog if transaction is complete or failed
         if (!open && (txStatus === TransactionStatus.SUCCESS || txStatus === TransactionStatus.ERROR)) {
+          // Reset transaction status to prevent reopening
+          setTxStatus(TransactionStatus.IDLE);
+          // Explicitly close the dialog
           setTxStatusDialogOpen(false);
           // If transaction was successful, refresh the page data
           if (txStatus === TransactionStatus.SUCCESS) {
-            setTxStatusDialogOpen(false); // Explicitly close the dialog
             router.refresh();
             fetchVoteData();
           }
         } else if (!open) {
-          // Prevent closing during transaction processing
           return;
         } else {
-          setTxStatusDialogOpen(open);
+          setTxStatusDialogOpen(false);
         }
       }}
     >
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>
-            {txStatus === TransactionStatus.SUCCESS
-              ? "Transaction Successful!"
-              : txStatus === TransactionStatus.ERROR
-                ? "Transaction Failed"
-                : "Processing Transaction"}
+          <DialogTitle className="flex items-center gap-3 mb-1">
+            {txStatus === TransactionStatus.SUCCESS && (
+              <div className="bg-green-100 dark:bg-green-900/30 p-2 rounded-full">
+                <Check className="h-5 w-5 text-green-600 dark:text-green-400" />
+              </div>
+            )}
+            {txStatus === TransactionStatus.ERROR && (
+              <div className="bg-red-100 dark:bg-red-900/30 p-2 rounded-full">
+                <AlertCircle className="h-5 w-5 text-red-600 dark:text-red-400" />
+              </div>
+            )}
+            {txStatus !== TransactionStatus.SUCCESS && txStatus !== TransactionStatus.ERROR && (
+              <div className="bg-blue-100 dark:bg-blue-900/30 p-2 rounded-full">
+                <Loader2 className="h-5 w-5 text-blue-600 dark:text-blue-400 animate-spin" />
+              </div>
+            )}
+            <span>
+              {txStatus === TransactionStatus.SUCCESS
+                ? "Transaction Successful!"
+                : txStatus === TransactionStatus.ERROR
+                  ? "Transaction Failed"
+                  : "Processing Transaction"}
+            </span>
           </DialogTitle>
-          <DialogDescription>
+          <DialogDescription className="text-sm">
             {txStatus === TransactionStatus.SUCCESS
               ? "Your transaction has been confirmed on the blockchain."
               : txStatus === TransactionStatus.ERROR
@@ -149,108 +241,202 @@ export default function VotePage() {
         </DialogHeader>
 
         <div className="space-y-4 py-4">
-          <Progress value={txProgress} className="h-2 w-full" />
 
-          <div className="space-y-2">
-            <div className="flex items-center justify-between text-sm">
+
+          <div className="space-y-3 mt-2">
+            <div className={cn(
+              "flex items-center justify-between text-sm p-2.5 rounded-md transition-colors duration-300",
+              txStatus === TransactionStatus.BUILDING ? "bg-primary/10 border border-primary/20" :
+                txStatus > TransactionStatus.BUILDING ? "bg-green-50 dark:bg-green-900/20" :
+                  "bg-muted/20"
+            )}>
               <span className="flex items-center gap-2">
-                {txStatus === TransactionStatus.BUILDING || txStatus === TransactionStatus.IDLE ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
+                {txStatus === TransactionStatus.BUILDING ? (
+                  <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                ) : txStatus > TransactionStatus.BUILDING ? (
                   <Check className="h-4 w-4 text-green-500" />
+                ) : (
+                  <Circle className="h-4 w-4 text-muted-foreground" />
                 )}
-                Building Transaction
+                <span className={cn(
+                  txStatus === TransactionStatus.BUILDING ? "font-medium text-primary" :
+                    txStatus > TransactionStatus.BUILDING ? "font-medium" :
+                      "text-muted-foreground"
+                )}>
+                  Building Transaction
+                </span>
               </span>
-              <span className="text-muted-foreground">Step 1/4</span>
+              <span className="text-xs text-muted-foreground font-medium">Step 1/4</span>
             </div>
 
-            <div className="flex items-center justify-between text-sm">
+            <div className={cn(
+              "flex items-center justify-between text-sm p-2.5 rounded-md transition-colors duration-300",
+              txStatus === TransactionStatus.SIGNING ? "bg-primary/10 border border-primary/20" :
+                txStatus > TransactionStatus.SIGNING ? "bg-green-50 dark:bg-green-900/20" :
+                  "bg-muted/20"
+            )}>
               <span className="flex items-center gap-2">
-                {txStatus === TransactionStatus.IDLE || txStatus === TransactionStatus.BUILDING ? (
-                  <Circle className="h-4 w-4" />
-                ) : txStatus === TransactionStatus.SIGNING ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
+                {txStatus === TransactionStatus.SIGNING ? (
+                  <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                ) : txStatus > TransactionStatus.SIGNING ? (
                   <Check className="h-4 w-4 text-green-500" />
+                ) : (
+                  <Circle className="h-4 w-4 text-muted-foreground" />
                 )}
-                Signing Transaction
+                <span className={cn(
+                  txStatus === TransactionStatus.SIGNING ? "font-medium text-primary" :
+                    txStatus > TransactionStatus.SIGNING ? "font-medium" :
+                      "text-muted-foreground"
+                )}>
+                  Signing Transaction
+                </span>
               </span>
-              <span className="text-muted-foreground">Step 2/4</span>
+              <span className="text-xs text-muted-foreground font-medium">Step 2/4</span>
             </div>
 
-            <div className="flex items-center justify-between text-sm">
+            <div className={cn(
+              "flex items-center justify-between text-sm p-2.5 rounded-md transition-colors duration-300",
+              txStatus === TransactionStatus.EXECUTING ? "bg-primary/10 border border-primary/20" :
+                txStatus > TransactionStatus.EXECUTING ? "bg-green-50 dark:bg-green-900/20" :
+                  "bg-muted/20"
+            )}>
               <span className="flex items-center gap-2">
-                {txStatus === TransactionStatus.IDLE ||
-                txStatus === TransactionStatus.BUILDING ||
-                txStatus === TransactionStatus.SIGNING ? (
-                  <Circle className="h-4 w-4" />
-                ) : txStatus === TransactionStatus.EXECUTING ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
+                {txStatus === TransactionStatus.EXECUTING ? (
+                  <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                ) : txStatus > TransactionStatus.EXECUTING ? (
                   <Check className="h-4 w-4 text-green-500" />
+                ) : (
+                  <Circle className="h-4 w-4 text-muted-foreground" />
                 )}
-                Executing Transaction
+                <span className={cn(
+                  txStatus === TransactionStatus.EXECUTING ? "font-medium text-primary" :
+                    txStatus > TransactionStatus.EXECUTING ? "font-medium" :
+                      "text-muted-foreground"
+                )}>
+                  Executing Transaction
+                </span>
               </span>
-              <span className="text-muted-foreground">Step 3/4</span>
+              <span className="text-xs text-muted-foreground font-medium">Step 3/4</span>
             </div>
 
-            <div className="flex items-center justify-between text-sm">
+            <div className={cn(
+              "flex items-center justify-between text-sm p-2.5 rounded-md transition-colors duration-300",
+              txStatus === TransactionStatus.CONFIRMING ? "bg-primary/10 border border-primary/20" :
+                txStatus > TransactionStatus.CONFIRMING ? "bg-green-50 dark:bg-green-900/20" :
+                  "bg-muted/20"
+            )}>
               <span className="flex items-center gap-2">
-                {txStatus === TransactionStatus.IDLE ||
-                txStatus === TransactionStatus.BUILDING ||
-                txStatus === TransactionStatus.SIGNING ||
-                txStatus === TransactionStatus.EXECUTING ? (
-                  <Circle className="h-4 w-4" />
-                ) : txStatus === TransactionStatus.CONFIRMING ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
+                {txStatus === TransactionStatus.CONFIRMING ? (
+                  <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                ) : txStatus > TransactionStatus.CONFIRMING ? (
                   <Check className="h-4 w-4 text-green-500" />
+                ) : (
+                  <Circle className="h-4 w-4 text-muted-foreground" />
                 )}
-                Confirming Transaction
+                <span className={cn(
+                  txStatus === TransactionStatus.CONFIRMING ? "font-medium text-primary" :
+                    txStatus > TransactionStatus.CONFIRMING ? "font-medium" :
+                      "text-muted-foreground"
+                )}>
+                  Confirming Transaction
+                </span>
               </span>
-              <span className="text-muted-foreground">Step 4/4</span>
+              <span className="text-xs text-muted-foreground font-medium">Step 4/4</span>
             </div>
           </div>
 
           {txStatus === TransactionStatus.SUCCESS && txDigest && (
-            <div className="mt-4 pt-4 border-t">
+            <div className="mt-4 space-y-2">
               <div className="flex items-center justify-between">
                 <span className="text-sm font-medium">Transaction ID</span>
-                <a
-                  href={`https://explorer.sui.io/txblock/${txDigest}?network=${SUI_CONFIG.NETWORK.toLowerCase()}`}
+                <Link
+                  href={`${SUI_CONFIG.explorerUrl}/txblock/${txDigest}`}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="text-sm text-blue-500 hover:text-blue-700 flex items-center gap-1"
+                  className="text-xs text-primary hover:text-primary/80 flex items-center gap-1 transition-colors"
                 >
                   View on Explorer
                   <ExternalLink className="h-3 w-3" />
-                </a>
+                </Link>
               </div>
-              <div className="mt-1 flex items-center gap-2">
-                <code className="text-xs bg-muted p-1 rounded flex-1 overflow-hidden text-ellipsis">
-                  {txDigest}
-                </code>
+              <div className="flex items-center gap-2 bg-muted/30 p-2 rounded-md">
+                <code className="text-xs text-muted-foreground flex-1 truncate">{txDigest}</code>
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="h-6 w-6"
+                  className="h-7 w-7"
                   onClick={() => {
                     navigator.clipboard.writeText(txDigest)
                     toast.success("Transaction ID copied to clipboard")
                   }}
                 >
-                  <Copy className="h-3 w-3" />
+                  <Copy className="h-3.5 w-3.5" />
                 </Button>
               </div>
             </div>
           )}
 
           {txStatus === TransactionStatus.ERROR && transactionError && (
-            <Alert variant="destructive" className="mt-4">
-              <AlertCircle className="h-4 w-4" />
-              <AlertTitle>Error</AlertTitle>
-              <AlertDescription className="text-xs break-all">{transactionError}</AlertDescription>
-            </Alert>
+            <div className="mt-4 space-y-3">
+              <Alert variant="destructive">
+                <AlertCircle className="h-4 w-4" />
+                <AlertTitle>Transaction Failed</AlertTitle>
+                <AlertDescription className="text-xs break-all max-h-32 overflow-y-auto">{transactionError}</AlertDescription>
+              </Alert>
+
+              {/* Error-specific guidance */}
+              {transactionError.includes("rejected") || transactionError.includes("cancelled") ? (
+                <div className="bg-amber-50 dark:bg-amber-900/20 p-3 rounded-md border border-amber-200 dark:border-amber-800/30">
+                  <div className="flex gap-2 text-amber-800 dark:text-amber-300">
+                    <Info className="h-4 w-4 mt-0.5" />
+                    <div className="space-y-1">
+                      <p className="text-xs font-medium">You declined the transaction</p>
+                      <p className="text-xs">You can try again when you're ready by clicking the "Try Again" button below.</p>
+                    </div>
+                  </div>
+                </div>
+              ) : transactionError.includes("insufficient") ? (
+                <div className="bg-amber-50 dark:bg-amber-900/20 p-3 rounded-md border border-amber-200 dark:border-amber-800/30">
+                  <div className="flex gap-2 text-amber-800 dark:text-amber-300">
+                    <Wallet className="h-4 w-4 mt-0.5" />
+                    <div className="space-y-1">
+                      <p className="text-xs font-medium">Insufficient funds</p>
+                      <p className="text-xs">Please add more SUI to your wallet to cover the transaction fee, then try again.</p>
+                    </div>
+                  </div>
+                </div>
+              ) : transactionError.includes("network") || transactionError.includes("timeout") ? (
+                <div className="bg-amber-50 dark:bg-amber-900/20 p-3 rounded-md border border-amber-200 dark:border-amber-800/30">
+                  <div className="flex gap-2 text-amber-800 dark:text-amber-300">
+                    <Wifi className="h-4 w-4 mt-0.5" />
+                    <div className="space-y-1">
+                      <p className="text-xs font-medium">Network issue detected</p>
+                      <p className="text-xs">Please check your internet connection and try again.</p>
+                    </div>
+                  </div>
+                </div>
+              ) : transactionError.includes("wallet") ? (
+                <div className="bg-amber-50 dark:bg-amber-900/20 p-3 rounded-md border border-amber-200 dark:border-amber-800/30">
+                  <div className="flex gap-2 text-amber-800 dark:text-amber-300">
+                    <Wallet className="h-4 w-4 mt-0.5" />
+                    <div className="space-y-1">
+                      <p className="text-xs font-medium">Wallet connection issue</p>
+                      <p className="text-xs">Please check that your wallet is connected and try again.</p>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="bg-blue-50 dark:bg-blue-900/20 p-3 rounded-md border border-blue-200 dark:border-blue-800/30">
+                  <div className="flex gap-2 text-blue-800 dark:text-blue-300">
+                    <HelpCircle className="h-4 w-4 mt-0.5" />
+                    <div className="space-y-1">
+                      <p className="text-xs font-medium">Something went wrong</p>
+                      <p className="text-xs">You can try again or come back later if the issue persists.</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
           )}
         </div>
 
@@ -261,8 +447,9 @@ export default function VotePage() {
               onClick={() => {
                 setTxStatusDialogOpen(false)
               }}
-              className="w-full"
+              className="w-full gap-2"
             >
+              <Check className="h-4 w-4" />
               Close
             </Button>
           ) : txStatus === TransactionStatus.ERROR ? (
@@ -273,8 +460,9 @@ export default function VotePage() {
                 onClick={() => {
                   setTxStatusDialogOpen(false)
                 }}
-                className="flex-1"
+                className="flex-1 gap-2"
               >
+                <X className="h-4 w-4" />
                 Close
               </Button>
               <Button
@@ -282,16 +470,18 @@ export default function VotePage() {
                 onClick={() => {
                   setTxStatus(TransactionStatus.IDLE)
                   setTransactionError(null)
-                  handleStartVote()
+                  setTxProgress(0)
+                  handleSubmitVote()
                 }}
-                className="flex-1"
+                className="flex-1 gap-2 bg-primary hover:bg-primary/90"
               >
+                <RefreshCw className="h-4 w-4" />
                 Try Again
               </Button>
             </div>
           ) : (
-            <Button type="button" disabled className="w-full">
-              <Loader2 className="h-4 w-4 animate-spin mr-2" />
+            <Button type="button" disabled className="w-full gap-2">
+              <Loader2 className="h-4 w-4 animate-spin" />
               Processing...
             </Button>
           )}
@@ -300,7 +490,6 @@ export default function VotePage() {
     </Dialog>
   )
 
-  // Helper function to fetch vote data
   const fetchVoteData = async () => {
     try {
       setLoading(true)
@@ -315,21 +504,28 @@ export default function VotePage() {
         throw new Error("Vote not found")
       }
       console.log("Vote Details:", voteDetails)
+
       // If the vote is closed, redirect to the closed page
       // Only redirect if showLiveStats is false
       if (voteDetails.status === "closed" && !voteDetails?.showLiveStats) {
+        setLoading(false) // ← Add this line
         router.push(`/vote/${params.id}/closed`)
         return
       }
-      
+
       // Check if vote is upcoming but start time has passed
       const currentTime = Date.now()
-      if (voteDetails.status === "upcoming" && currentTime >= voteDetails.startTimestamp && wallet.connected) {
-        // Show a toast notification that the vote can be started
-        toast.info("This vote's start time has passed and can now be activated", {
-          description: "Click 'Start Vote' to begin the voting period",
-          duration: 5000,
-        })
+      if (voteDetails.status === "upcoming" && currentTime >= voteDetails.startTimestamp) {
+        if (wallet.connected) {
+          // Show a toast notification that the vote can be started
+          toast.info("This vote's start time has passed and can now be activated", {
+            description: "Click 'Start Vote' to begin the voting period",
+            duration: 5000,
+          })
+        }
+
+        // Update the UI to show that the vote can be started
+        voteDetails.canBeStarted = true;
       }
 
       setVote(voteDetails)
@@ -381,6 +577,7 @@ export default function VotePage() {
 
         // If vote is open, user has voted, and live stats are disabled, redirect to success page
         if (votedStatus && !voteDetails?.showLiveStats && voteDetails.status === "active") {
+          setLoading(false) // ← Add this line
           router.push(`/vote/${params.id}/success`)
           return
         }
@@ -473,7 +670,7 @@ export default function VotePage() {
   // Function to handle starting a vote
   const handleStartVote = async () => {
     if (!vote || !wallet.connected) return
-    
+
     try {
       setTxStatusDialogOpen(true)
       setTransactionError(null)
@@ -482,50 +679,53 @@ export default function VotePage() {
 
       // Create the transaction
       const transaction = suivote.startVoteTransaction(params.id as string)
-      
+
       // Update progress
       setTxStatus(TransactionStatus.SIGNING)
       setTxProgress(40)
-      
+
       // Execute the transaction
       const response = await suivote.executeTransaction(transaction)
-      
+
       // Update progress
       setTxStatus(TransactionStatus.EXECUTING)
       setTxProgress(60)
       setTxDigest(response.digest)
-      
+
       // Wait for confirmation
       setTxStatus(TransactionStatus.CONFIRMING)
       setTxProgress(80)
-      
+
       // Transaction successful
       setTxStatus(TransactionStatus.SUCCESS)
       setTxProgress(100)
-      
+
       toast.success("Vote started successfully!", {
         description: "The vote is now active and ready to receive votes."
       })
-      
+
       // Store transaction digest in localStorage
       if (response && response.digest) {
         localStorage.setItem(`vote_${params.id}_txDigest`, response.digest)
       }
-      
+
       // Refresh the page after a short delay
       setTimeout(() => {
+        // Reset transaction status to prevent reopening
+        setTxStatus(TransactionStatus.IDLE);
+        // Explicitly close the dialog
         setTxStatusDialogOpen(false)
         // Use router.refresh() to completely refresh the page data
         router.refresh()
         // Then reload the vote data
         fetchVoteData()
       }, 2000)
-      
+
     } catch (error) {
       console.error("Error starting vote:", error)
       setTxStatus(TransactionStatus.ERROR)
       setTransactionError(error instanceof Error ? error.message : String(error))
-      
+
       toast.error("Failed to start vote", {
         description: error instanceof Error ? error.message : "An unknown error occurred"
       })
@@ -651,272 +851,304 @@ export default function VotePage() {
  * Handles the submission of all vote selections in a single transaction
  * with precise option mapping to ensure correct display of results
  */
-const handleSubmitVote = async () => {
-  try {
-    // Set UI state to submitting
-    setSubmitting(true);
-    setTxStatusDialogOpen(true);
-    setTransactionError(null);
-    setTxStatus(TransactionStatus.BUILDING);
-    setTxProgress(20);
-    
-    // Clear any previous validation errors
-    setValidationErrors({});
-    
-    console.log("[Vote Debug] Starting vote submission process");
-    console.log("[Vote Debug] Current selections:", selections);
-    
-    // STEP 1: Validate wallet is connected
-    if (!wallet || !wallet.address) {
-      console.error("[Vote Debug] Wallet not connected");
-      setTransactionError("Please connect your wallet to vote");
-      setTxStatus(TransactionStatus.ERROR);
-      setSubmitting(false);
-      return;
-    }
-    
-    // STEP 2: Validate all poll selections
-    const validationErrors = {};
-    let hasValidSelections = false;
-    
-    // Check each poll for validation issues
-    polls.forEach(poll => {
-      const selectedOptions = selections[poll.id] || [];
-      
-      // Check if required poll has selections
-      if (poll.isRequired && selectedOptions.length === 0) {
-        validationErrors[poll.id] = "This poll requires a response";
+  const handleSubmitVote = async () => {
+    try {
+      // Set UI state to submitting
+      setSubmitting(true);
+      setTxStatusDialogOpen(true);
+      setTransactionError(null);
+      setTxStatus(TransactionStatus.BUILDING);
+      setTxProgress(20);
+
+      // Clear any previous validation errors
+      setValidationErrors({});
+
+      console.log("[Vote Debug] Starting vote submission process");
+      console.log("[Vote Debug] Current selections:", selections);
+
+      // STEP 1: Validate wallet is connected
+      if (!wallet || !wallet.address) {
+        console.error("[Vote Debug] Wallet not connected");
+        setTransactionError("Please connect your wallet to vote");
+        setTxStatus(TransactionStatus.ERROR);
+        setSubmitting(false);
+        return;
       }
-      
-      // Validate selection count based on poll type
-      if (!poll.isMultiSelect && selectedOptions.length > 1) {
-        validationErrors[poll.id] = "This poll allows only one selection";
-      } else if (poll.isMultiSelect && poll.maxSelections && 
-                selectedOptions.length > poll.maxSelections) {
-        validationErrors[poll.id] = `Maximum ${poll.maxSelections} selections allowed`;
+
+      // STEP 2: Validate all poll selections
+      const validationErrors = {};
+      let hasValidSelections = false;
+
+      // Check each poll for validation issues
+      polls.forEach(poll => {
+        const selectedOptions = selections[poll.id] || [];
+
+        // Check if required poll has selections
+        if (poll.isRequired && selectedOptions.length === 0) {
+          validationErrors[poll.id] = "This poll requires a response";
+        }
+
+        // Validate selection count based on poll type
+        if (!poll.isMultiSelect && selectedOptions.length > 1) {
+          validationErrors[poll.id] = "This poll allows only one selection";
+        } else if (poll.isMultiSelect && poll.maxSelections &&
+          selectedOptions.length > poll.maxSelections) {
+          validationErrors[poll.id] = `Maximum ${poll.maxSelections} selections allowed`;
+        }
+
+        // Track if we have any valid selections
+        if (selectedOptions.length > 0 && !validationErrors[poll.id]) {
+          hasValidSelections = true;
+        }
+      });
+
+      // Must have at least one valid selection
+      if (!hasValidSelections) {
+        validationErrors.general = "Please make at least one selection";
       }
-      
-      // Track if we have any valid selections
-      if (selectedOptions.length > 0 && !validationErrors[poll.id]) {
-        hasValidSelections = true;
+
+      // If validation errors, show them and exit
+      if (Object.keys(validationErrors).length > 0) {
+        console.error("[Vote Debug] Validation failed:", validationErrors);
+        setValidationErrors(validationErrors);
+        setTxStatus(TransactionStatus.ERROR);
+        setTransactionError("Please fix validation errors before submitting");
+        setSubmitting(false);
+        return;
       }
-    });
-    
-    // Must have at least one valid selection
-    if (!hasValidSelections) {
-      validationErrors.general = "Please make at least one selection";
-    }
-    
-    // If validation errors, show them and exit
-    if (Object.keys(validationErrors).length > 0) {
-      console.error("[Vote Debug] Validation failed:", validationErrors);
-      setValidationErrors(validationErrors);
-      setTxStatus(TransactionStatus.ERROR);
-      setTransactionError("Please fix validation errors before submitting");
-      setSubmitting(false);
-      return;
-    }
-    
-    // STEP 2.5: ISSUE 2 SOLUTION - Verify option mappings before proceeding
-    console.log("[Vote Debug] Verifying option mappings...");
-    verifyOptionMappings(polls, selections);
-    
-    // STEP 3: Prepare data for transaction
-    // Arrays to store poll indices (1-based) and options
-    const pollIndices = [];
-    const optionIndicesPerPoll = [];
-    
-    console.log("[Vote Debug] Processing polls for transaction");
-    
-    // For each poll in this vote
-    polls.forEach((poll, pollIdx) => {
-      // Get the user's selections for this poll (if any)
-      const selectedOptionIds = selections[poll.id] || [];
-      
-      // Skip polls with no selections
-      if (selectedOptionIds.length === 0) {
-        console.log(`[Vote Debug] No selection for poll: ${poll.title}`);
-        return; // Skip this poll
+
+      // STEP 2.5: ISSUE 2 SOLUTION - Verify option mappings before proceeding
+      console.log("[Vote Debug] Verifying option mappings...");
+      verifyOptionMappings(polls, selections);
+
+      // STEP 3: Prepare data for transaction
+      // Arrays to store poll indices (1-based) and options
+      const pollIndices = [];
+      const optionIndicesPerPoll = [];
+
+      console.log("[Vote Debug] Processing polls for transaction");
+
+      // For each poll in this vote
+      polls.forEach((poll, pollIdx) => {
+        // Get the user's selections for this poll (if any)
+        const selectedOptionIds = selections[poll.id] || [];
+
+        // Skip polls with no selections
+        if (selectedOptionIds.length === 0) {
+          console.log(`[Vote Debug] No selection for poll: ${poll.title}`);
+          return; // Skip this poll
+        }
+
+        // ISSUE 2 SOLUTION: Use utility function for precise option mapping
+        const optionIndices = mapOptionIdsToIndices(poll, selectedOptionIds);
+
+        // Verify mapping was successful
+        if (optionIndices.length === 0) {
+          console.error(`[Vote Debug] Failed to map options for poll: ${poll.title}`);
+          return; // Skip this poll due to mapping failure
+        }
+
+        // Verify we got the same number of mapped indices as selected IDs
+        if (optionIndices.length !== selectedOptionIds.length) {
+          console.error(`[Vote Debug] Mapping count mismatch for poll: ${poll.title}`, {
+            selectedCount: selectedOptionIds.length,
+            mappedCount: optionIndices.length
+          });
+          return; // Skip this poll due to mapping inconsistency
+        }
+
+        // Store valid poll data for transaction
+        pollIndices.push(pollIdx + 1); // 1-based poll index
+        optionIndicesPerPoll.push(optionIndices);
+
+        console.log(`[Vote Debug] Successfully processed poll ${pollIdx + 1}: ${poll.title}`);
+      });
+
+      // Verify we have something to submit after mapping
+      if (pollIndices.length === 0) {
+        console.error("[Vote Debug] No valid poll mappings to submit");
+        setValidationErrors({ general: "Error processing your selections. Please try again." });
+        setTxStatus(TransactionStatus.ERROR);
+        setTransactionError("Error processing your selections. Please try again.");
+        setSubmitting(false);
+        return;
       }
-      
-      // ISSUE 2 SOLUTION: Use utility function for precise option mapping
-      const optionIndices = mapOptionIdsToIndices(poll, selectedOptionIds);
-      
-      // Verify mapping was successful
-      if (optionIndices.length === 0) {
-        console.error(`[Vote Debug] Failed to map options for poll: ${poll.title}`);
-        return; // Skip this poll due to mapping failure
+
+      // STEP 4: Get token balance for token-weighted voting
+      let tokenBalance = 0;
+      if (vote.useTokenWeighting && vote.tokenRequirement) {
+        console.log("[Vote Debug] Checking token balance for weighted voting");
+        try {
+          tokenBalance = await suivote.checkTokenBalance(
+            wallet.address,
+            vote.tokenRequirement.tokenAddress,
+            vote.tokenRequirement.minAmount
+          );
+          console.log(`[Vote Debug] Token balance: ${tokenBalance}`);
+        } catch (tokenError) {
+          console.error("[Vote Debug] Error checking token balance:", tokenError);
+          // Default to 0 balance on error
+        }
       }
-      
-      // Verify we got the same number of mapped indices as selected IDs
-      if (optionIndices.length !== selectedOptionIds.length) {
-        console.error(`[Vote Debug] Mapping count mismatch for poll: ${poll.title}`, {
-          selectedCount: selectedOptionIds.length,
-          mappedCount: optionIndices.length
-        });
-        return; // Skip this poll due to mapping inconsistency
-      }
-      
-      // Store valid poll data for transaction
-      pollIndices.push(pollIdx + 1); // 1-based poll index
-      optionIndicesPerPoll.push(optionIndices);
-      
-      console.log(`[Vote Debug] Successfully processed poll ${pollIdx + 1}: ${poll.title}`);
-    });
-    
-    // Verify we have something to submit after mapping
-    if (pollIndices.length === 0) {
-      console.error("[Vote Debug] No valid poll mappings to submit");
-      setValidationErrors({ general: "Error processing your selections. Please try again." });
-      setTxStatus(TransactionStatus.ERROR);
-      setTransactionError("Error processing your selections. Please try again.");
-      setSubmitting(false);
-      return;
-    }
-    
-    // STEP 4: Get token balance for token-weighted voting
-    let tokenBalance = 0;
-    if (vote.useTokenWeighting && vote.tokenRequirement) {
-      console.log("[Vote Debug] Checking token balance for weighted voting");
-      try {
-        tokenBalance = await suivote.checkTokenBalance(
-          wallet.address,
-          vote.tokenRequirement.tokenAddress,
-          vote.tokenRequirement.minAmount
+
+      // STEP 5: Create the transaction
+      console.log("[Vote Debug] Creating transaction with mapped data");
+      setTxStatus(TransactionStatus.BUILDING);
+
+      // ISSUE 1 SOLUTION: Create a single batched transaction
+      let transaction;
+
+      // Log final transaction data
+      console.log("[Vote Debug] Final transaction data:", {
+        voteId: params.id,
+        pollIndices: pollIndices,
+        optionIndicesPerPoll: optionIndicesPerPoll,
+        tokenBalance: tokenBalance,
+        paymentAmount: vote.paymentAmount || 0
+      });
+
+      // If only one poll, use simple vote transaction
+      if (pollIndices.length === 1) {
+        console.log("[Vote Debug] Creating single poll transaction");
+        transaction = suivote.castVoteTransaction(
+          params.id,
+          pollIndices[0],
+          optionIndicesPerPoll[0],
+          tokenBalance,
+          vote.paymentAmount || 0
         );
-        console.log(`[Vote Debug] Token balance: ${tokenBalance}`);
-      } catch (tokenError) {
-        console.error("[Vote Debug] Error checking token balance:", tokenError);
-        // Default to 0 balance on error
+      } else {
+        // If multiple polls, use batched transaction
+        console.log("[Vote Debug] Creating multi-poll batched transaction");
+        transaction = suivote.castMultipleVotesTransaction(
+          params.id,
+          pollIndices,
+          optionIndicesPerPoll,
+          tokenBalance,
+          vote.paymentAmount || 0
+        );
       }
-    }
-    
-    // STEP 5: Create the transaction
-    console.log("[Vote Debug] Creating transaction with mapped data");
-    setTxStatus(TransactionStatus.BUILDING);
-    
-    // ISSUE 1 SOLUTION: Create a single batched transaction
-    let transaction;
-    
-    // Log final transaction data
-    console.log("[Vote Debug] Final transaction data:", {
-      voteId: params.id,
-      pollIndices: pollIndices,
-      optionIndicesPerPoll: optionIndicesPerPoll,
-      tokenBalance: tokenBalance,
-      paymentAmount: vote.paymentAmount || 0
-    });
-    
-    // If only one poll, use simple vote transaction
-    if (pollIndices.length === 1) {
-      console.log("[Vote Debug] Creating single poll transaction");
-      transaction = suivote.castVoteTransaction(
-        params.id,
-        pollIndices[0],
-        optionIndicesPerPoll[0],
-        tokenBalance,
-        vote.paymentAmount || 0
-      );
-    } else {
-      // If multiple polls, use batched transaction
-      console.log("[Vote Debug] Creating multi-poll batched transaction");
-      transaction = suivote.castMultipleVotesTransaction(
-        params.id,
-        pollIndices,
-        optionIndicesPerPoll,
-        tokenBalance,
-        vote.paymentAmount || 0
-      );
-    }
-    
-    // STEP 6: Execute the transaction
-    console.log("[Vote Debug] Sending transaction to wallet for signing");
-    setTxStatus(TransactionStatus.SIGNING);
-    setTxProgress(40);
-    
-    // Send single transaction to wallet (no multiple signatures needed)
-    const response = await suivote.executeTransaction(transaction);
-    
-    // Update progress
-    setTxStatus(TransactionStatus.EXECUTING);
-    setTxProgress(60);
-    setTxDigest(response.digest);
-    
-    // Wait for confirmation
-    setTxStatus(TransactionStatus.CONFIRMING);
-    setTxProgress(80);
-    
-    // Transaction successful
-    console.log("[Vote Debug] Transaction complete:", response);
-    setTxStatus(TransactionStatus.SUCCESS);
-    setTxProgress(100);
-    
-    // Update UI on success
-    toast.success("Vote submitted successfully!");
-    
-    // Update local state
-    setSubmitted(true);
-    setHasVoted(true);
-    
-    // Store transaction digest in localStorage for the success page
-    if (response && response.digest) {
+
+      // STEP 6: Execute the transaction
+      console.log("[Vote Debug] Sending transaction to wallet for signing");
+      setTxStatus(TransactionStatus.SIGNING);
+      setTxProgress(40);
+
+      // Send single transaction to wallet (no multiple signatures needed)
+      const response = await suivote.executeTransaction(transaction);
+
+      // Update progress
+      setTxStatus(TransactionStatus.EXECUTING);
+      setTxProgress(60);
       setTxDigest(response.digest);
-      localStorage.setItem(`vote_${params.id}_txDigest`, response.digest);
-    }
-    
-    // Redirect to success page or show results based on vote settings
-    setTimeout(() => {
-      setTxStatusDialogOpen(false);
-      if (vote?.showLiveStats) {
-        // If live stats are enabled, just show results on this page
-        setShowingResults(true);
-        fetchVoteData(); // Refresh data to show updated results
-      } else {
-        // Otherwise redirect to success page
-        router.push(`/vote/${params.id}/success?digest=${response.digest}`);
+
+      // Wait for confirmation
+      setTxStatus(TransactionStatus.CONFIRMING);
+      setTxProgress(80);
+
+      // Transaction successful
+      console.log("[Vote Debug] Transaction complete:", response);
+      setTxStatus(TransactionStatus.SUCCESS);
+      setTxProgress(100);
+
+      // Update UI on success
+      toast.success("Vote submitted successfully!");
+
+      // Update local state
+      setSubmitted(true);
+      setHasVoted(true);
+
+      // Store transaction digest in localStorage for the success page
+      if (response && response.digest) {
+        setTxDigest(response.digest);
+        localStorage.setItem(`vote_${params.id}_txDigest`, response.digest);
       }
-    }, 1500);
-    
-  } catch (error) {
-    // Detailed error logging
-    console.error("[Vote Debug] Transaction failed:", error);
-    console.error("[Vote Debug] Error details:", {
-      message: error.message,
-      code: error.code,
-      stack: error.stack
-    });
-    
-    // Update UI state
-    setTxStatus(TransactionStatus.ERROR);
-    
-    // Format user-friendly error message
-    let userErrorMessage = "Failed to submit vote";
-    
-    if (error.message) {
-      if (error.message.includes("insufficient gas")) {
-        userErrorMessage = "Insufficient SUI to complete transaction";
-      } else if (error.message.includes("rejected")) {
-        userErrorMessage = "Transaction rejected by wallet";
-      } else if (error.message.includes("user abort")) {
-        userErrorMessage = "Transaction cancelled";
-      } else {
-        // Clean up technical details for user display
-        userErrorMessage = error.message
-          .replace(/Error invoking RPC method '[^']+': /g, '')
-          .replace(/\([^)]+\)/g, '')
-          .trim();
+
+      // Redirect to success page or show results based on vote settings
+      setTimeout(() => {
+        // Reset transaction status to prevent reopening
+        setTxStatus(TransactionStatus.IDLE);
+        // Explicitly close the dialog
+        setTxStatusDialogOpen(false);
+        if (vote?.showLiveStats) {
+          // If live stats are enabled, just show results on this page
+          setShowingResults(true);
+          fetchVoteData(); // Refresh data to show updated results
+        } else {
+          // Otherwise redirect to success page
+          router.push(`/vote/${params.id}/success?digest=${response.digest}`);
+        }
+      }, 1500);
+
+    } catch (error) {
+      // Detailed error logging
+      console.error("[Vote Debug] Transaction failed:", error);
+      console.error("[Vote Debug] Error details:", {
+        message: error.message,
+        code: error.code,
+        name: error.name,
+        stack: error.stack
+      });
+
+      // Update UI state
+      setTxStatus(TransactionStatus.ERROR);
+      setTxProgress(100); // Complete the progress bar even for errors
+
+      // Format user-friendly error message
+      let userErrorMessage = "Failed to submit vote";
+      let errorType = "unknown";
+
+      if (error.message) {
+        // Check for common wallet interaction errors
+        if (error.message.includes("insufficient gas") || error.message.includes("insufficient balance")) {
+          userErrorMessage = "Insufficient SUI to complete transaction. Please add more SUI to your wallet and try again.";
+          errorType = "insufficient_funds";
+        } else if (error.message.includes("rejected") || error.message.includes("user reject") ||
+          error.message.includes("user denied") || error.message.includes("user cancelled")) {
+          userErrorMessage = "Transaction rejected by wallet. You can try again when ready.";
+          errorType = "user_rejected";
+        } else if (error.message.includes("user abort") || error.message.includes("cancelled") ||
+          error.message.includes("canceled")) {
+          userErrorMessage = "Transaction cancelled. You can try again when ready.";
+          errorType = "user_cancelled";
+        } else if (error.message.includes("timeout") || error.message.includes("timed out")) {
+          userErrorMessage = "Transaction timed out. Please check your network connection and try again.";
+          errorType = "timeout";
+        } else if (error.message.includes("network") || error.message.includes("connection")) {
+          userErrorMessage = "Network error. Please check your internet connection and try again.";
+          errorType = "network";
+        } else if (error.message.includes("wallet not connected") || error.message.includes("wallet disconnected")) {
+          userErrorMessage = "Wallet disconnected. Please reconnect your wallet and try again.";
+          errorType = "wallet_disconnected";
+        } else {
+          // Clean up technical details for user display
+          userErrorMessage = error.message
+            .replace(/Error invoking RPC method '[^']+': /g, '')
+            .replace(/\([^)]+\)/g, '')
+            .trim();
+
+          // If the message is too technical or long, provide a more generic message
+          if (userErrorMessage.length > 100) {
+            userErrorMessage = "An unexpected error occurred with the blockchain transaction. Please try again later.";
+          }
+        }
       }
+
+      // Store error information for display
+      setTransactionError(userErrorMessage);
+      setSubmitting(false);
+
+      // Show error toast with appropriate action guidance
+      toast.error("Vote submission failed", {
+        description: userErrorMessage,
+        action: errorType === "user_rejected" || errorType === "user_cancelled" ? {
+          label: "Try Again",
+          onClick: () => handleSubmitVote()
+        } : undefined,
+        duration: 5000 // Show longer for errors so user can read the message
+      });
     }
-    
-    setTransactionError(userErrorMessage);
-    setSubmitting(false);
-    
-    // Show error toast
-    toast.error("Vote submission failed", {
-      description: userErrorMessage
-    });
   }
-};
 
   // Helper functions for UI
 
@@ -1091,10 +1323,14 @@ const handleSubmitVote = async () => {
                 <div>
                   <CardTitle className="text-2xl md:text-3xl">{vote.title}</CardTitle>
                   <div className="flex items-center gap-2 mt-2">
-                    <Badge className="bg-blue-500 hover:bg-blue-600 text-white">Upcoming</Badge>
+                    {vote.canBeStarted ? (
+                      <Badge className="bg-amber-500 hover:bg-amber-600 text-white">Ready to Start</Badge>
+                    ) : (
+                      <Badge className="bg-blue-500 hover:bg-blue-600 text-white">Upcoming</Badge>
+                    )}
                     <Badge variant="outline" className="gap-1 transition-all duration-200 hover:translate-x-[2px]">
                       <Calendar className="h-3 w-3" />
-                      Starts {formatDate(vote.startTimestamp)}
+                      {vote.canBeStarted ? "Can be started now" : `Starts ${formatDate(vote.startTimestamp)}`}
                     </Badge>
                   </div>
                 </div>
@@ -1152,10 +1388,10 @@ const handleSubmitVote = async () => {
                       This vote's scheduled start time has passed and it can now be activated.
                     </AlertDescription>
                   </Alert>
-                  
-                  <Button 
-                    size="lg" 
-                    className="gap-2 w-full sm:w-auto" 
+
+                  <Button
+                    size="lg"
+                    className="gap-2 w-full sm:w-auto"
                     onClick={handleStartVote}
                   >
                     <Play className="h-4 w-4" />
@@ -1327,7 +1563,7 @@ const handleSubmitVote = async () => {
                   <div className="flex items-start justify-between">
                     <div>
                       <CardTitle className="text-xl">
-                      {poll.title}
+                        {poll.title}
                       </CardTitle>
                       {poll.description && <CardDescription className="mt-1">{poll.description}</CardDescription>}
                     </div>
@@ -1749,7 +1985,7 @@ const handleSubmitVote = async () => {
                       // Verify option mappings before rendering
                       const currentPoll = polls[activePollIndex];
                       console.log(`[Option Listing] Verifying options for poll: ${currentPoll.title}`);
-                      
+
                       try {
                         verifyOptionMappings([currentPoll], selections);
                         console.log(`[Option Listing] Options verified successfully for poll: ${currentPoll.title}`);
@@ -1942,10 +2178,10 @@ const handleSubmitVote = async () => {
                 </CardContent>
 
                 {polls.length > 1 && (
-                  <CardFooter className="flex justify-between p-5">
-                    <div className="flex items-center gap-2">
+                  <CardFooter className="flex flex-col gap-5 p-6 pt-4 border-t">
+                    <div className="flex justify-between items-center w-full">
                       <Button
-                        variant="ghost"
+                        variant="outline"
                         size="sm"
                         onClick={() => {
                           if (activePollIndex > 0) {
@@ -1953,13 +2189,18 @@ const handleSubmitVote = async () => {
                           }
                         }}
                         disabled={activePollIndex === 0}
-                        className="gap-1 transition-all duration-200 hover:translate-x-[-2px]"
+                        className="gap-2 transition-all duration-300 hover:translate-x-[-2px] h-10 px-4 shadow-sm"
                       >
                         <ChevronLeft className="h-4 w-4" />
-                        Previous
+                        Previous Poll
                       </Button>
+
+                      <div className="text-sm font-medium bg-muted/50 px-3 py-1.5 rounded-full">
+                        Poll {activePollIndex + 1} of {polls.length}
+                      </div>
+
                       <Button
-                        variant="ghost"
+                        variant="outline"
                         size="sm"
                         onClick={() => {
                           if (activePollIndex < polls.length - 1) {
@@ -1967,25 +2208,41 @@ const handleSubmitVote = async () => {
                           }
                         }}
                         disabled={activePollIndex === polls.length - 1}
-                        className="gap-1 transition-all duration-200 hover:translate-x-[2px]"
+                        className="gap-2 transition-all duration-300 hover:translate-x-[2px] h-10 px-4 shadow-sm"
                       >
-                        Next
+                        Next Poll
                         <ChevronRight className="h-4 w-4" />
                       </Button>
                     </div>
 
                     {/* Poll count indicator */}
-                    <div className="flex items-center gap-1.5">
-                      {polls.map((_, index) => (
+                    <div className="flex items-center justify-center gap-4 w-full py-2">
+                      {polls.map((poll, index) => (
                         <button
                           key={index}
                           onClick={() => setActivePollIndex(index)}
                           className={cn(
-                            "w-2 h-2 rounded-full transition-all",
-                            activePollIndex === index ? "bg-primary scale-125" : "bg-muted hover:bg-muted-foreground/50",
+                            "transition-all flex flex-col items-center gap-2 group",
                           )}
                           aria-label={`Go to poll ${index + 1}`}
-                        />
+                        >
+                          <div className={cn(
+                            "w-3 h-3 rounded-full transition-all duration-300",
+                            activePollIndex === index
+                              ? "bg-primary scale-125 ring-2 ring-primary/20"
+                              : "bg-muted hover:bg-primary/50",
+                            poll.isRequired && !selections[poll.id]?.length && "ring-2 ring-amber-500/30",
+                            validationErrors[poll.id] && "ring-2 ring-red-500/30 bg-red-200"
+                          )} />
+                          <span className={cn(
+                            "text-xs transition-all",
+                            activePollIndex === index ? "text-primary font-medium" : "text-muted-foreground group-hover:text-foreground",
+                            poll.isRequired && !selections[poll.id]?.length && "text-amber-600",
+                            validationErrors[poll.id] && "text-red-500"
+                          )}>
+                            {index + 1}
+                          </span>
+                        </button>
                       ))}
                     </div>
                   </CardFooter>
@@ -2149,11 +2406,13 @@ const handleSubmitVote = async () => {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5, delay: 0.3 }}
-            className="mt-10 flex flex-col sm:flex-row justify-between items-center p-5 border border-muted/40 rounded-xl bg-muted/30 shadow-sm gap-4"
+            className="mt-10 flex flex-col sm:flex-row justify-between items-center p-6 border border-primary/20 rounded-xl bg-primary/5 shadow-md gap-5"
           >
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Info className="h-4 w-4" />
-              <p>
+            <div className="flex items-center gap-3 text-sm">
+              <div className="bg-primary/10 p-2 rounded-full">
+                <Info className="h-5 w-5 text-primary" />
+              </div>
+              <p className="font-medium">
                 {vote.requireAllPolls
                   ? "All polls must be answered to submit your vote."
                   : "Required polls must be answered to submit your vote."}
@@ -2163,18 +2422,22 @@ const handleSubmitVote = async () => {
             <Button
               onClick={handleSubmitVote}
               disabled={submitting || !userCanVote}
-              className="gap-2 bg-primary hover:bg-primary/90 transition-all duration-200 hover:shadow-md w-full sm:w-auto"
+              className={cn(
+                "gap-2 transition-all duration-300 hover:shadow-lg hover:translate-y-[-2px] active:translate-y-[1px]",
+                "w-full sm:w-auto py-6 px-8 text-base font-medium",
+                submitting ? "bg-primary/90" : "bg-primary"
+              )}
               size="lg"
             >
               {submitting ? (
                 <>
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  Submitting...
+                  <Loader2 className="h-5 w-5 animate-spin" />
+                  <span>Submitting...</span>
                 </>
               ) : (
                 <>
-                  <CheckCircle2 className="h-4 w-4" />
-                  Submit Vote
+                  <CheckCircle2 className="h-5 w-5" />
+                  <span>Submit Vote</span>
                 </>
               )}
             </Button>
@@ -2219,57 +2482,6 @@ const handleSubmitVote = async () => {
         </div>
       </motion.div>
 
-      {/* Transaction progress dialog */}
-      <AnimatePresence>
-        {submitting && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black/20 backdrop-blur-sm z-50 flex items-center justify-center p-4"
-          >
-            <motion.div
-              initial={{ scale: 0.9, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.9, opacity: 0 }}
-              className="bg-background rounded-lg shadow-xl max-w-md w-full p-6"
-            >
-              <div className="text-center space-y-4">
-                <div className="mx-auto w-16 h-16 relative">
-                  <div className="absolute inset-0 rounded-full border-t-2 border-primary animate-spin"></div>
-                  <div className="absolute inset-3 rounded-full bg-primary/20"></div>
-                </div>
-
-                <h3 className="text-xl font-medium">
-                  {txStatus === TransactionStatus.BUILDING && "Building Transaction..."}
-                  {txStatus === TransactionStatus.SIGNING && "Waiting for Signature..."}
-                  {txStatus === TransactionStatus.EXECUTING && "Executing Transaction..."}
-                  {txStatus === TransactionStatus.CONFIRMING && "Confirming Transaction..."}
-                  {txStatus === TransactionStatus.SUCCESS && "Transaction Successful!"}
-                  {txStatus === TransactionStatus.ERROR && "Transaction Failed"}
-                </h3>
-
-                <Progress value={txProgress} className="h-2" />
-
-                {txDigest && (
-                  <div className="text-sm text-muted-foreground">
-                    <p>Transaction ID:</p>
-                    <a
-                      href={getTransactionExplorerUrl()}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="flex items-center justify-center gap-1 mt-1 text-primary hover:underline"
-                    >
-                      {truncateAddress(txDigest)}
-                      <ExternalLink className="h-3 w-3" />
-                    </a>
-                  </div>
-                )}
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
 
       {/* Share dialog */}
       <ShareDialog
