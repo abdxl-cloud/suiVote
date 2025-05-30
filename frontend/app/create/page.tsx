@@ -25,6 +25,7 @@ import {
   ExternalLink,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { LoadingButton } from "@/components/ui/loading-button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Switch } from "@/components/ui/switch"
@@ -45,31 +46,11 @@ import { useWallet } from "@suiet/wallet-kit"
 import { useSuiVote } from "@/hooks/use-suivote"
 import { useToast } from "@/components/ui/use-toast"
 import { SUI_CONFIG } from "@/config/sui-config"
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
 import { Progress } from "@/components/ui/progress"
 import { TokenSelector } from "@/components/token-selector"
 import { WhitelistSelector } from "@/components/whitelist-selector"
 import { VoteMediaHandler } from "@/components/media-handler";
-import { MediaFileUploader } from "@/components/file-uploader";
-
-
-// Transaction status enum
-enum TransactionStatus {
-  IDLE = "idle",
-  BUILDING = "building",
-  SIGNING = "signing",
-  EXECUTING = "executing",
-  CONFIRMING = "confirming",
-  SUCCESS = "success",
-  ERROR = "error",
-}
+import { TransactionStatusDialog, TransactionStatus } from "@/components/transaction-status-dialog";
 
 type PollType = {
   id: string
@@ -331,12 +312,16 @@ const addPoll = () => {
     const newPolls = [...polls]
     newPolls[pollIndex].title = title
     setPolls(newPolls)
+    // Validate form without navigation to update errors in real-time
+    setTimeout(() => validateForm(false), 0);
   }
 
   const updatePollDescription = (pollIndex: number, description: string) => {
     const newPolls = [...polls]
     newPolls[pollIndex].description = description
     setPolls(newPolls)
+    // Validate form without navigation to update errors in real-time
+    setTimeout(() => validateForm(false), 0);
   }
 
   const updatePollType = (pollIndex: number, isMultiSelect: boolean) => {
@@ -344,18 +329,24 @@ const addPoll = () => {
     newPolls[pollIndex].isMultiSelect = isMultiSelect
     newPolls[pollIndex].maxSelections = isMultiSelect ? Math.min(2, newPolls[pollIndex].options.length - 1) : 1
     setPolls(newPolls)
+    // Validate form without navigation to update errors in real-time
+    setTimeout(() => validateForm(false), 0);
   }
 
   const updateMaxSelections = (pollIndex: number, maxSelections: number) => {
     const newPolls = [...polls]
     newPolls[pollIndex].maxSelections = maxSelections
     setPolls(newPolls)
+    // Validate form without navigation to update errors in real-time
+    setTimeout(() => validateForm(false), 0);
   }
 
   const updatePollRequired = (pollIndex: number, isRequired: boolean) => {
     const newPolls = [...polls]
     newPolls[pollIndex].isRequired = isRequired
     setPolls(newPolls)
+    // Validate form without navigation to update errors in real-time
+    setTimeout(() => validateForm(false), 0);
   }
 
   // Update the addOption function to use timestamp-based unique IDs
@@ -386,6 +377,8 @@ const addPoll = () => {
     
     console.log(`Added option ${optionNumber} to poll ${pollIndex + 1}:`, newOption)
     setPolls(newPolls)
+    // Validate form without navigation to update errors in real-time
+    setTimeout(() => validateForm(false), 0);
   }
 
   const removeOption = (pollIndex: number, optionIndex: number) => {
@@ -409,6 +402,8 @@ const addPoll = () => {
       setPolls(newPolls)
       
       console.log(`Poll ${pollIndex + 1} now has ${newPolls[pollIndex].options.length} options`)
+      // Validate form without navigation to update errors in real-time
+      setTimeout(() => validateForm(false), 0);
     }
   }
 
@@ -422,6 +417,8 @@ const addPoll = () => {
       newPolls[pollIndex].options[optionIndex].text = text
       console.log(`Updated poll ${pollIndex + 1}, option ${optionIndex + 1}: "${text}"`)
       setPolls(newPolls)
+      // Validate form without navigation to update errors in real-time
+      setTimeout(() => validateForm(false), 0);
     } else {
       console.error(`Invalid indices: poll ${pollIndex}, option ${optionIndex}`)
     }
@@ -473,6 +470,9 @@ const addPoll = () => {
       })
       return
     }
+    
+    // Validate the form to update errors
+    validateForm(false)
 
     // Check if current section is complete before allowing navigation
     if (isSectionComplete(activeTab)) {
@@ -801,6 +801,29 @@ const preparePollDataForSubmission = () => {
     try {
       const now = new Date();
       let datesUpdated = false;
+      
+      // Validate all form sections before proceeding
+      const detailsComplete = isSectionComplete("details");
+      const pollsComplete = isSectionComplete("polls");
+      const settingsComplete = isSectionComplete("settings");
+      
+      if (!detailsComplete || !pollsComplete || !settingsComplete) {
+        // Validate to show all errors
+        if (!validateForm()) {
+          // Scroll to the error alert if present
+          setTimeout(() => {
+            const errorAlert = document.querySelector('[role="alert"]')
+            if (errorAlert) {
+              errorAlert.scrollIntoView({ behavior: "smooth", block: "center" })
+            }
+          }, 100);
+          toast.error("Please fix all validation errors before submitting", {
+            description: "Ensure all required fields are filled correctly"
+          });
+          return;
+        }
+      }
+      
       if (!validatePollOrder()) {
         toast.error("Please fix poll validation errors before submitting")
         return
@@ -835,25 +858,6 @@ const preparePollDataForSubmission = () => {
         toast.info("Voting dates updated", {
           description: "Start and end dates have been automatically adjusted to ensure they are in the future."
         });
-      }
-
-      // Check if all sections are complete
-      const detailsComplete = isSectionComplete("details");
-      const pollsComplete = isSectionComplete("polls");
-      const settingsComplete = isSectionComplete("settings");
-
-      if (!detailsComplete || !pollsComplete || !settingsComplete) {
-        // Validate to show all errors
-        if (!validateForm()) {
-          // Scroll to the error alert if present
-          setTimeout(() => {
-            const errorAlert = document.querySelector('[role="alert"]')
-            if (errorAlert) {
-              errorAlert.scrollIntoView({ behavior: "smooth", block: "center" })
-            }
-          }, 100);
-          return;
-        }
       }
 
       if (!wallet.connected) {
@@ -1232,7 +1236,11 @@ const preparePollDataForSubmission = () => {
                           id="title"
                           placeholder="Enter a title for this vote"
                           value={voteTitle}
-                          onChange={(e) => setVoteTitle(e.target.value)}
+                          onChange={(e) => {
+                            setVoteTitle(e.target.value);
+                            // Validate form without navigation to update errors in real-time
+                            setTimeout(() => validateForm(false), 0);
+                          }}
                           className={cn(
                             "h-12 transition-all focus:scale-[1.01]",
                             errors.title && "border-red-500 focus-visible:ring-red-500",
@@ -1249,7 +1257,11 @@ const preparePollDataForSubmission = () => {
                           id="description"
                           placeholder="Provide context or additional information about this vote"
                           value={voteDescription}
-                          onChange={(e) => setVoteDescription(e.target.value)}
+                          onChange={(e) => {
+                            setVoteDescription(e.target.value);
+                            // Validate form without navigation to update errors in real-time
+                            setTimeout(() => validateForm(false), 0);
+                          }}
                           className="min-h-[150px] resize-none transition-all focus:scale-[1.01]"
                         />
                       </div>
@@ -1880,24 +1892,22 @@ const preparePollDataForSubmission = () => {
                       </Button>
                       {/* Update your submit button to use the media handlers */}
                       {/* Find the button that calls handleSubmit and replace with: */}
-                      <Button
+                      <LoadingButton
                         size="lg"
                         className="gap-2 transition-all hover:scale-105"
                         onClick={() => handleSubmit(mediaHandlers)}
-                        disabled={txStatus !== TransactionStatus.IDLE && txStatus !== TransactionStatus.ERROR}
+                        disabled={
+                          (txStatus !== TransactionStatus.IDLE && txStatus !== TransactionStatus.ERROR) ||
+                          !isSectionComplete("details") ||
+                          !isSectionComplete("polls") ||
+                          !isSectionComplete("settings")
+                        }
+                        isLoading={txStatus !== TransactionStatus.IDLE && txStatus !== TransactionStatus.ERROR}
+                        loadingText="Creating Vote..."
                       >
-                        {txStatus !== TransactionStatus.IDLE && txStatus !== TransactionStatus.ERROR ? (
-                          <>
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                            Creating Vote...
-                          </>
-                        ) : (
-                          <>
-                            Create Vote
-                            <ArrowRight className="h-4 w-4" />
-                          </>
-                        )}
-                      </Button>
+                        Create Vote
+                        <ArrowRight className="h-4 w-4" />
+                      </LoadingButton>
                     </CardFooter>
                   </Card>
 
@@ -1956,148 +1966,30 @@ const preparePollDataForSubmission = () => {
           </Tabs>
 
           {/* Transaction Status Dialog */}
-          <Dialog open={txStatusDialogOpen} onOpenChange={setTxStatusDialogOpen}>
-            <DialogContent className="sm:max-w-md">
-              <DialogHeader>
-                <DialogTitle>
-                  {txStatus === TransactionStatus.SUCCESS
-                    ? "Vote Created Successfully!"
-                    : txStatus === TransactionStatus.ERROR
-                      ? "Error Creating Vote"
-                      : "Creating Vote"}
-                </DialogTitle>
-                <DialogDescription>
-                  {txStatus === TransactionStatus.SUCCESS
-                    ? "Your vote has been published to the blockchain."
-                    : txStatus === TransactionStatus.ERROR
-                      ? "There was an error creating your vote."
-                      : "Please wait while we create your vote on the blockchain."}
-                </DialogDescription>
-              </DialogHeader>
-
-              <div className="space-y-4 py-4">
-                <Progress value={txProgress} className="h-2 w-full" />
-
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="flex items-center gap-2">
-                      {txStatus === TransactionStatus.BUILDING || txStatus === TransactionStatus.IDLE ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <Check className="h-4 w-4 text-green-500" />
-                      )}
-                      Building Transaction
-                    </span>
-                    <span className="text-muted-foreground">Step 1/4</span>
-                  </div>
-
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="flex items-center gap-2">
-                      {txStatus === TransactionStatus.SIGNING ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : txStatus > TransactionStatus.SIGNING ? (
-                        <Check className="h-4 w-4 text-green-500" />
-                      ) : (
-                        <div className="h-4 w-4" />
-                      )}
-                      Signing Transaction
-                    </span>
-                    <span className="text-muted-foreground">Step 2/4</span>
-                  </div>
-
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="flex items-center gap-2">
-                      {txStatus === TransactionStatus.EXECUTING ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : txStatus > TransactionStatus.EXECUTING ? (
-                        <Check className="h-4 w-4 text-green-500" />
-                      ) : (
-                        <div className="h-4 w-4" />
-                      )}
-                      Executing Transaction
-                    </span>
-                    <span className="text-muted-foreground">Step 3/4</span>
-                  </div>
-
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="flex items-center gap-2">
-                      {txStatus === TransactionStatus.CONFIRMING ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : txStatus > TransactionStatus.CONFIRMING ? (
-                        <Check className="h-4 w-4 text-green-500" />
-                      ) : (
-                        <div className="h-4 w-4" />
-                      )}
-                      Confirming Transaction
-                    </span>
-                    <span className="text-muted-foreground">Step 4/4</span>
-                  </div>
-                </div>
-
-                {txStatus === TransactionStatus.ERROR && (
-                  <Alert variant="destructive">
-                    <AlertCircle className="h-4 w-4" />
-                    <AlertTitle>Error</AlertTitle>
-                    <AlertDescription>{transactionError}</AlertDescription>
-                  </Alert>
-                )}
-
-                {txDigest && (
-                  <div className="pt-2">
-                    <Label className="text-sm">Transaction ID</Label>
-                    <div className="flex items-center gap-2 mt-1">
-                      <code className="bg-muted p-2 rounded text-xs w-full overflow-x-auto">{txDigest}</code>
-                      <Button
-                        variant="outline"
-                        size="icon"
-                        className="flex-shrink-0"
-                        onClick={() => window.open(getTransactionExplorerUrl(), "_blank")}
-                      >
-                        <ExternalLink className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              <DialogFooter className="sm:justify-between">
-                {txStatus === TransactionStatus.ERROR ? (
-                  <Button
-                    variant="default"
-                    onClick={() => {
-                      setTxStatusDialogOpen(false)
-                      setTxStatus(TransactionStatus.IDLE)
-                    }}
-                  >
-                    Try Again
-                  </Button>
-                ) : txStatus === TransactionStatus.SUCCESS ? (
-                  <Button variant="default" onClick={() => router.push(`/success?digest=${txDigest}`)}>
-                    View Vote
-                  </Button>
-                ) : (
-                  <Button
-                    variant="outline"
-                    onClick={() => setTxStatusDialogOpen(false)}
-                    disabled={txStatus !== TransactionStatus.ERROR && txStatus !== TransactionStatus.SUCCESS}
-                  >
-                    Close
-                  </Button>
-                )}
-
-                {txDigest && (
-                  <Button
-                    variant="outline"
-                    className="gap-2"
-                    onClick={() => window.open(getTransactionExplorerUrl(), "_blank")}
-                  >
-                    <ExternalLink className="h-4 w-4" />
-                    View in Explorer
-                  </Button>
-                )}
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
+          <TransactionStatusDialog
+            open={txStatusDialogOpen}
+            onOpenChange={setTxStatusDialogOpen}
+            txStatus={txStatus}
+            txDigest={txDigest}
+            transactionError={transactionError}
+            onRetry={() => {
+              setTxStatusDialogOpen(false)
+              setTxStatus(TransactionStatus.IDLE)
+            }}
+            onSuccess={() => router.push(`/success?digest=${txDigest}`)}
+            onClose={() => setTxStatusDialogOpen(false)}
+            explorerUrl={SUI_CONFIG.explorerUrl}
+            title={{
+              default: "Creating Vote",
+              success: "Vote Created Successfully!",
+              error: "Error Creating Vote"
+            }}
+            description={{
+              default: "Please wait while we create your vote on the blockchain.",
+              success: "Your vote has been published to the blockchain.",
+              error: "There was an error creating your vote."
+            }}
+          />
           {/* Media upload is now handled inline in each option */}
         </motion.div>
       )}

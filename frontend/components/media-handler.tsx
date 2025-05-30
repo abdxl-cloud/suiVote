@@ -1,10 +1,9 @@
 "use client"
 
-import React, { createContext, useContext, useState, useCallback } from "react"
-import { Transaction } from "@mysten/sui/transactions"
-import { useSuiVote } from "@/hooks/use-suivote"
-import { SUI_CONFIG } from "@/config/sui-config"
-import { toast } from "sonner"
+import React, {createContext, useCallback, useContext, useState} from "react"
+import {Transaction} from "@mysten/sui/transactions"
+import {useSuiVote} from "@/hooks/use-suivote"
+import {toast} from "sonner"
 
 // Define the environment variables for Walrus service
 // In a real implementation, these would come from environment variables
@@ -257,7 +256,7 @@ export function VoteMediaHandler({ children }: { children: (handlers: MediaHandl
       const showLiveStats = params.showLiveStats !== undefined ? params.showLiveStats : false
 
       console.log(pollData)
-      // Create transaction using the SuiVoteService
+      // Create a transaction using the SuiVoteService
 
       console.log(params.whitelistAddresses)
       const transaction = createCompleteVoteTransaction(
@@ -277,25 +276,25 @@ export function VoteMediaHandler({ children }: { children: (handlers: MediaHandl
       )
       
       // Wrap transaction for execution
-      const wrappedTransaction = {
+      return {
         transaction,
         execute: async () => {
           try {
             const result = await executeTransaction(transaction)
-            
+
             // Call success callback if provided
             if (result && params.onSuccess) {
               // Extract vote ID from result if available
-              const voteId = result.objectChanges?.find(change => 
-                change.type === 'created' && 
-                change.objectType.includes('::voting::Vote')
+              const voteId = result.objectChanges?.find((change: { type: string; objectType: string | string[] }) =>
+                  change.type === 'created' &&
+                  change.objectType.includes('::voting::Vote')
               )?.objectId
-              
+
               if (voteId) {
                 params.onSuccess(voteId)
               }
             }
-            
+
             return result
           } catch (error) {
             console.error('Transaction execution error:', error)
@@ -303,8 +302,6 @@ export function VoteMediaHandler({ children }: { children: (handlers: MediaHandl
           }
         }
       }
-      
-      return wrappedTransaction
     } catch (error) {
       console.error('Create vote with media error:', error)
       toast.error('Failed to create vote transaction')
@@ -321,7 +318,7 @@ export function VoteMediaHandler({ children }: { children: (handlers: MediaHandl
     setLoading(false)
   }, [])
 
-  // Create handlers object
+  // Create handler object
   const handlers: MediaHandlersContextType = {
     mediaFiles,
     uploadProgress,

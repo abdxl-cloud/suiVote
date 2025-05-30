@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, ReactNode } from "react"
 import { useParams, useRouter } from "next/navigation"
 import { useWallet } from "@suiet/wallet-kit"
 import { useSuiVote } from "@/hooks/use-suivote"
@@ -9,6 +9,7 @@ import { motion, AnimatePresence } from "framer-motion"
 import { toast } from "sonner"
 import { format, formatDistanceToNow } from "date-fns"
 import Link from "next/link"
+import { TransactionStatusDialog, TransactionStatus } from "@/components/transaction-status-dialog"
 
 // UI Components
 import {
@@ -44,6 +45,7 @@ import {
   RefreshCw
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { LoadingButton } from "@/components/ui/loading-button"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Separator } from "@/components/ui/separator"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
@@ -52,14 +54,6 @@ import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { Progress } from "@/components/ui/progress"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
 import { ShareDialog } from "@/components/share-dialog"
 import { WalletConnectButton } from "@/components/wallet-connect-button"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
@@ -68,15 +62,7 @@ import { cn } from "@/lib/utils"
 import { mapOptionIdsToIndices, verifyOptionMappings } from '@/components/vote-utils';
 
 // Transaction status enum
-enum TransactionStatus {
-  IDLE = "idle",
-  BUILDING = "building",
-  SIGNING = "signing",
-  EXECUTING = "executing",
-  CONFIRMING = "confirming",
-  SUCCESS = "success",
-  ERROR = "error",
-}
+// Using TransactionStatus enum from the imported component
 
 export default function VotePage() {
   const params = useParams()
@@ -107,6 +93,7 @@ export default function VotePage() {
     seconds: 0,
     hasStarted: false
   });
+  
   const calculateTimeRemaining = (startTimestamp: number) => {
     const now = Date.now();
     const difference = startTimestamp - now;
@@ -123,6 +110,7 @@ export default function VotePage() {
       hasStarted: false
     };
   };
+  
   useEffect(() => {
     if (!vote || vote.status !== 'upcoming') return;
 
@@ -142,34 +130,7 @@ export default function VotePage() {
     return () => clearInterval(timer);
   }, [vote?.status, vote?.startTimestamp]);
 
-  const CountdownTimer = () => {
-    if (!timeRemaining || timeRemaining.hasStarted) return null;
-
-    return (
-      <div className="flex items-center gap-3 bg-blue-50 dark:bg-blue-900/20 p-4 rounded-lg border border-blue-200 dark:border-blue-800">
-        <div className="flex items-center gap-2 font-mono">
-          {timeRemaining.days > 0 && (
-            <div className="text-center">
-              <div className="text-xl font-bold">{timeRemaining.days}</div>
-              <div className="text-xs text-muted-foreground">days</div>
-            </div>
-          )}
-          <div className="text-center">
-            <div className="text-xl font-bold">{timeRemaining.hours}</div>
-            <div className="text-xs text-muted-foreground">hours</div>
-          </div>
-          <div className="text-center">
-            <div className="text-xl font-bold">{timeRemaining.minutes}</div>
-            <div className="text-xs text-muted-foreground">minutes</div>
-          </div>
-          <div className="text-center">
-            <div className="text-xl font-bold">{timeRemaining.seconds}</div>
-            <div className="text-xs text-muted-foreground">seconds</div>
-          </div>
-        </div>
-      </div>
-    );
-  };
+  
   // Transaction state
   const [txStatus, setTxStatus] = useState(TransactionStatus.IDLE)
   const [txDigest, setTxDigest] = useState(null)
@@ -182,313 +143,28 @@ export default function VotePage() {
   const [txStatusDialogOpen, setTxStatusDialogOpen] = useState(false)
   const [transactionError, setTransactionError] = useState<string | null>(null)
 
-  // Dialog component for transaction status
-  const TransactionStatusDialog = () => (
-    <Dialog
-      open={txStatusDialogOpen}
-      onOpenChange={(open) => {
-        // Only allow closing the dialog if transaction is complete or failed
-        if (!open && (txStatus === TransactionStatus.SUCCESS || txStatus === TransactionStatus.ERROR)) {
-          // Reset transaction status to prevent reopening
-          setTxStatus(TransactionStatus.IDLE);
-          // Explicitly close the dialog
-          setTxStatusDialogOpen(false);
-          // If transaction was successful, refresh the page data
-          if (txStatus === TransactionStatus.SUCCESS) {
-            router.refresh();
-            fetchVoteData();
-          }
-        } else if (!open) {
-          return;
-        } else {
-          setTxStatusDialogOpen(false);
-        }
-      }}
-    >
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-3 mb-1">
-            {txStatus === TransactionStatus.SUCCESS && (
-              <div className="bg-green-100 dark:bg-green-900/30 p-2 rounded-full">
-                <Check className="h-5 w-5 text-green-600 dark:text-green-400" />
-              </div>
-            )}
-            {txStatus === TransactionStatus.ERROR && (
-              <div className="bg-red-100 dark:bg-red-900/30 p-2 rounded-full">
-                <AlertCircle className="h-5 w-5 text-red-600 dark:text-red-400" />
-              </div>
-            )}
-            {txStatus !== TransactionStatus.SUCCESS && txStatus !== TransactionStatus.ERROR && (
-              <div className="bg-blue-100 dark:bg-blue-900/30 p-2 rounded-full">
-                <Loader2 className="h-5 w-5 text-blue-600 dark:text-blue-400 animate-spin" />
-              </div>
-            )}
-            <span>
-              {txStatus === TransactionStatus.SUCCESS
-                ? "Transaction Successful!"
-                : txStatus === TransactionStatus.ERROR
-                  ? "Transaction Failed"
-                  : "Processing Transaction"}
-            </span>
-          </DialogTitle>
-          <DialogDescription className="text-sm">
-            {txStatus === TransactionStatus.SUCCESS
-              ? "Your transaction has been confirmed on the blockchain."
-              : txStatus === TransactionStatus.ERROR
-                ? "There was an error processing your transaction."
-                : "Please wait while we process your transaction on the blockchain."}
-          </DialogDescription>
-        </DialogHeader>
+  // Using the reusable TransactionStatusDialog component
+  const handleDialogClose = () => {
+    // Only allow closing the dialog if transaction is complete or failed
+    if (txStatus === TransactionStatus.SUCCESS || txStatus === TransactionStatus.ERROR) {
+      // Reset transaction status to prevent reopening
+      setTxStatus(TransactionStatus.IDLE);
+      // Explicitly close the dialog
+      setTxStatusDialogOpen(false);
+      // If transaction was successful, refresh the page data
+      if (txStatus === TransactionStatus.SUCCESS) {
+        router.refresh();
+        fetchVoteData();
+      }
+    }
+  }
 
-        <div className="space-y-4 py-4">
-
-
-          <div className="space-y-3 mt-2">
-            <div className={cn(
-              "flex items-center justify-between text-sm p-2.5 rounded-md transition-colors duration-300",
-              txStatus === TransactionStatus.BUILDING ? "bg-primary/10 border border-primary/20" :
-                txStatus > TransactionStatus.BUILDING ? "bg-green-50 dark:bg-green-900/20" :
-                  "bg-muted/20"
-            )}>
-              <span className="flex items-center gap-2">
-                {txStatus === TransactionStatus.BUILDING ? (
-                  <Loader2 className="h-4 w-4 animate-spin text-primary" />
-                ) : txStatus > TransactionStatus.BUILDING ? (
-                  <Check className="h-4 w-4 text-green-500" />
-                ) : (
-                  <Circle className="h-4 w-4 text-muted-foreground" />
-                )}
-                <span className={cn(
-                  txStatus === TransactionStatus.BUILDING ? "font-medium text-primary" :
-                    txStatus > TransactionStatus.BUILDING ? "font-medium" :
-                      "text-muted-foreground"
-                )}>
-                  Building Transaction
-                </span>
-              </span>
-              <span className="text-xs text-muted-foreground font-medium">Step 1/4</span>
-            </div>
-
-            <div className={cn(
-              "flex items-center justify-between text-sm p-2.5 rounded-md transition-colors duration-300",
-              txStatus === TransactionStatus.SIGNING ? "bg-primary/10 border border-primary/20" :
-                txStatus > TransactionStatus.SIGNING ? "bg-green-50 dark:bg-green-900/20" :
-                  "bg-muted/20"
-            )}>
-              <span className="flex items-center gap-2">
-                {txStatus === TransactionStatus.SIGNING ? (
-                  <Loader2 className="h-4 w-4 animate-spin text-primary" />
-                ) : txStatus > TransactionStatus.SIGNING ? (
-                  <Check className="h-4 w-4 text-green-500" />
-                ) : (
-                  <Circle className="h-4 w-4 text-muted-foreground" />
-                )}
-                <span className={cn(
-                  txStatus === TransactionStatus.SIGNING ? "font-medium text-primary" :
-                    txStatus > TransactionStatus.SIGNING ? "font-medium" :
-                      "text-muted-foreground"
-                )}>
-                  Signing Transaction
-                </span>
-              </span>
-              <span className="text-xs text-muted-foreground font-medium">Step 2/4</span>
-            </div>
-
-            <div className={cn(
-              "flex items-center justify-between text-sm p-2.5 rounded-md transition-colors duration-300",
-              txStatus === TransactionStatus.EXECUTING ? "bg-primary/10 border border-primary/20" :
-                txStatus > TransactionStatus.EXECUTING ? "bg-green-50 dark:bg-green-900/20" :
-                  "bg-muted/20"
-            )}>
-              <span className="flex items-center gap-2">
-                {txStatus === TransactionStatus.EXECUTING ? (
-                  <Loader2 className="h-4 w-4 animate-spin text-primary" />
-                ) : txStatus > TransactionStatus.EXECUTING ? (
-                  <Check className="h-4 w-4 text-green-500" />
-                ) : (
-                  <Circle className="h-4 w-4 text-muted-foreground" />
-                )}
-                <span className={cn(
-                  txStatus === TransactionStatus.EXECUTING ? "font-medium text-primary" :
-                    txStatus > TransactionStatus.EXECUTING ? "font-medium" :
-                      "text-muted-foreground"
-                )}>
-                  Executing Transaction
-                </span>
-              </span>
-              <span className="text-xs text-muted-foreground font-medium">Step 3/4</span>
-            </div>
-
-            <div className={cn(
-              "flex items-center justify-between text-sm p-2.5 rounded-md transition-colors duration-300",
-              txStatus === TransactionStatus.CONFIRMING ? "bg-primary/10 border border-primary/20" :
-                txStatus > TransactionStatus.CONFIRMING ? "bg-green-50 dark:bg-green-900/20" :
-                  "bg-muted/20"
-            )}>
-              <span className="flex items-center gap-2">
-                {txStatus === TransactionStatus.CONFIRMING ? (
-                  <Loader2 className="h-4 w-4 animate-spin text-primary" />
-                ) : txStatus > TransactionStatus.CONFIRMING ? (
-                  <Check className="h-4 w-4 text-green-500" />
-                ) : (
-                  <Circle className="h-4 w-4 text-muted-foreground" />
-                )}
-                <span className={cn(
-                  txStatus === TransactionStatus.CONFIRMING ? "font-medium text-primary" :
-                    txStatus > TransactionStatus.CONFIRMING ? "font-medium" :
-                      "text-muted-foreground"
-                )}>
-                  Confirming Transaction
-                </span>
-              </span>
-              <span className="text-xs text-muted-foreground font-medium">Step 4/4</span>
-            </div>
-          </div>
-
-          {txStatus === TransactionStatus.SUCCESS && txDigest && (
-            <div className="mt-4 space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-medium">Transaction ID</span>
-                <Link
-                  href={`${SUI_CONFIG.explorerUrl}/txblock/${txDigest}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-xs text-primary hover:text-primary/80 flex items-center gap-1 transition-colors"
-                >
-                  View on Explorer
-                  <ExternalLink className="h-3 w-3" />
-                </Link>
-              </div>
-              <div className="flex items-center gap-2 bg-muted/30 p-2 rounded-md">
-                <code className="text-xs text-muted-foreground flex-1 truncate">{txDigest}</code>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-7 w-7"
-                  onClick={() => {
-                    navigator.clipboard.writeText(txDigest)
-                    toast.success("Transaction ID copied to clipboard")
-                  }}
-                >
-                  <Copy className="h-3.5 w-3.5" />
-                </Button>
-              </div>
-            </div>
-          )}
-
-          {txStatus === TransactionStatus.ERROR && transactionError && (
-            <div className="mt-4 space-y-3">
-              <Alert variant="destructive">
-                <AlertCircle className="h-4 w-4" />
-                <AlertTitle>Transaction Failed</AlertTitle>
-                <AlertDescription className="text-xs break-all max-h-32 overflow-y-auto">{transactionError}</AlertDescription>
-              </Alert>
-
-              {/* Error-specific guidance */}
-              {transactionError.includes("rejected") || transactionError.includes("cancelled") ? (
-                <div className="bg-amber-50 dark:bg-amber-900/20 p-3 rounded-md border border-amber-200 dark:border-amber-800/30">
-                  <div className="flex gap-2 text-amber-800 dark:text-amber-300">
-                    <Info className="h-4 w-4 mt-0.5" />
-                    <div className="space-y-1">
-                      <p className="text-xs font-medium">You declined the transaction</p>
-                      <p className="text-xs">You can try again when you're ready by clicking the "Try Again" button below.</p>
-                    </div>
-                  </div>
-                </div>
-              ) : transactionError.includes("insufficient") ? (
-                <div className="bg-amber-50 dark:bg-amber-900/20 p-3 rounded-md border border-amber-200 dark:border-amber-800/30">
-                  <div className="flex gap-2 text-amber-800 dark:text-amber-300">
-                    <Wallet className="h-4 w-4 mt-0.5" />
-                    <div className="space-y-1">
-                      <p className="text-xs font-medium">Insufficient funds</p>
-                      <p className="text-xs">Please add more SUI to your wallet to cover the transaction fee, then try again.</p>
-                    </div>
-                  </div>
-                </div>
-              ) : transactionError.includes("network") || transactionError.includes("timeout") ? (
-                <div className="bg-amber-50 dark:bg-amber-900/20 p-3 rounded-md border border-amber-200 dark:border-amber-800/30">
-                  <div className="flex gap-2 text-amber-800 dark:text-amber-300">
-                    <Wifi className="h-4 w-4 mt-0.5" />
-                    <div className="space-y-1">
-                      <p className="text-xs font-medium">Network issue detected</p>
-                      <p className="text-xs">Please check your internet connection and try again.</p>
-                    </div>
-                  </div>
-                </div>
-              ) : transactionError.includes("wallet") ? (
-                <div className="bg-amber-50 dark:bg-amber-900/20 p-3 rounded-md border border-amber-200 dark:border-amber-800/30">
-                  <div className="flex gap-2 text-amber-800 dark:text-amber-300">
-                    <Wallet className="h-4 w-4 mt-0.5" />
-                    <div className="space-y-1">
-                      <p className="text-xs font-medium">Wallet connection issue</p>
-                      <p className="text-xs">Please check that your wallet is connected and try again.</p>
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <div className="bg-blue-50 dark:bg-blue-900/20 p-3 rounded-md border border-blue-200 dark:border-blue-800/30">
-                  <div className="flex gap-2 text-blue-800 dark:text-blue-300">
-                    <HelpCircle className="h-4 w-4 mt-0.5" />
-                    <div className="space-y-1">
-                      <p className="text-xs font-medium">Something went wrong</p>
-                      <p className="text-xs">You can try again or come back later if the issue persists.</p>
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-
-        <DialogFooter className="flex items-center justify-between">
-          {txStatus === TransactionStatus.SUCCESS ? (
-            <Button
-              type="button"
-              onClick={() => {
-                setTxStatusDialogOpen(false)
-              }}
-              className="w-full gap-2"
-            >
-              <Check className="h-4 w-4" />
-              Close
-            </Button>
-          ) : txStatus === TransactionStatus.ERROR ? (
-            <div className="flex w-full gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => {
-                  setTxStatusDialogOpen(false)
-                }}
-                className="flex-1 gap-2"
-              >
-                <X className="h-4 w-4" />
-                Close
-              </Button>
-              <Button
-                type="button"
-                onClick={() => {
-                  setTxStatus(TransactionStatus.IDLE)
-                  setTransactionError(null)
-                  setTxProgress(0)
-                  handleSubmitVote()
-                }}
-                className="flex-1 gap-2 bg-primary hover:bg-primary/90"
-              >
-                <RefreshCw className="h-4 w-4" />
-                Try Again
-              </Button>
-            </div>
-          ) : (
-            <Button type="button" disabled className="w-full gap-2">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              Processing...
-            </Button>
-          )}
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  )
+  const handleTryAgain = () => {
+    setTxStatus(TransactionStatus.IDLE);
+    setTransactionError(null);
+    setTxProgress(0);
+    handleSubmitVote();
+  }
 
   const fetchVoteData = async () => {
     try {
@@ -508,7 +184,7 @@ export default function VotePage() {
       // If the vote is closed, redirect to the closed page
       // Only redirect if showLiveStats is false
       if (voteDetails.status === "closed" && !voteDetails?.showLiveStats) {
-        setLoading(false) // ← Add this line
+        setLoading(false)
         router.push(`/vote/${params.id}/closed`)
         return
       }
@@ -523,7 +199,7 @@ export default function VotePage() {
             duration: 5000,
           })
         }
-
+      
         // Update the UI to show that the vote can be started
         voteDetails.canBeStarted = true;
       }
@@ -577,7 +253,7 @@ export default function VotePage() {
 
         // If vote is open, user has voted, and live stats are disabled, redirect to success page
         if (votedStatus && !voteDetails?.showLiveStats && voteDetails.status === "active") {
-          setLoading(false) // ← Add this line
+          setLoading(false)
           router.push(`/vote/${params.id}/success`)
           return
         }
@@ -745,6 +421,42 @@ export default function VotePage() {
     }
   }, [txStatus])
 
+  // Validate selections and update validation errors in real-time
+  const validateSelections = (selections) => {
+    const validationErrors = {};
+    let hasValidSelections = false;
+
+    // Check each poll for validation issues
+    polls.forEach(poll => {
+      const selectedOptions = selections[poll.id] || [];
+
+      // Check if required poll has selections
+      if (poll.isRequired && selectedOptions.length === 0) {
+        validationErrors[poll.id] = "This poll requires a response";
+      }
+
+      // Validate selection count based on poll type
+      if (!poll.isMultiSelect && selectedOptions.length > 1) {
+        validationErrors[poll.id] = "This poll allows only one selection";
+      } else if (poll.isMultiSelect && poll.maxSelections &&
+        selectedOptions.length > poll.maxSelections) {
+        validationErrors[poll.id] = `Maximum ${poll.maxSelections} selections allowed`;
+      }
+
+      // Track if we have any valid selections
+      if (selectedOptions.length > 0 && !validationErrors[poll.id]) {
+        hasValidSelections = true;
+      }
+    });
+
+    // Must have at least one valid selection
+    if (!hasValidSelections) {
+      validationErrors.general = "Please make at least one selection";
+    }
+
+    return validationErrors;
+  };
+
   // Handle option selection
   const handleOptionSelect = (pollId, optionId, isMultiSelect) => {
     setSelections(prev => {
@@ -775,6 +487,13 @@ export default function VotePage() {
         // For single-select polls - always just one option
         newSelections[pollId] = [optionId]
       }
+      
+      // Validate selections in real-time and update errors
+      setTimeout(() => {
+        const errors = validateSelections(newSelections);
+        setValidationErrors(errors);
+      }, 0);
+      
 
       return newSelections
     })
@@ -860,9 +579,6 @@ export default function VotePage() {
       setTxStatus(TransactionStatus.BUILDING);
       setTxProgress(20);
 
-      // Clear any previous validation errors
-      setValidationErrors({});
-
       console.log("[Vote Debug] Starting vote submission process");
       console.log("[Vote Debug] Current selections:", selections);
 
@@ -875,47 +591,23 @@ export default function VotePage() {
         return;
       }
 
-      // STEP 2: Validate all poll selections
-      const validationErrors = {};
-      let hasValidSelections = false;
-
-      // Check each poll for validation issues
-      polls.forEach(poll => {
-        const selectedOptions = selections[poll.id] || [];
-
-        // Check if required poll has selections
-        if (poll.isRequired && selectedOptions.length === 0) {
-          validationErrors[poll.id] = "This poll requires a response";
-        }
-
-        // Validate selection count based on poll type
-        if (!poll.isMultiSelect && selectedOptions.length > 1) {
-          validationErrors[poll.id] = "This poll allows only one selection";
-        } else if (poll.isMultiSelect && poll.maxSelections &&
-          selectedOptions.length > poll.maxSelections) {
-          validationErrors[poll.id] = `Maximum ${poll.maxSelections} selections allowed`;
-        }
-
-        // Track if we have any valid selections
-        if (selectedOptions.length > 0 && !validationErrors[poll.id]) {
-          hasValidSelections = true;
-        }
-      });
-
-      // Must have at least one valid selection
-      if (!hasValidSelections) {
-        validationErrors.general = "Please make at least one selection";
-      }
-
-      // If validation errors, show them and exit
+      // STEP 2: Validate all poll selections using our validation function
+      const validationErrors = validateSelections(selections);
+      
+      // If there are validation errors, stop submission
       if (Object.keys(validationErrors).length > 0) {
-        console.error("[Vote Debug] Validation failed:", validationErrors);
+        console.error("[Vote Debug] Validation errors:", validationErrors);
         setValidationErrors(validationErrors);
         setTxStatus(TransactionStatus.ERROR);
-        setTransactionError("Please fix validation errors before submitting");
         setSubmitting(false);
         return;
       }
+      
+      let hasValidSelections = true; // We've already validated
+
+      // We've already validated with validateSelections, so we can skip the redundant validation
+
+      // We've already validated and confirmed there are no errors, so we can proceed
 
       // STEP 2.5: ISSUE 2 SOLUTION - Verify option mappings before proceeding
       console.log("[Vote Debug] Verifying option mappings...");
@@ -1172,6 +864,45 @@ export default function VotePage() {
     }
   }
 
+  // Function to detect URLs in text and convert them to clickable links
+  const formatTextWithLinks = (text) => {
+    if (!text) return [text]
+    
+    // Regular expression to match URLs
+    const urlRegex = /(https?:\/\/[^\s]+)/g
+    
+    // Split the text by URLs
+    const parts = text.split(urlRegex)
+    
+    // Find all URLs in the text
+    const urls = text.match(urlRegex) || []
+    
+    // Combine parts and URLs
+    const result = []
+    
+    parts.forEach((part, index) => {
+      // Add the text part
+      result.push(part)
+      
+      // Add the URL as a link if it exists
+      if (urls[index]) {
+        result.push(
+          <a 
+            key={index} 
+            href={urls[index]} 
+            target="_blank" 
+            rel="noopener noreferrer"
+            className="text-blue-500 hover:text-blue-700 hover:underline"
+          >
+            {urls[index]}
+          </a>
+        )
+      }
+    })
+    
+    return result
+  }
+
   // Calculate time remaining
   const getTimeRemaining = () => {
     if (!vote) return ""
@@ -1349,7 +1080,7 @@ export default function VotePage() {
             <CardContent className="pb-6">
               {vote.description && (
                 <div className="mb-4 text-muted-foreground">
-                  {vote.description}
+                  {formatTextWithLinks(vote.description)}
                 </div>
               )}
 
@@ -1565,7 +1296,7 @@ export default function VotePage() {
                       <CardTitle className="text-xl">
                         {poll.title}
                       </CardTitle>
-                      {poll.description && <CardDescription className="mt-1">{poll.description}</CardDescription>}
+                      {poll.description && <CardDescription className="mt-1">{formatTextWithLinks(poll.description)}</CardDescription>}
                     </div>
                     {poll.isRequired && (
                       <Badge variant="outline" className="text-xs">
@@ -1747,7 +1478,7 @@ export default function VotePage() {
           <CardContent className="pb-6 px-5 md:px-6">
             {vote.description && (
               <div className="mb-5 text-muted-foreground text-base leading-relaxed">
-                {vote.description}
+                {formatTextWithLinks(vote.description)}
               </div>
             )}
 
@@ -2278,7 +2009,7 @@ export default function VotePage() {
                       </CardTitle>
                       {poll.description && (
                         <CardDescription className="mt-1 line-clamp-2">
-                          {poll.description}
+                          {formatTextWithLinks(poll.description)}
                         </CardDescription>
                       )}
                     </div>
@@ -2402,41 +2133,28 @@ export default function VotePage() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5, delay: 0.3 }}
-            className="mt-10 flex flex-col sm:flex-row justify-between items-center p-6 border border-primary/20 rounded-xl bg-primary/5 shadow-md gap-5"
+            className="mt-10 flex flex-col sm:flex-row justify-between items-center p-5 border border-muted/40 rounded-xl bg-muted/30 shadow-sm gap-4"
           >
-            <div className="flex items-center gap-3 text-sm">
-              <div className="bg-primary/10 p-2 rounded-full">
-                <Info className="h-5 w-5 text-primary" />
-              </div>
-              <p className="font-medium">
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Info className="h-4 w-4" />
+              <p>
                 {vote.requireAllPolls
                   ? "All polls must be answered to submit your vote."
                   : "Required polls must be answered to submit your vote."}
               </p>
             </div>
 
-            <Button
+            <LoadingButton
               onClick={handleSubmitVote}
-              disabled={submitting || !userCanVote}
-              className={cn(
-                "gap-2 transition-all duration-300 hover:shadow-lg hover:translate-y-[-2px] active:translate-y-[1px]",
-                "w-full sm:w-auto py-6 px-8 text-base font-medium",
-                submitting ? "bg-primary/90" : "bg-primary"
-              )}
+              disabled={!userCanVote || Object.keys(validationErrors).length > 0}
+              isLoading={submitting}
+              loadingText="Submitting..."
+              className="gap-2 bg-primary hover:bg-primary/90 transition-all duration-200 hover:shadow-md w-full sm:w-auto"
               size="lg"
             >
-              {submitting ? (
-                <>
-                  <Loader2 className="h-5 w-5 animate-spin" />
-                  <span>Submitting...</span>
-                </>
-              ) : (
-                <>
-                  <CheckCircle2 className="h-5 w-5" />
-                  <span>Submit Vote</span>
-                </>
-              )}
-            </Button>
+              <CheckCircle2 className="h-4 w-4" />
+              Submit Vote
+            </LoadingButton>
           </motion.div>
         )}
       </div>
@@ -2488,7 +2206,21 @@ export default function VotePage() {
       />
 
       {/* Transaction Status Dialog */}
-      <TransactionStatusDialog />
+      <TransactionStatusDialog 
+        open={txStatusDialogOpen}
+        onOpenChange={(open) => {
+          if (!open) {
+            handleDialogClose();
+          } else {
+            setTxStatusDialogOpen(open);
+          }
+        }}
+        txStatus={txStatus}
+        transactionError={transactionError}
+        txDigest={txDigest}
+        onRetry={handleTryAgain}
+        explorerUrl={SUI_CONFIG.explorerUrl}
+      />
     </div>
   )
 }

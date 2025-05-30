@@ -38,21 +38,6 @@ export function WalletConnectButton({ variant = "default", size = "default", cla
 
   // Get wallet icon URL
   const getWalletIcon = (wallet: any) => {
-    // Map of known wallet icons
-    const knownWalletIcons: Record<string, string> = {
-      "Sui Wallet": "/images/sui-wallet-logo.png",
-      "Suiet": "/images/suiet-logo.jpeg",
-      "Ethos Wallet": "/images/ethos-logo.jpeg",
-      "Slush Wallet": "/images/slush-logo.png",
-      "suiVote": "/images/slush-logo.png", // Slush wallet might appear with this name
-      // Add more wallet icons as needed
-    }
-
-    // Check if we have a known icon for this wallet
-    if (knownWalletIcons[wallet.name]) {
-      return knownWalletIcons[wallet.name]
-    }
-
     // Use wallet's provided icon if available
     if (wallet.iconUrl) {
       return wallet.iconUrl

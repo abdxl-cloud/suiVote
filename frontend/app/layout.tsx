@@ -22,7 +22,16 @@ const inter = Inter({
 export const metadata = {
   title: "SuiVote",
   description: "Decentralized voting platform on Sui blockchain",
-    generator: 'v0.dev'
+  generator: 'abdxl',
+  icons: {
+    icon: [
+      { url: '/favicon.ico' },
+      { url: '/logo.svg', type: 'image/svg+xml' }
+    ],
+    apple: [
+      { url: '/logo.svg', type: 'image/svg+xml' }
+    ]
+  }
 }
 
 export default function RootLayout({

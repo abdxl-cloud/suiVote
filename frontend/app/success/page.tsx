@@ -695,9 +695,9 @@ export default function SuccessPage() {
                           includeMargin={true}
                           className="mx-auto"
                           imageSettings={{
-                            src: "/images/sui-logo.png",
-                            height: 36,
-                            width: 36,
+                            src: "logo.png",
+                            height: 60,
+                            width: 60,
                             excavate: true,
                           }}
                         />

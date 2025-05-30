@@ -91,8 +91,12 @@ export default function LandingPage() {
       >
         <div className="container flex items-center justify-between">
           <a href="#top" className="flex items-center gap-2 group">
-            <div className="rounded-full bg-gradient-to-tr from-primary to-primary/80 p-1.5 group-hover:shadow-lg group-hover:shadow-primary/20 transition-all duration-300">
-              <div className="h-5 w-5 rounded-full bg-white" />
+            <div className="h-8 w-8 group-hover:shadow-lg group-hover:shadow-primary/20 transition-all duration-300">
+              <img 
+                src="/logo.svg" 
+                alt="SuiVote Logo" 
+                className="h-full w-full" 
+              />
             </div>
             <span className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-primary to-primary/80 group-hover:from-primary/80 group-hover:to-primary transition-all duration-300">
               SuiVote
@@ -800,12 +804,16 @@ export default function LandingPage() {
           <div className="grid grid-cols-1 md:grid-cols-4 gap-10">
             <div className="md:col-span-2">
               <div className="flex items-center gap-2 mb-4">
-                <div className="rounded-full bg-gradient-to-tr from-primary to-primary/80 p-1.5">
-                  <div className="h-5 w-5 rounded-full bg-white" />
-                </div>
-                <span className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-primary to-primary/80">
-                  SuiVote
-                </span>
+              <div className="h-8 w-8 group-hover:shadow-lg group-hover:shadow-primary/20 transition-all duration-300">
+              <img 
+                src="/logo.svg" 
+                alt="SuiVote Logo" 
+                className="h-full w-full" 
+              />
+            </div>
+            <span className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-primary to-primary/80 group-hover:from-primary/80 group-hover:to-primary transition-all duration-300">
+              SuiVote
+            </span>
               </div>
               <p className="text-muted-foreground max-w-md">
                 SuiVote is the leading decentralized voting platform built on the Sui blockchain, providing secure,

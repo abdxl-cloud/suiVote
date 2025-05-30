@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, ReactNode } from "react"
 import { useParams, useRouter } from "next/navigation"
 import { motion } from "framer-motion"
 import { toast } from "sonner"
@@ -52,6 +52,45 @@ export default function ClosedVotePage() {
       console.error("Error formatting date:", e)
       return "Date unavailable"
     }
+  }
+
+  // Function to detect URLs in text and convert them to clickable links
+  const formatTextWithLinks = (text) => {
+    if (!text) return [text]
+    
+    // Regular expression to match URLs
+    const urlRegex = /(https?:\/\/[^\s]+)/g
+    
+    // Split the text by URLs
+    const parts = text.split(urlRegex)
+    
+    // Find all URLs in the text
+    const urls = text.match(urlRegex) || []
+    
+    // Combine parts and URLs
+    const result = []
+    
+    parts.forEach((part, index) => {
+      // Add the text part
+      result.push(part)
+      
+      // Add the URL as a link if it exists
+      if (urls[index]) {
+        result.push(
+          <a 
+            key={index} 
+            href={urls[index]} 
+            target="_blank" 
+            rel="noopener noreferrer"
+            className="text-blue-500 hover:text-blue-700 hover:underline"
+          >
+            {urls[index]}
+          </a>
+        )
+      }
+    })
+    
+    return result
   }
 
   // Calculate percentages for options
@@ -190,7 +229,7 @@ export default function ClosedVotePage() {
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
               <div>
                 <CardTitle className="text-2xl">{vote.title}</CardTitle>
-                <CardDescription className="mt-1">{vote.description}</CardDescription>
+                <CardDescription className="mt-1">{formatTextWithLinks(vote.description)}</CardDescription>
               </div>
               <Badge variant="secondary" className="text-sm px-3 py-1 flex items-center gap-1">
                 <Lock className="h-3 w-3" />
@@ -246,7 +285,7 @@ export default function ClosedVotePage() {
                   <CardTitle className="text-xl">
                     {pollIndex + 1}. {poll.title}
                   </CardTitle>
-                  {poll.description && <CardDescription>{poll.description}</CardDescription>}
+                  {poll.description && <CardDescription>{formatTextWithLinks(poll.description)}</CardDescription>}
                   <div className="text-sm text-muted-foreground">Total responses: {poll.totalResponses}</div>
                 </CardHeader>
                 <CardContent className="space-y-4">

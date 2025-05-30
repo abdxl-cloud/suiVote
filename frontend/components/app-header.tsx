@@ -101,9 +101,13 @@ export function AppHeader() {
               initial={{ scale: 0.8, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               transition={{ duration: 0.3 }}
-              className="rounded-full bg-black p-1.5 dark:bg-white"
+              className="h-8 w-8"
             >
-              <div className="h-5 w-5 rounded-full bg-white dark:bg-black" />
+              <img 
+                src="/logo.svg" 
+                alt="SuiVote Logo" 
+                className="h-full w-full dark:invert-[0.15]" 
+              />
             </motion.div>
             <motion.span
               initial={{ x: -10, opacity: 0 }}

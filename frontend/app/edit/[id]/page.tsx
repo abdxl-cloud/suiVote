@@ -28,6 +28,7 @@ import {
   ExternalLink,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { LoadingButton } from "@/components/ui/loading-button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Switch } from "@/components/ui/switch"
@@ -48,28 +49,12 @@ import { useWallet } from "@suiet/wallet-kit"
 import { useSuiVote } from "@/hooks/use-suivote"
 import { useToast } from "@/components/ui/use-toast"
 import { SUI_CONFIG } from "@/config/sui-config"
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
-import { Progress } from "@/components/ui/progress"
+
 import { TokenSelector } from "@/components/token-selector"
 import { type PollData, type VoteDetails, type PollDetails, type PollOptionDetails } from "@/services/suivote-service"
+import { TransactionStatusDialog, TransactionStatus } from "@/components/transaction-status-dialog"
 
-// Transaction status enum
-enum TransactionStatus {
-  IDLE = "idle",
-  BUILDING = "building",
-  SIGNING = "signing",
-  EXECUTING = "executing",
-  CONFIRMING = "confirming",
-  SUCCESS = "success",
-  ERROR = "error",
-}
+// Using TransactionStatus enum from the imported component
 
 type PollType = {
   id: string
@@ -1590,24 +1575,17 @@ export default function EditVotePage() {
                   >
                     <ChevronLeft className="h-4 w-4" />
                   </Button>
-                  <Button
+                  <LoadingButton
                     size="lg"
                     className="gap-2 transition-all hover:scale-105"
                     onClick={handleSubmit}
                     disabled={txStatus !== TransactionStatus.IDLE && txStatus !== TransactionStatus.ERROR || !wallet.connected}
+                    isLoading={txStatus !== TransactionStatus.IDLE && txStatus !== TransactionStatus.ERROR}
+                    loadingText="Updating Vote..."
                   >
-                    {txStatus !== TransactionStatus.IDLE && txStatus !== TransactionStatus.ERROR ? (
-                      <>
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                        Updating Vote...
-                      </>
-                    ) : (
-                      <>
-                        {hasVotes ? "Extend Voting Period" : "Save Changes"}
-                        <Save className="h-4 w-4 ml-2" />
-                      </>
-                    )}
-                  </Button>
+                    {hasVotes ? "Extend Voting Period" : "Save Changes"}
+                    <Save className="h-4 w-4 ml-2" />
+                  </LoadingButton>
                 </CardFooter>
               </Card>
 
@@ -1661,148 +1639,30 @@ export default function EditVotePage() {
       </Tabs>
 
       {/* Transaction Status Dialog */}
-      <Dialog open={txStatusDialogOpen} onOpenChange={setTxStatusDialogOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>
-              {txStatus === TransactionStatus.SUCCESS
-                ? hasVotes ? "Voting Period Extended!" : "Vote Updated Successfully!"
-                : txStatus === TransactionStatus.ERROR
-                  ? "Error Updating Vote"
-                  : hasVotes ? "Extending Voting Period" : "Updating Vote"}
-            </DialogTitle>
-            <DialogDescription>
-              {txStatus === TransactionStatus.SUCCESS
-                ? "Your changes have been published to the blockchain."
-                : txStatus === TransactionStatus.ERROR
-                  ? "There was an error updating your vote."
-                  : "Please wait while we update your vote on the blockchain."}
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-4 py-4">
-            <Progress value={txProgress} className="h-2 w-full" />
-
-            <div className="space-y-2">
-              <div className="flex items-center justify-between text-sm">
-                <span className="flex items-center gap-2">
-                  {txStatus === TransactionStatus.BUILDING || txStatus === TransactionStatus.IDLE ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Check className="h-4 w-4 text-green-500" />
-                  )}
-                  Building Transaction
-                </span>
-                <span className="text-muted-foreground">Step 1/4</span>
-              </div>
-
-              <div className="flex items-center justify-between text-sm">
-                <span className="flex items-center gap-2">
-                  {txStatus === TransactionStatus.SIGNING ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : txStatus > TransactionStatus.SIGNING ? (
-                    <Check className="h-4 w-4 text-green-500" />
-                  ) : (
-                    <div className="h-4 w-4" />
-                  )}
-                  Signing Transaction
-                </span>
-                <span className="text-muted-foreground">Step 2/4</span>
-              </div>
-
-              <div className="flex items-center justify-between text-sm">
-                <span className="flex items-center gap-2">
-                  {txStatus === TransactionStatus.EXECUTING ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : txStatus > TransactionStatus.EXECUTING ? (
-                    <Check className="h-4 w-4 text-green-500" />
-                  ) : (
-                    <div className="h-4 w-4" />
-                  )}
-                  Executing Transaction
-                </span>
-                <span className="text-muted-foreground">Step 3/4</span>
-              </div>
-
-              <div className="flex items-center justify-between text-sm">
-                <span className="flex items-center gap-2">
-                  {txStatus === TransactionStatus.CONFIRMING ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : txStatus > TransactionStatus.CONFIRMING ? (
-                    <Check className="h-4 w-4 text-green-500" />
-                  ) : (
-                    <div className="h-4 w-4" />
-                  )}
-                  Confirming Transaction
-                </span>
-                <span className="text-muted-foreground">Step 4/4</span>
-              </div>
-            </div>
-
-            {txStatus === TransactionStatus.ERROR && (
-              <Alert variant="destructive">
-                <AlertCircle className="h-4 w-4" />
-                <AlertTitle>Error</AlertTitle>
-                <AlertDescription>{transactionError}</AlertDescription>
-              </Alert>
-            )}
-
-            {txDigest && (
-              <div className="pt-2">
-                <Label className="text-sm">Transaction ID</Label>
-                <div className="flex items-center gap-2 mt-1">
-                  <code className="bg-muted p-2 rounded text-xs w-full overflow-x-auto">{txDigest}</code>
-                  <Button
-                    variant="outline"
-                    size="icon"
-                    className="flex-shrink-0"
-                    onClick={() => window.open(getTransactionExplorerUrl(), "_blank")}
-                  >
-                    <ExternalLink className="h-4 w-4" />
-                  </Button>
-                </div>
-              </div>
-            )}
-          </div>
-
-          <DialogFooter className="sm:justify-between">
-            {txStatus === TransactionStatus.ERROR ? (
-              <Button
-                variant="default"
-                onClick={() => {
-                  setTxStatusDialogOpen(false)
-                  setTxStatus(TransactionStatus.IDLE)
-                }}
-              >
-                Try Again
-              </Button>
-            ) : txStatus === TransactionStatus.SUCCESS ? (
-              <Button variant="default" onClick={() => router.push("/Polls")}>
-                Return to Polls
-              </Button>
-            ) : (
-              <Button
-                variant="outline"
-                onClick={() => setTxStatusDialogOpen(false)}
-                disabled={txStatus !== TransactionStatus.ERROR && txStatus !== TransactionStatus.SUCCESS}
-              >
-                Close
-              </Button>
-            )}
-
-            {txDigest && (
-              <Button
-                variant="outline"
-                className="gap-2"
-                onClick={() => window.open(getTransactionExplorerUrl(), "_blank")}
-              >
-                <ExternalLink className="h-4 w-4" />
-                View in Explorer
-              </Button>
-            )}
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <TransactionStatusDialog
+        open={txStatusDialogOpen}
+        onOpenChange={setTxStatusDialogOpen}
+        txStatus={txStatus}
+        txDigest={txDigest}
+        transactionError={transactionError}
+        onRetry={() => {
+          setTxStatusDialogOpen(false)
+          setTxStatus(TransactionStatus.IDLE)
+        }}
+        onSuccess={() => router.push("/Polls")}
+        onClose={() => setTxStatusDialogOpen(false)}
+        explorerUrl={SUI_CONFIG.explorerUrl}
+        title={{
+          default: hasVotes ? "Extending Voting Period" : "Updating Vote",
+          success: hasVotes ? "Voting Period Extended!" : "Vote Updated Successfully!",
+          error: "Error Updating Vote"
+        }}
+        description={{
+          default: "Please wait while we update your vote on the blockchain.",
+          success: "Your changes have been published to the blockchain.",
+          error: "There was an error updating your vote."
+        }}
+      />
     </motion.div>
   )
 }
