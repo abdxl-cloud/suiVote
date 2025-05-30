@@ -85,6 +85,8 @@ export default function VotePage() {
   const [userCanVote, setUserCanVote] = useState(false)
   const [userHasRequiredTokens, setUserHasRequiredTokens] = useState(true)
   const [tokenBalance, setTokenBalance] = useState(0)
+  const [hasUserInteracted, setHasUserInteracted] = useState(false) // Track if user has made any selections
+  const [loadingError, setLoadingError] = useState(null) // Separate loading errors from validation errors
 
   const [timeRemaining, setTimeRemaining] = useState({
     days: 0,
@@ -169,6 +171,7 @@ export default function VotePage() {
   const fetchVoteData = async () => {
     try {
       setLoading(true)
+      setLoadingError(null) // Clear any previous loading errors
 
       if (!params.id) {
         throw new Error("Vote ID is required")
@@ -331,9 +334,7 @@ export default function VotePage() {
         description: error instanceof Error ? error.message : "Failed to load vote data"
       })
 
-      setValidationErrors({
-        general: error instanceof Error ? error.message : "Failed to load vote data"
-      })
+      setLoadingError(error instanceof Error ? error.message : "Failed to load vote data")
     } finally {
       setLoading(false)
     }
@@ -425,6 +426,12 @@ export default function VotePage() {
   const validateSelections = (selections) => {
     const validationErrors = {};
     let hasValidSelections = false;
+    let hasRequiredSelections = true;
+
+    // Don't validate if user hasn't interacted yet or if we're still loading
+    if (!hasUserInteracted || loading || polls.length === 0) {
+      return {};
+    }
 
     // Check each poll for validation issues
     polls.forEach(poll => {
@@ -433,14 +440,17 @@ export default function VotePage() {
       // Check if required poll has selections
       if (poll.isRequired && selectedOptions.length === 0) {
         validationErrors[poll.id] = "This poll requires a response";
+        hasRequiredSelections = false;
       }
 
       // Validate selection count based on poll type
-      if (!poll.isMultiSelect && selectedOptions.length > 1) {
-        validationErrors[poll.id] = "This poll allows only one selection";
-      } else if (poll.isMultiSelect && poll.maxSelections &&
-        selectedOptions.length > poll.maxSelections) {
-        validationErrors[poll.id] = `Maximum ${poll.maxSelections} selections allowed`;
+      if (selectedOptions.length > 0) {
+        if (!poll.isMultiSelect && selectedOptions.length > 1) {
+          validationErrors[poll.id] = "This poll allows only one selection";
+        } else if (poll.isMultiSelect && poll.maxSelections &&
+          selectedOptions.length > poll.maxSelections) {
+          validationErrors[poll.id] = `Maximum ${poll.maxSelections} selections allowed`;
+        }
       }
 
       // Track if we have any valid selections
@@ -449,16 +459,49 @@ export default function VotePage() {
       }
     });
 
-    // Must have at least one valid selection
-    if (!hasValidSelections) {
+    // Only show "make at least one selection" if user has interacted but made no selections
+    if (hasUserInteracted && !hasValidSelections) {
       validationErrors.general = "Please make at least one selection";
+    }
+
+    // All required polls must have selections (only if user has interacted)
+    if (hasUserInteracted && !hasRequiredSelections) {
+      if (!validationErrors.general) {
+        validationErrors.general = "Please complete all required polls";
+      }
     }
 
     return validationErrors;
   };
 
+  // Check if user can submit based on all validation conditions
+  const canSubmitVote = () => {
+    if (!wallet.connected || !wallet.address) return false;
+    if (vote?.status !== "active") return false;
+    if (hasVoted) return false;
+    if (!userCanVote) return false;
+    if (!hasUserInteracted) return false; // Must have interacted with the form
+    
+    // Check validation errors
+    const currentErrors = validateSelections(selections);
+    return Object.keys(currentErrors).length === 0;
+  };
+
+  // Validate whenever selections change (but only after user interaction)
+  useEffect(() => {
+    if (polls.length > 0 && hasUserInteracted && !loading) {
+      const errors = validateSelections(selections);
+      setValidationErrors(errors);
+    }
+  }, [selections, polls, hasUserInteracted, loading]);
+
   // Handle option selection
   const handleOptionSelect = (pollId, optionId, isMultiSelect) => {
+    // Mark that user has interacted with the form
+    if (!hasUserInteracted) {
+      setHasUserInteracted(true);
+    }
+
     setSelections(prev => {
       const newSelections = { ...prev }
 
@@ -487,22 +530,19 @@ export default function VotePage() {
         // For single-select polls - always just one option
         newSelections[pollId] = [optionId]
       }
-      
-      // Validate selections in real-time and update errors
-      setTimeout(() => {
-        const errors = validateSelections(newSelections);
-        setValidationErrors(errors);
-      }, 0);
-      
 
       return newSelections
     })
 
-    // Clear validation error for this poll if it exists
+    // Clear any existing validation error for this poll
     if (validationErrors[pollId]) {
       setValidationErrors(prev => {
         const newErrors = { ...prev }
         delete newErrors[pollId]
+        // Also clear general error if it exists and we now have selections
+        if (newErrors.general) {
+          delete newErrors.general
+        }
         return newErrors
       })
     }
@@ -868,39 +908,69 @@ export default function VotePage() {
   const formatTextWithLinks = (text) => {
     if (!text) return [text]
     
-    // Regular expression to match URLs
-    const urlRegex = /(https?:\/\/[^\s]+)/g
+    // Simple and reliable URL regex
+    const urlRegex = /(https?:\/\/[^\s]+)|(www\.[^\s]+)|([a-zA-Z0-9][a-zA-Z0-9-]*[a-zA-Z0-9]*\.(?:com|org|net|edu|gov|io|co|uk|de|fr|jp|cn|app|dev|tech|info|biz|me|xyz|link|ai|ml|tv|cc|to|ca|au|in|br|ru|int|mil)(?:\/[^\s]*)?)/gi
     
-    // Split the text by URLs
-    const parts = text.split(urlRegex)
+    const parts = []
+    let lastIndex = 0
+    let match
+    let linkIndex = 0
     
-    // Find all URLs in the text
-    const urls = text.match(urlRegex) || []
+    // Reset regex lastIndex to ensure it starts from beginning
+    urlRegex.lastIndex = 0
     
-    // Combine parts and URLs
-    const result = []
-    
-    parts.forEach((part, index) => {
-      // Add the text part
-      result.push(part)
+    // Find all URL matches
+    while ((match = urlRegex.exec(text)) !== null) {
+      // Add text before the URL
+      if (match.index > lastIndex) {
+        const textBefore = text.substring(lastIndex, match.index)
+        if (textBefore) {
+          parts.push(<span key={`text-before-${linkIndex}`}>{textBefore}</span>)
+        }
+      }
       
-      // Add the URL as a link if it exists
-      if (urls[index]) {
-        result.push(
+      // Get the matched URL (could be from any of the 3 capture groups)
+      const matchedUrl = match[1] || match[2] || match[3]
+      
+      if (matchedUrl) {
+        // Ensure URL has protocol
+        let fullUrl = matchedUrl
+        if (!matchedUrl.startsWith('http://') && !matchedUrl.startsWith('https://')) {
+          fullUrl = `https://${matchedUrl}`
+        }
+        
+        parts.push(
           <a 
-            key={index} 
-            href={urls[index]} 
+            key={`url-${linkIndex}`}
+            href={fullUrl} 
             target="_blank" 
             rel="noopener noreferrer"
-            className="text-blue-500 hover:text-blue-700 hover:underline"
+            className="text-blue-500 hover:text-blue-700 hover:underline transition-colors duration-200 font-medium inline-flex items-center gap-1 cursor-pointer"
+            onClick={(e) => {
+              e.stopPropagation()
+            }}
+            style={{ pointerEvents: 'auto' }} // Explicitly enable pointer events
           >
-            {urls[index]}
+            {matchedUrl}
+            <ExternalLink className="h-3 w-3 flex-shrink-0" />
           </a>
         )
       }
-    })
+      
+      lastIndex = match.index + match[0].length
+      linkIndex++
+    }
     
-    return result
+    // Add remaining text after the last URL
+    if (lastIndex < text.length) {
+      const remainingText = text.substring(lastIndex)
+      if (remainingText) {
+        parts.push(<span key={`text-after-${linkIndex}`}>{remainingText}</span>)
+      }
+    }
+    
+    // If no URLs were found, return the original text wrapped in span
+    return parts.length > 0 ? parts : [<span key="no-urls">{text}</span>]
   }
 
   // Calculate time remaining
@@ -1006,14 +1076,14 @@ export default function VotePage() {
   }
 
   // Error state
-  if (validationErrors.general || !vote) {
+  if (loadingError || !vote) {
     return (
       <div className="container max-w-4xl py-6 md:py-10 px-4 md:px-6 mx-auto">
         <Alert variant="destructive" className="mb-6">
           <AlertCircle className="h-4 w-4" />
           <AlertTitle>Error Loading Vote</AlertTitle>
           <AlertDescription>
-            {validationErrors.general || "Failed to load vote data. Please try again later."}
+            {loadingError || "Failed to load vote data. Please try again later."}
           </AlertDescription>
         </Alert>
 
@@ -1331,7 +1401,7 @@ export default function VotePage() {
                               )}
                             </div>
                             <div className="text-base truncate flex-1 flex items-center gap-2">
-                              {option.text}
+                              {formatTextWithLinks(option.text)}
                             </div>
                           </div>
                         );
@@ -1482,70 +1552,146 @@ export default function VotePage() {
               </div>
             )}
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 mb-8">
-              <div className="flex items-center gap-3 p-4 rounded-lg bg-muted/30 hover:bg-muted/50 transition-all duration-200 hover:shadow-sm">
-                <div className={cn(
-                  "p-2.5 rounded-full",
-                  vote.status === "active" ? "bg-green-100 dark:bg-green-900/30" :
-                    vote.status === "closed" ? "bg-gray-100 dark:bg-gray-900/30" :
-                      "bg-blue-100 dark:bg-blue-900/30"
-                )}>
-                  <Calendar className={cn(
-                    "h-5 w-5",
-                    vote.status === "active" ? "text-green-600 dark:text-green-400" :
-                      vote.status === "closed" ? "text-gray-600 dark:text-gray-400" :
-                        "text-blue-600 dark:text-blue-400"
-                  )} />
-                </div>
-                <div>
-                  <p className="text-sm font-medium">Voting Period</p>
-                  <p className="text-xs text-muted-foreground">
-                    {formatDate(vote.startTimestamp)} - {formatDate(vote.endTimestamp)}
-                  </p>
-                </div>
-              </div>
+            {/* Voting Period and Requirements Card - Only show when voting is active and user hasn't voted */}
+            {(vote.status === "active" && !hasVoted) ? (
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.4, delay: 0.1 }}
+                className="mb-6"
+              >
+                <Card className="bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-900/20 dark:to-indigo-900/20 border-blue-200 dark:border-blue-800 shadow-sm">
+                  <CardContent className="p-4 space-y-3">
+                    {/* Voting Period Info */}
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div className="flex items-center gap-2">
+                        <div className="p-1.5 bg-blue-200 dark:bg-blue-800 rounded-full">
+                          <Clock className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+                        </div>
+                        <div>
+                          <h3 className="font-semibold text-sm text-blue-900 dark:text-blue-100">
+                            Voting Period
+                          </h3>
+                          <p className="text-xs text-blue-700 dark:text-blue-300">
+                            {vote.endTimestamp && (
+                              <>Ends {formatDate(vote.endTimestamp)}</>
+                            )}
+                          </p>
+                        </div>
+                      </div>
 
-              <div className="flex items-center gap-3 p-4 rounded-lg bg-muted/30 hover:bg-muted/50 transition-all duration-200 hover:shadow-sm">
-                <div className={cn(
-                  "p-2.5 rounded-full",
-                  vote.status === "active" ? "bg-green-100 dark:bg-green-900/30" :
-                    vote.status === "closed" ? "bg-gray-100 dark:bg-gray-900/30" :
-                      "bg-blue-100 dark:bg-blue-900/30"
-                )}>
-                  <Timer className={cn(
-                    "h-5 w-5",
-                    vote.status === "active" ? "text-green-600 dark:text-green-400" :
-                      vote.status === "closed" ? "text-gray-600 dark:text-gray-400" :
-                        "text-blue-600 dark:text-blue-400"
-                  )} />
-                </div>
-                <div>
-                  <p className="text-sm font-medium">
-                    {vote.status === "closed" ? "Ended" : getTimeRemaining()}
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    {vote.status === "closed" ?
-                      `${formatDistanceToNow(new Date(vote.endTimestamp), { addSuffix: true })}` :
-                      `${formatTime(vote.startTimestamp)} - ${formatTime(vote.endTimestamp)}`
-                    }
-                  </p>
-                </div>
-              </div>
-            </div>
+                      {/* Status Badge */}
+                      <Badge variant="default" className="bg-green-100 text-green-800 border-green-200 dark:bg-green-900/30 dark:text-green-400 text-xs font-medium">
+                        Active
+                      </Badge>
+                    </div>
 
-            {/* Status message based on conditions */}
+                    {/* Requirements - Compact Display */}
+                    {(vote.tokenRequirement || vote.paymentAmount > 0 || vote.hasWhitelist) && (
+                      <div className="pt-2 border-t border-blue-200/50 dark:border-blue-800/50">
+                        <div className="flex flex-wrap gap-2 items-center">
+                          <span className="text-xs font-medium text-blue-800 dark:text-blue-200">
+                            Requirements:
+                          </span>
+                          
+                          {/* Token Requirement */}
+                          {vote.tokenRequirement && (
+                            <Badge 
+                              variant="outline" 
+                              className={cn(
+                                "text-xs gap-1 cursor-help transition-all hover:scale-105",
+                                userHasRequiredTokens 
+                                  ? "bg-green-50 text-green-700 border-green-200 dark:bg-green-900/20 dark:text-green-400" 
+                                  : "bg-red-50 text-red-700 border-red-200 dark:bg-red-900/20 dark:text-red-400"
+                              )}
+                              title={
+                                userHasRequiredTokens && wallet.connected
+                                  ? `✅ You have enough ${vote.tokenRequirement.split("::").pop()} tokens to vote`
+                                  : wallet.connected
+                                  ? `❌ You need at least ${vote.tokenAmount} ${vote.tokenRequirement.split("::").pop()} tokens in your wallet to participate`
+                                  : `You must hold at least ${vote.tokenAmount} ${vote.tokenRequirement.split("::").pop()} tokens to vote. Connect your wallet to check your balance.`
+                              }
+                            >
+                              <Wallet className="h-3 w-3" />
+                              {vote.tokenAmount} {vote.tokenRequirement.split("::").pop()}
+                              {wallet.connected && (
+                                userHasRequiredTokens ? 
+                                  <CheckCircle2 className="h-3 w-3" /> : 
+                                  <X className="h-3 w-3" />
+                              )}
+                            </Badge>
+                          )}
+
+                          {/* Payment Requirement */}
+                          {vote.paymentAmount > 0 && (
+                            <Badge 
+                              variant="outline" 
+                              className="text-xs gap-1 bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/20 dark:text-amber-400 cursor-help transition-all hover:scale-105"
+                              title={`💰 A payment of ${vote.paymentAmount / 1000000000} SUI is required to submit your vote. This fee helps prevent spam and supports the voting system.`}
+                            >
+                              <Wallet className="h-3 w-3" />
+                              {vote.paymentAmount / 1000000000} SUI
+                            </Badge>
+                          )}
+
+                          {/* Whitelist Requirement */}
+                          {vote.hasWhitelist && (
+                            <Badge 
+                              variant="outline" 
+                              className={cn(
+                                "text-xs gap-1 cursor-help transition-all hover:scale-105",
+                                wallet.connected && userCanVote
+                                  ? "bg-green-50 text-green-700 border-green-200 dark:bg-green-900/20 dark:text-green-400"
+                                  : "bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-900/20 dark:text-blue-400"
+                              )}
+                              title={
+                                wallet.connected && userCanVote
+                                  ? "✅ Your wallet address is approved to participate in this vote"
+                                  : wallet.connected
+                                  ? "❌ Only pre-approved wallet addresses can vote. Your address is not on the whitelist."
+                                  : "🛡️ This vote is restricted to pre-approved wallet addresses only. Connect your wallet to check if you're eligible."
+                              }
+                            >
+                              <Shield className="h-3 w-3" />
+                              Whitelist
+                              {wallet.connected && (
+                                userCanVote ? 
+                                  <CheckCircle2 className="h-3 w-3" /> : 
+                                  <AlertCircle className="h-3 w-3" />
+                              )}
+                            </Badge>
+                          )}
+
+                          {/* Token Weighting Indicator */}
+                          {vote.useTokenWeighting && (
+                            <Badge 
+                              variant="outline" 
+                              className="text-xs gap-1 bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-900/20 dark:text-purple-400 cursor-help transition-all hover:scale-105"
+                              title="📊 Your voting power is weighted by your token balance. More tokens = more influence on the final results."
+                            >
+                              <BarChart2 className="h-3 w-3" />
+                              Weighted
+                            </Badge>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              </motion.div>
+            ) : null}
+
+            {/* Main Status Alert - Only for important messages */}
             <motion.div
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.4, delay: 0.1 }}
+              transition={{ duration: 0.4, delay: 0.15 }}
             >
               {vote.status === "closed" ? (
-                <Alert className="bg-gray-50 dark:bg-gray-900/50 border-gray-200 dark:border-gray-800 mb-0 shadow-sm rounded-lg">
-                  <div className="p-1.5 bg-gray-200 dark:bg-gray-800 rounded-full mr-2">
-                    <Lock className="h-4 w-4 text-gray-600 dark:text-gray-400" />
-                  </div>
-                  <AlertTitle className="font-semibold text-base">This vote has ended</AlertTitle>
-                  <AlertDescription className="mt-1">
+                <Alert className="bg-gray-50 dark:bg-gray-900/50 border-gray-200 dark:border-gray-800 shadow-sm rounded-lg">
+                  <Lock className="h-4 w-4" />
+                  <AlertTitle className="text-sm font-medium">This vote has ended</AlertTitle>
+                  <AlertDescription className="text-sm">
                     {vote.showLiveStats ?
                       "The voting period has concluded. Results are available below." :
                       "The voting period has concluded. Results will be displayed when released by the creator."
@@ -1553,12 +1699,10 @@ export default function VotePage() {
                   </AlertDescription>
                 </Alert>
               ) : hasVoted ? (
-                <Alert className="bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800 mb-0 shadow-sm rounded-lg">
-                  <div className="p-1.5 bg-green-200 dark:bg-green-800 rounded-full mr-2">
-                    <CheckCircle2 className="h-4 w-4 text-green-600 dark:text-green-400" />
-                  </div>
-                  <AlertTitle className="font-semibold text-base">Thank you for voting!</AlertTitle>
-                  <AlertDescription className="mt-1">
+                <Alert className="bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800 shadow-sm rounded-lg">
+                  <CheckCircle2 className="h-4 w-4" />
+                  <AlertTitle className="text-sm font-medium">Thank you for voting!</AlertTitle>
+                  <AlertDescription className="text-sm">
                     {vote.showLiveStats ?
                       "Your vote has been recorded. Live results are shown below." :
                       "Your vote has been recorded. Results will be available when voting ends."
@@ -1566,24 +1710,13 @@ export default function VotePage() {
                   </AlertDescription>
                 </Alert>
               ) : (
-                vote.status === "active" && (
-                  <Alert className="bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800 mb-0 shadow-sm rounded-lg">
-                    <div className="p-1.5 bg-blue-200 dark:bg-blue-800 rounded-full mr-2">
-                      <Info className="h-4 w-4 text-blue-600 dark:text-blue-400" />
-                    </div>
-                    <AlertTitle className="font-semibold text-base">Active Vote</AlertTitle>
-                    <AlertDescription className="flex flex-col sm:flex-row sm:items-center gap-4 mt-1">
-                      <span>
-                        {!wallet.connected ?
-                          "Connect your wallet to participate in this vote." :
-                          vote.hasWhitelist && !userCanVote ?
-                            "Your wallet is not on the whitelist for this vote." :
-                            vote.tokenRequirement && !userHasRequiredTokens ?
-                              `You need at least ${vote.tokenAmount} ${vote.tokenRequirement.split("::").pop()} to vote.` :
-                              "Cast your vote by selecting options below."
-                        }
-                      </span>
-                      {!wallet.connected && <WalletConnectButton />}
+                vote.status === "active" && !wallet.connected && (
+                  <Alert className="bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800 shadow-sm rounded-lg">
+                    <Info className="h-4 w-4" />
+                    <AlertTitle className="text-sm font-medium">Connect Wallet to Vote</AlertTitle>
+                    <AlertDescription className="flex flex-col sm:flex-row sm:items-center gap-3 text-sm">
+                      <span>Connect your wallet to participate in this vote.</span>
+                      <WalletConnectButton />
                     </AlertDescription>
                   </Alert>
                 )
@@ -1673,16 +1806,25 @@ export default function VotePage() {
               {/* Current active poll */}
               <Card className={cn(
                 "transition-all duration-300 relative overflow-hidden border border-muted/40 shadow-md rounded-xl hover:shadow-lg",
-                validationErrors[polls[activePollIndex].id] && "border-red-500"
+                validationErrors[polls[activePollIndex].id] && "border-red-500 ring-2 ring-red-500/20",
+                !validationErrors[polls[activePollIndex].id] && polls[activePollIndex].isRequired && (!selections[polls[activePollIndex].id] || selections[polls[activePollIndex].id].length === 0) && "border-amber-500/50 ring-2 ring-amber-500/20",
+                selections[polls[activePollIndex].id]?.length > 0 && !validationErrors[polls[activePollIndex].id] && "border-green-500/50 ring-2 ring-green-500/20"
               )}>
                 <div className={cn(
                   "h-1.5 w-full",
                   validationErrors[polls[activePollIndex].id] ? "bg-red-500" :
-                    polls[activePollIndex].isRequired ? "bg-amber-500" : "bg-blue-500",
+                    polls[activePollIndex].isRequired && (!selections[polls[activePollIndex].id] || selections[polls[activePollIndex].id].length === 0) ? "bg-amber-500" :
+                    selections[polls[activePollIndex].id]?.length > 0 ? "bg-green-500" : "bg-blue-500",
                 )}></div>
                 <CardHeader>
-                  <CardTitle className="text-xl md:text-2xl">
+                  <CardTitle className="text-xl md:text-2xl flex items-center gap-2">
                     {polls[activePollIndex].title}
+                    {validationErrors[polls[activePollIndex].id] && (
+                      <AlertCircle className="h-5 w-5 text-red-500" />
+                    )}
+                    {!validationErrors[polls[activePollIndex].id] && selections[polls[activePollIndex].id]?.length > 0 && (
+                      <CheckCircle2 className="h-5 w-5 text-green-500" />
+                    )}
                   </CardTitle>
                   {polls[activePollIndex].description && (
                     <CardDescription className="mt-1">
@@ -1786,7 +1928,9 @@ export default function VotePage() {
                                     className={cn("text-base font-normal", isDisabled && "opacity-70")}
                                   >
                                     <span className="flex items-center gap-2">
-                                      {option.text}
+                                      <span className="flex-1">
+                                        {formatTextWithLinks(option.text)}
+                                      </span>
                                       <span className="text-xs text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
                                         #{optionIndex + 1}
                                       </span>
@@ -1869,7 +2013,9 @@ export default function VotePage() {
                                       className={cn("text-base font-normal", isDisabled && "opacity-70")}
                                     >
                                       <span className="flex items-center gap-2">
-                                        {option.text}
+                                        <span className="flex-1">
+                                          {formatTextWithLinks(option.text)}
+                                        </span>
                                         <span className="text-xs text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
                                           #{optionIndex + 1}
                                         </span>
@@ -1956,16 +2102,21 @@ export default function VotePage() {
                           <div className={cn(
                             "w-3 h-3 rounded-full transition-all duration-300",
                             activePollIndex === index
-                              ? "bg-primary scale-125 ring-2 ring-primary/20"
-                              : "bg-muted hover:bg-primary/50",
-                            poll.isRequired && !selections[poll.id]?.length && "ring-2 ring-amber-500/30",
-                            validationErrors[poll.id] && "ring-2 ring-red-500/30 bg-red-200"
+                              ? "scale-125 ring-2 ring-primary/20" : "",
+                            // Color based on validation state
+                            validationErrors[poll.id] ? "bg-red-500 ring-2 ring-red-500/30" :
+                            selections[poll.id]?.length > 0 ? "bg-green-500 ring-2 ring-green-500/30" :
+                            poll.isRequired ? "bg-amber-500 ring-2 ring-amber-500/30" :
+                            activePollIndex === index ? "bg-primary" : "bg-muted hover:bg-primary/50"
                           )} />
                           <span className={cn(
                             "text-xs transition-all",
-                            activePollIndex === index ? "text-primary font-medium" : "text-muted-foreground group-hover:text-foreground",
-                            poll.isRequired && !selections[poll.id]?.length && "text-amber-600",
-                            validationErrors[poll.id] && "text-red-500"
+                            activePollIndex === index ? "font-medium" : "group-hover:text-foreground",
+                            // Text color based on validation state
+                            validationErrors[poll.id] ? "text-red-500" :
+                            selections[poll.id]?.length > 0 ? "text-green-600" :
+                            poll.isRequired && (!selections[poll.id] || selections[poll.id].length === 0) ? "text-amber-600" :
+                            activePollIndex === index ? "text-primary" : "text-muted-foreground"
                           )}>
                             {index + 1}
                           </span>
@@ -1988,8 +2139,9 @@ export default function VotePage() {
             {polls.map((poll, pollIndex) => (
               <Card key={poll.id} className={cn(
                 "transition-all duration-300 relative overflow-hidden cursor-pointer border hover:shadow-lg",
-                validationErrors[poll.id] && "border-red-500",
-                !validationErrors[poll.id] && poll.isRequired && "border-amber-500/30"
+                validationErrors[poll.id] && "border-red-500 ring-2 ring-red-500/20",
+                !validationErrors[poll.id] && poll.isRequired && (!selections[poll.id] || selections[poll.id].length === 0) && "border-amber-500/50 ring-2 ring-amber-500/20",
+                selections[poll.id]?.length > 0 && !validationErrors[poll.id] && "border-green-500/50 ring-2 ring-green-500/20"
               )}
                 onClick={() => {
                   setActivePollIndex(pollIndex)
@@ -1999,28 +2151,48 @@ export default function VotePage() {
                 <div className={cn(
                   "h-1.5 w-full",
                   validationErrors[poll.id] ? "bg-red-500" :
-                    poll.isRequired ? "bg-amber-500" : "bg-blue-500",
+                    poll.isRequired && (!selections[poll.id] || selections[poll.id].length === 0) ? "bg-amber-500" :
+                    selections[poll.id]?.length > 0 ? "bg-green-500" : "bg-blue-500",
                 )}></div>
                 <CardHeader className="pb-2">
                   <div className="flex items-start justify-between">
                     <div>
-                      <CardTitle className="text-lg">
+                      <CardTitle className="text-lg flex items-center gap-2">
                         {pollIndex + 1}. {poll.title}
+                        {validationErrors[poll.id] && (
+                          <AlertCircle className="h-4 w-4 text-red-500" />
+                        )}
+                        {!validationErrors[poll.id] && selections[poll.id]?.length > 0 && (
+                          <CheckCircle2 className="h-4 w-4 text-green-500" />
+                        )}
                       </CardTitle>
                       {poll.description && (
                         <CardDescription className="mt-1 line-clamp-2">
                           {formatTextWithLinks(poll.description)}
                         </CardDescription>
                       )}
+                      {validationErrors[poll.id] && (
+                        <div className="mt-2 text-sm text-red-600 dark:text-red-400 flex items-center gap-1">
+                          <AlertCircle className="h-3 w-3" />
+                          {validationErrors[poll.id]}
+                        </div>
+                      )}
                     </div>
-                    {poll.isRequired && (
-                      <Badge
-                        variant="outline"
-                        className="bg-amber-100/50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 text-xs"
-                      >
-                        Required
-                      </Badge>
-                    )}
+                    <div className="flex flex-col gap-1 items-end">
+                      {poll.isRequired && (
+                        <Badge
+                          variant="outline"
+                          className={cn(
+                            "text-xs",
+                            validationErrors[poll.id] ? "bg-red-100/50 text-red-700 dark:bg-red-900/30 dark:text-red-400 border-red-200" :
+                            (!selections[poll.id] || selections[poll.id].length === 0) ? "bg-amber-100/50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 border-amber-200" :
+                            "bg-green-100/50 text-green-700 dark:bg-green-900/30 dark:text-green-400 border-green-200"
+                          )}
+                        >
+                          Required
+                        </Badge>
+                      )}
+                    </div>
                   </div>
                 </CardHeader>
 
@@ -2049,7 +2221,9 @@ export default function VotePage() {
                               <div key={option.id} className="space-y-1.5">
                                 <div className="flex justify-between text-sm">
                                   <span className="font-medium line-clamp-1 flex items-center gap-2">
-                                    {option.text}
+                                    <span className="flex-1">
+                                      {formatTextWithLinks(option.text)}
+                                    </span>
                                     <span className="text-xs text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
                                       #{originalIndex + 1}
                                     </span>
@@ -2077,7 +2251,7 @@ export default function VotePage() {
                                   )}
                                 </div>
                                 <div className="text-sm truncate flex items-center gap-2">
-                                  {option.text}
+                                  {formatTextWithLinks(option.text)}
                                   <span className="text-xs text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
                                     #{optionIndex + 1}
                                   </span>
@@ -2111,15 +2285,35 @@ export default function VotePage() {
                       <span>{poll.totalResponses || 0} responses</span>
                     </div>
 
-                    {selections[poll.id]?.length > 0 ? (
-                      <Badge variant="outline" className="bg-green-100/50 text-green-700 dark:bg-green-900/30 dark:text-green-400">
-                        Selection made
-                      </Badge>
-                    ) : poll.isRequired && vote.status === "active" && !hasVoted ? (
-                      <Badge variant="outline" className="bg-amber-100/50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
-                        Response required
-                      </Badge>
-                    ) : null}
+                    <div className="flex items-center gap-2">
+                      {validationErrors[poll.id] ? (
+                        <Badge variant="outline" className="bg-red-100/50 text-red-700 dark:bg-red-900/30 dark:text-red-400 border-red-200">
+                          <AlertCircle className="h-3 w-3 mr-1" />
+                          Error
+                        </Badge>
+                      ) : selections[poll.id]?.length > 0 ? (
+                        <Badge variant="outline" className="bg-green-100/50 text-green-700 dark:bg-green-900/30 dark:text-green-400 border-green-200">
+                          <CheckCircle2 className="h-3 w-3 mr-1" />
+                          Complete
+                        </Badge>
+                      ) : poll.isRequired && vote.status === "active" && !hasVoted ? (
+                        <Badge variant="outline" className="bg-amber-100/50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 border-amber-200">
+                          <AlertCircle className="h-3 w-3 mr-1" />
+                          Required
+                        </Badge>
+                      ) : vote.status === "active" && !hasVoted ? (
+                        <Badge variant="outline" className="bg-gray-100/50 text-gray-700 dark:bg-gray-900/30 dark:text-gray-400">
+                          Optional
+                        </Badge>
+                      ) : null}
+                      
+                      {/* Show selection count */}
+                      {selections[poll.id]?.length > 0 && (
+                        <span className="text-xs text-muted-foreground">
+                          {selections[poll.id].length} selected
+                        </span>
+                      )}
+                    </div>
                   </div>
                 </CardFooter>
               </Card>
@@ -2144,17 +2338,75 @@ export default function VotePage() {
               </p>
             </div>
 
-            <LoadingButton
-              onClick={handleSubmitVote}
-              disabled={!userCanVote || Object.keys(validationErrors).length > 0}
-              isLoading={submitting}
-              loadingText="Submitting..."
-              className="gap-2 bg-primary hover:bg-primary/90 transition-all duration-200 hover:shadow-md w-full sm:w-auto"
-              size="lg"
-            >
-              <CheckCircle2 className="h-4 w-4" />
-              Submit Vote
-            </LoadingButton>
+            <div className="flex flex-col sm:flex-row gap-3 items-center">
+              {/* Show validation errors summary */}
+              {Object.keys(validationErrors).length > 0 && (
+                <div className="text-sm text-red-600 dark:text-red-400 flex items-center gap-2">
+                  <AlertCircle className="h-4 w-4" />
+                  <span>
+                    {validationErrors.general || 
+                     `${Object.keys(validationErrors).length} poll${Object.keys(validationErrors).length > 1 ? 's' : ''} need${Object.keys(validationErrors).length === 1 ? 's' : ''} attention`}
+                  </span>
+                  {activeTab === "polls" && Object.keys(validationErrors).length > 0 && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 px-2 text-xs"
+                      onClick={() => {
+                        // Navigate to the first poll with an error
+                        const firstErrorPollId = Object.keys(validationErrors).find(key => key !== 'general');
+                        if (firstErrorPollId) {
+                          const pollIndex = polls.findIndex(poll => poll.id === firstErrorPollId);
+                          if (pollIndex !== -1) {
+                            setActivePollIndex(pollIndex);
+                            setActiveTab("vote");
+                          }
+                        }
+                      }}
+                    >
+                      Fix Issues
+                    </Button>
+                  )}
+                </div>
+              )}
+
+              <LoadingButton
+                onClick={() => {
+                  // Double-check validation before submission
+                  if (!canSubmitVote()) {
+                    const currentErrors = validateSelections(selections);
+                    setValidationErrors(currentErrors);
+                    
+                    // Navigate to first error if in "polls" view
+                    if (activeTab === "polls" && Object.keys(currentErrors).length > 0) {
+                      const firstErrorPollId = Object.keys(currentErrors).find(key => key !== 'general');
+                      if (firstErrorPollId) {
+                        const pollIndex = polls.findIndex(poll => poll.id === firstErrorPollId);
+                        if (pollIndex !== -1) {
+                          setActivePollIndex(pollIndex);
+                          setActiveTab("vote");
+                        }
+                      }
+                    }
+                    
+                    toast.error("Please complete all required fields", {
+                      description: "Review the highlighted errors and make your selections."
+                    });
+                    return;
+                  }
+                  
+                  handleSubmitVote();
+                }}
+                disabled={!canSubmitVote()}
+                isLoading={submitting}
+                loadingText="Submitting..."
+                className="gap-2 bg-primary hover:bg-primary/90 transition-all duration-200 hover:shadow-md w-full sm:w-auto"
+                size="lg"
+              >
+                <CheckCircle2 className="h-4 w-4" />
+                Submit Vote
+              </LoadingButton>
+            </div>
           </motion.div>
         )}
       </div>
