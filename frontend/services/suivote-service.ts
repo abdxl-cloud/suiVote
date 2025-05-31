@@ -816,8 +816,7 @@ export class SuiVoteService {
         : []
 
       console.log("TX", requiredToken, tokenRequirementBytes)
-      console.log(requiredAmount)
-
+      
       // Build the transaction with proper arguments matching the contract
       tx.moveCall({
         target: `${PACKAGE_ID}::voting::create_complete_vote`,
@@ -846,7 +845,6 @@ export class SuiVoteService {
           clockObj,
         ],
       })
-
       return tx
     } catch (error) {
       console.error("Failed to create complete vote transaction:", error)
@@ -1699,21 +1697,23 @@ castMultipleVotesTransaction(
   }
 
   /**
- * Check if a user has the required token balance
+ * Check if a user has the required token balance and return the actual balance
  * @param userAddress User address
  * @param tokenType Token type (e.g., "0x2::sui::SUI" or a custom token)
  * @param requiredAmount Minimum amount required
- * @returns Boolean indicating if the user has sufficient balance
+ * @returns Object with hasBalance (boolean) and tokenBalance (number)
  */
-  async checkTokenBalance(userAddress: string, tokenType: string, requiredAmount: string): Promise<boolean> {
+  async checkTokenBalance(userAddress: string, tokenType: string, requiredAmount: string): Promise<{ hasBalance: boolean; tokenBalance: number }> {
     try {
       this.checkInitialization();
+      console.log("Checking token balance for user:", userAddress);
+      console.log("Token type:", tokenType);
+      console.log("Required amount:", requiredAmount);
+      // Return default values if no token requirement or required amount is zero
+      if (!tokenType || requiredAmount === undefined) return { hasBalance: true, tokenBalance: 0 };
+      if (requiredAmount === "0") return { hasBalance: true, tokenBalance: 0 };
 
-      // Return true if no token requirement or required amount is zero
-      if (!tokenType || requiredAmount === undefined) return true;
-      if (requiredAmount === "0") return true;
-
-      if (!userAddress) return false;
+      if (!userAddress) return { hasBalance: false, tokenBalance: 0 };
 
       // Fetch user's balance in base units
       const { totalBalance } = await this.client.getBalance({
@@ -1721,7 +1721,7 @@ castMultipleVotesTransaction(
         coinType: tokenType,
       });
 
-      if (!totalBalance) return false;
+      if (!totalBalance) return { hasBalance: false, tokenBalance: 0 };
 
       // Get token decimals
       let decimals = 9; // Default for SUI
@@ -1735,11 +1735,16 @@ castMultipleVotesTransaction(
       // Parse required amount into base units
       const requiredBase = this.parseToBaseUnits(requiredAmount, decimals);
       const userBalance = BigInt(totalBalance);
-
-      return userBalance >= requiredBase;
+      
+      // Convert BigInt to number for the transaction
+      const tokenBalance = Number(userBalance);
+      return { 
+        hasBalance: userBalance >= requiredBase,
+        tokenBalance: tokenBalance/1000000000
+      };
     } catch (error) {
       console.error("checkTokenBalance error:", error);
-      return false;
+      return { hasBalance: false, tokenBalance: 0 };
     }
   }
 
