@@ -509,20 +509,20 @@ export function useSuiVote() {
    * @param userAddress User address
    * @param tokenType Token type (e.g., "0x2::sui::SUI" or custom token)
    * @param requiredAmount Minimum amount required
-   * @returns Boolean indicating if the user has sufficient balance
+   * @returns Object with hasBalance (boolean) and tokenBalance (number)
    */
   const checkTokenBalance = useCallback(async (
     userAddress: string,
     tokenType: string,
     requiredAmount: number
-  ): Promise<boolean> => {
+  ): Promise<{ hasBalance: boolean; tokenBalance: number }> => {
     try {
       setLoading(true)
       setError(null)
 
       if (!userAddress || !tokenType) {
         console.warn("Missing userAddress or tokenType in checkTokenBalance")
-        return false
+        return { hasBalance: false, tokenBalance: 0 }
       }
 
       const result = await suiVoteService.checkTokenBalance(userAddress, tokenType, requiredAmount)
@@ -531,7 +531,7 @@ export function useSuiVote() {
       const errorMessage = err instanceof Error ? err.message : String(err)
       setError(errorMessage)
       console.error("Error checking token balance:", errorMessage)
-      return false
+      return { hasBalance: false, tokenBalance: 0 }
     } finally {
       setLoading(false)
     }

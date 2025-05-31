@@ -257,8 +257,7 @@ export function VoteMediaHandler({ children }: { children: (handlers: MediaHandl
 
       console.log(pollData)
       // Create a transaction using the SuiVoteService
-
-      console.log(params.whitelistAddresses)
+      
       const transaction = createCompleteVoteTransaction(
         params.voteTitle,
         params.voteDescription,
@@ -281,7 +280,6 @@ export function VoteMediaHandler({ children }: { children: (handlers: MediaHandl
         execute: async () => {
           try {
             const result = await executeTransaction(transaction)
-
             // Call success callback if provided
             if (result && params.onSuccess) {
               // Extract vote ID from result if available

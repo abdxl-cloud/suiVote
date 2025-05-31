@@ -268,11 +268,14 @@ export default function VotePage() {
 
         // Check token requirements and get actual token balance for weighted voting
         if (voteDetails.tokenRequirement) {
-          hasRequiredTokens = await suivote.checkTokenBalance(
+          const tokenResult = await suivote.checkTokenBalance(
             wallet.address,
             voteDetails.tokenRequirement,
             voteDetails.tokenAmount
-          )
+          );
+          hasRequiredTokens = tokenResult.hasBalance;
+          // Store token balance for later use
+          setTokenBalance(tokenResult.tokenBalance);
         }
 
         // Check whitelist
@@ -619,9 +622,7 @@ export default function VotePage() {
       setTxStatus(TransactionStatus.BUILDING);
       setTxProgress(20);
 
-      console.log("[Vote Debug] Starting vote submission process");
-      console.log("[Vote Debug] Current selections:", selections);
-
+      
       // STEP 1: Validate wallet is connected
       if (!wallet || !wallet.address) {
         console.error("[Vote Debug] Wallet not connected");
@@ -658,8 +659,7 @@ export default function VotePage() {
       const pollIndices = [];
       const optionIndicesPerPoll = [];
 
-      console.log("[Vote Debug] Processing polls for transaction");
-
+      
       // For each poll in this vote
       polls.forEach((poll, pollIdx) => {
         // Get the user's selections for this poll (if any)
@@ -667,8 +667,7 @@ export default function VotePage() {
 
         // Skip polls with no selections
         if (selectedOptionIds.length === 0) {
-          console.log(`[Vote Debug] No selection for poll: ${poll.title}`);
-          return; // Skip this poll
+           return; // Skip this poll
         }
 
         // ISSUE 2 SOLUTION: Use utility function for precise option mapping
@@ -692,9 +691,7 @@ export default function VotePage() {
         // Store valid poll data for transaction
         pollIndices.push(pollIdx + 1); // 1-based poll index
         optionIndicesPerPoll.push(optionIndices);
-
-        console.log(`[Vote Debug] Successfully processed poll ${pollIdx + 1}: ${poll.title}`);
-      });
+});
 
       // Verify we have something to submit after mapping
       if (pollIndices.length === 0) {
@@ -708,41 +705,30 @@ export default function VotePage() {
 
       // STEP 4: Get token balance for token-weighted voting
       let tokenBalance = 0;
-      if (vote.useTokenWeighting && vote.tokenRequirement) {
-        console.log("[Vote Debug] Checking token balance for weighted voting");
-        try {
-          tokenBalance = await suivote.checkTokenBalance(
-            wallet.address,
-            vote.tokenRequirement.tokenAddress,
-            vote.tokenRequirement.minAmount
-          );
-          console.log(`[Vote Debug] Token balance: ${tokenBalance}`);
-        } catch (tokenError) {
-          console.error("[Vote Debug] Error checking token balance:", tokenError);
-          // Default to 0 balance on error
-        }
+      try {
+        const tokenResult = await suivote.checkTokenBalance(
+          wallet.address,
+          vote.tokenRequirement,
+          vote.tokenAmount
+        );
+        tokenBalance =  Math.floor(Number(tokenResult.tokenBalance));
+       } catch (tokenError) {
+        console.error("[Vote Debug] Error checking token balance:", tokenError);
+        // Default to 0 balance on error
       }
+      
 
       // STEP 5: Create the transaction
-      console.log("[Vote Debug] Creating transaction with mapped data");
       setTxStatus(TransactionStatus.BUILDING);
 
       // ISSUE 1 SOLUTION: Create a single batched transaction
       let transaction;
 
-      // Log final transaction data
-      console.log("[Vote Debug] Final transaction data:", {
-        voteId: params.id,
-        pollIndices: pollIndices,
-        optionIndicesPerPoll: optionIndicesPerPoll,
-        tokenBalance: tokenBalance,
-        paymentAmount: vote.paymentAmount || 0
-      });
-
+      
+      
       // If only one poll, use simple vote transaction
       if (pollIndices.length === 1) {
-        console.log("[Vote Debug] Creating single poll transaction");
-        transaction = suivote.castVoteTransaction(
+         transaction = suivote.castVoteTransaction(
           params.id,
           pollIndices[0],
           optionIndicesPerPoll[0],
@@ -751,7 +737,6 @@ export default function VotePage() {
         );
       } else {
         // If multiple polls, use batched transaction
-        console.log("[Vote Debug] Creating multi-poll batched transaction");
         transaction = suivote.castMultipleVotesTransaction(
           params.id,
           pollIndices,
@@ -762,7 +747,6 @@ export default function VotePage() {
       }
 
       // STEP 6: Execute the transaction
-      console.log("[Vote Debug] Sending transaction to wallet for signing");
       setTxStatus(TransactionStatus.SIGNING);
       setTxProgress(40);
 
@@ -779,7 +763,6 @@ export default function VotePage() {
       setTxProgress(80);
 
       // Transaction successful
-      console.log("[Vote Debug] Transaction complete:", response);
       setTxStatus(TransactionStatus.SUCCESS);
       setTxProgress(100);
 
@@ -1382,15 +1365,13 @@ export default function VotePage() {
                       // Verify option mappings for poll preview
                       try {
                         verifyOptionMappings([poll], {});
-                        console.log(`[Poll Preview] Options verified for poll: ${poll.title}`);
                       } catch (error) {
                         console.warn(`[Poll Preview] Option mapping verification failed for poll: ${poll.title}`, error);
                       }
 
                       return poll.options.slice(0, 3).map((option, optionIndex) => {
                         // Log option mapping info for preview
-                        console.log(`[Poll Preview] Option ${optionIndex + 1}: ${option.text} (ID: ${option.id}, Index: ${optionIndex + 1})`);
-
+                      
                         return (
                           <div key={option.id} className="flex items-center gap-3">
                             <div className="h-5 w-5 rounded-full border border-muted-foreground flex items-center justify-center">
@@ -1890,9 +1871,7 @@ export default function VotePage() {
                             !userCanVote ||
                             (!isSelected && currentSelections.length >= currentPoll.maxSelections)
 
-                          // Log option mapping info for debugging
-                          console.log(`[Option Listing] Option ${optionIndex + 1}: ${option.text} (ID: ${option.id}, Index: ${optionIndex + 1})`);
-
+                         
                           return (
                             <div key={option.id} className={cn(
                               "rounded-lg border p-4 transition-all duration-200 hover:bg-accent/30",
@@ -1913,8 +1892,7 @@ export default function VotePage() {
                                   id={option.id}
                                   checked={isSelected}
                                   onCheckedChange={() => {
-                                    console.log(`[Option Selection] Checkbox changed for option: ${option.text} (ID: ${option.id}, Index: ${optionIndex + 1})`);
-                                    handleOptionSelect(currentPoll.id, option.id, true);
+                                     handleOptionSelect(currentPoll.id, option.id, true);
                                   }}
                                   disabled={isDisabled}
                                   className={cn(
@@ -1968,7 +1946,6 @@ export default function VotePage() {
                           onValueChange={(value) => {
                             const selectedOption = currentPoll.options.find(opt => opt.id === value);
                             const optionIndex = currentPoll.options.findIndex(opt => opt.id === value);
-                            console.log(`[Option Selection] Radio changed for option: ${selectedOption?.text} (ID: ${value}, Index: ${optionIndex + 1})`);
                             handleOptionSelect(currentPoll.id, value, false);
                           }}
                           className="space-y-4"
@@ -1983,8 +1960,7 @@ export default function VotePage() {
                               !userCanVote
 
                             // Log option mapping info for debugging
-                            console.log(`[Option Listing] Option ${optionIndex + 1}: ${option.text} (ID: ${option.id}, Index: ${optionIndex + 1})`);
-
+                           
                             return (
                               <div key={option.id} className={cn(
                                 "rounded-lg border p-4 transition-all duration-200 hover:bg-accent/30",
@@ -2202,7 +2178,6 @@ export default function VotePage() {
                       // Verify option mappings for this poll before rendering
                       try {
                         verifyOptionMappings([poll], selections);
-                        console.log(`[Poll Grid] Options verified for poll: ${poll.title}`);
                       } catch (error) {
                         console.warn(`[Poll Grid] Option mapping verification failed for poll: ${poll.title}`, error);
                       }
@@ -2215,8 +2190,7 @@ export default function VotePage() {
                           .map((option, optionIndex) => {
                             // Log the mapping information for results display
                             const originalIndex = poll.options.findIndex(opt => opt.id === option.id);
-                            console.log(`[Poll Grid Results] Option: ${option.text} (ID: ${option.id}, Original Index: ${originalIndex + 1})`);
-
+                            
                             return (
                               <div key={option.id} className="space-y-1.5">
                                 <div className="flex justify-between text-sm">
@@ -2239,8 +2213,7 @@ export default function VotePage() {
                         <>
                           {poll.options.slice(0, 3).map((option, optionIndex) => {
                             // Log option mapping info for preview
-                            console.log(`[Poll Grid Preview] Option ${optionIndex + 1}: ${option.text} (ID: ${option.id})`);
-
+                            
                             return (
                               <div key={option.id} className="flex items-center gap-3">
                                 <div className="h-4 w-4 flex-shrink-0 rounded-full border border-muted-foreground flex items-center justify-center">
