@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
-import { toast } from "sonner"
+import { toast } from "sonner" // Only use Sonner
 import {
   PlusCircle,
   Trash2,
@@ -22,8 +22,28 @@ import {
   X,
   Check,
   Loader2,
-  ExternalLink,
+  Clock,
+  GripVertical,
 } from "lucide-react"
+
+// Import dnd-kit components
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  DragOverlay,
+} from "@dnd-kit/core"
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable"
+import { CSS } from "@dnd-kit/utilities"
 import { Button } from "@/components/ui/button"
 import { LoadingButton } from "@/components/ui/loading-button"
 import { Input } from "@/components/ui/input"
@@ -44,7 +64,6 @@ import { cn } from "@/lib/utils"
 import Link from "next/link"
 import { useWallet } from "@suiet/wallet-kit"
 import { useSuiVote } from "@/hooks/use-suivote"
-import { useToast } from "@/components/ui/use-toast"
 import { SUI_CONFIG } from "@/config/sui-config"
 import { Progress } from "@/components/ui/progress"
 import { TokenSelector } from "@/components/token-selector"
@@ -99,11 +118,76 @@ type ValidationErrors = {
   environment?: string
 }
 
+// Sortable Poll Item component
+const SortablePollItem = ({ poll, index, activePollIndex, setActivePollIndex, removePoll, pollsLength }) => {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: poll.id });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    zIndex: isDragging ? 10 : 1,
+    opacity: isDragging ? 0.8 : 1,
+  };
+
+  return (
+    <div 
+      ref={setNodeRef} 
+      style={style} 
+      className="flex items-center touch-manipulation"
+    >
+      <div className="flex items-center flex-1">
+        <div 
+          className="cursor-grab active:cursor-grabbing p-1 mr-1 rounded hover:bg-muted"
+          {...listeners}
+          {...attributes}
+        >
+          <GripVertical className="h-3.5 w-3.5 text-muted-foreground" />
+        </div>
+        <Button
+          variant={activePollIndex === index ? "secondary" : "ghost"}
+          size="sm"
+          className={cn(
+            "w-full justify-start text-left h-8 text-xs transition-all",
+            activePollIndex === index && "bg-muted",
+          )}
+          onClick={() => setActivePollIndex(index)}
+        >
+          <span className="w-5 h-5 flex items-center justify-center rounded-full bg-muted-foreground/10 text-xs mr-2">
+            {index + 1}
+          </span>
+          {poll.title
+            ? poll.title.length > 20
+              ? poll.title.substring(0, 20) + "..."
+              : poll.title
+            : `Poll ${index + 1}`}
+        </Button>
+      </div>
+      {pollsLength > 1 && (
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-8 w-8 p-0 ml-1 text-muted-foreground hover:text-destructive transition-colors"
+          onClick={() => removePoll(index)}
+        >
+          <X className="h-3.5 w-3.5" />
+          <span className="sr-only">Remove poll</span>
+        </Button>
+      )}
+    </div>
+  );
+};
+
 export default function CreateVotePage() {
   const router = useRouter()
   const wallet = useWallet()
   const { loading, error, executeTransaction } = useSuiVote()
-  const { toast: uiToast } = useToast()
 
   // Media is now handled directly in each option component
 
@@ -144,7 +228,6 @@ export default function CreateVotePage() {
     whitelistAddresses: []
   });
 
-
   const [errors, setErrors] = useState<ValidationErrors>({})
   const [activeTab, setActiveTab] = useState("details")
   const [activePollIndex, setActivePollIndex] = useState(0)
@@ -160,7 +243,12 @@ export default function CreateVotePage() {
   // New state for environment variable checks
   const [envVarsChecked, setEnvVarsChecked] = useState(false)
   const [missingEnvVars, setMissingEnvVars] = useState<string[]>([])
-
+  
+  // New state for drag and drop
+  const [activeId, setActiveId] = useState(null)
+  
+  // State to track if form data has been loaded from localStorage
+  const [formDataLoaded, setFormDataLoaded] = useState(false)
 
   // Example available dates (next 14 days)
   const availableDates = Array.from({ length: 14 }, (_, i) => {
@@ -168,11 +256,315 @@ export default function CreateVotePage() {
     date.setDate(date.getDate() + i);
     return date;
   });
+  
+  // Set up sensors for drag and drop
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 8, // 8px movement required before drag starts
+      },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
+
+  // Handle drag start event
+  const handleDragStart = (event) => {
+    setActiveId(event.active.id);
+  };
+
+  // Handle drag end event
+  const handleDragEnd = (event) => {
+    const { active, over } = event;
+    
+    if (active.id !== over?.id) {
+      setPolls((polls) => {
+        const oldIndex = polls.findIndex((poll) => poll.id === active.id);
+        const newIndex = polls.findIndex((poll) => poll.id === over.id);
+        
+        // Update activePollIndex if the active poll is being moved
+        if (activePollIndex === oldIndex) {
+          setActivePollIndex(newIndex);
+        } else if (activePollIndex === newIndex) {
+          setActivePollIndex(oldIndex);
+        }
+        
+        return arrayMove(polls, oldIndex, newIndex);
+      });
+    }
+    
+    setActiveId(null);
+  };
 
   // Example disabled dates
   const disabledDates = [
     new Date(new Date().setDate(new Date().getDate() + 3))
   ]
+
+  // Function to save form data to localStorage
+  const saveFormData = () => {
+    if (typeof window !== 'undefined') {
+      try {
+        // Create a deep copy of the data to avoid modifying the original state
+        const formData = {
+          voteTitle,
+          voteDescription,
+          polls: JSON.parse(JSON.stringify(polls)), // Deep clone to avoid reference issues
+          votingSettings: {...votingSettings}, // Shallow clone is fine for first level
+          activeTab,
+          activePollIndex,
+          showLiveStats
+        }
+        
+        // Dates are automatically stringified in JSON.stringify
+        // No need for special handling here as we handle it during load
+        
+        localStorage.setItem('voteFormData', JSON.stringify(formData))
+        console.log('Form data saved to localStorage')
+      } catch (error) {
+        console.error('Error saving form data:', error)
+      }
+    }
+  }
+
+  // Function to load form data from localStorage
+  const loadFormData = () => {
+    // Only load if we haven't loaded before and we're in a browser environment
+    if (typeof window !== 'undefined' && !formDataLoaded) {
+      const savedData = localStorage.getItem('voteFormData')
+      console.log('Checking for saved data...', savedData ? 'Found' : 'Not found')
+      
+      if (savedData) {
+        try {
+          const parsedData = JSON.parse(savedData)
+          console.log('Parsed saved data:', parsedData)
+          
+          // Check if there's any meaningful data to restore
+          const hasTitle = parsedData.voteTitle && parsedData.voteTitle.trim() !== ''
+          const hasDescription = parsedData.voteDescription && parsedData.voteDescription.trim() !== ''
+          const hasPolls = parsedData.polls && parsedData.polls.length > 0
+          const hasPollTitles = hasPolls && parsedData.polls.some(poll => poll.title && poll.title.trim() !== '')
+          const hasPollOptions = hasPolls && parsedData.polls.some(poll => 
+            poll.options && poll.options.some(option => option.text && option.text.trim() !== '')
+          )
+          
+          console.log('Data analysis:', {
+            hasTitle,
+            hasDescription,
+            hasPolls,
+            hasPollTitles,
+            hasPollOptions
+          })
+          
+          // More lenient check - restore if there's ANY meaningful data
+          const hasMeaningfulData = hasTitle || hasDescription || hasPollTitles || hasPollOptions
+          
+          if (!parsedData || !hasMeaningfulData) {
+            console.log('No meaningful saved data found, skipping load')
+            setFormDataLoaded(true) // Mark as loaded anyway to prevent future load attempts
+            return
+          }
+          
+          // Set form data from localStorage in a batch to prevent partial updates
+          const updates = () => {
+            // Set basic text fields
+            setVoteTitle(parsedData.voteTitle || '')
+            setVoteDescription(parsedData.voteDescription || '')
+            
+            // Handle dates properly by converting strings back to Date objects
+            if (parsedData.votingSettings) {
+              const settings = {...parsedData.votingSettings}
+              
+              // Ensure dates are properly converted to Date objects
+              if (settings.startDate) {
+                settings.startDate = new Date(settings.startDate)
+                // Validate the date is not invalid
+                if (isNaN(settings.startDate.getTime())) {
+                  const tenMinutesFromNow = new Date(new Date().getTime() + 10 * 60 * 1000)
+                  settings.startDate = tenMinutesFromNow
+                }
+              }
+              
+              if (settings.endDate) {
+                settings.endDate = new Date(settings.endDate)
+                // Validate the date is not invalid
+                if (isNaN(settings.endDate.getTime())) {
+                  const oneWeekFromStart = settings.startDate ? 
+                    new Date(settings.startDate.getTime() + 7 * 24 * 60 * 60 * 1000) :
+                    new Date(new Date().getTime() + 7 * 24 * 60 * 60 * 1000)
+                  settings.endDate = oneWeekFromStart
+                }
+              }
+              
+              setVotingSettings(settings)
+            }
+            
+            // Set polls if they exist and are valid
+            if (parsedData.polls && Array.isArray(parsedData.polls) && parsedData.polls.length > 0) {
+              setPolls(parsedData.polls)
+            }
+            
+            // Set UI state
+            setActiveTab(parsedData.activeTab || 'details')
+            setActivePollIndex(parsedData.activePollIndex || 0)
+            setShowLiveStats(parsedData.showLiveStats || false)
+          }
+          
+          // Apply all updates at once
+          updates()
+          
+          // Mark as loaded to prevent future load attempts and enable saving
+          setFormDataLoaded(true)
+          
+          // Create a summary of what was loaded
+          const loadedItems = [];
+          if (hasTitle) loadedItems.push('title');
+          if (hasDescription) loadedItems.push('description');
+          if (hasPollTitles) {
+            const pollCount = parsedData.polls.filter(poll => poll.title && poll.title.trim() !== '').length
+            loadedItems.push(`${pollCount} poll${pollCount > 1 ? 's' : ''}`);
+          }
+          
+          // Format the date if available
+          let dateInfo = '';
+          if (parsedData.votingSettings?.startDate) {
+            const date = new Date(parsedData.votingSettings.startDate);
+            if (!isNaN(date.getTime())) {
+              dateInfo = ` (last edited ${date.toLocaleDateString()})`;
+            }
+          }
+          
+          console.log('About to show success toast:', {
+            loadedItems,
+            dateInfo
+          })
+          
+          // Use a small delay to ensure the toast system is ready
+          setTimeout(() => {
+            toast.success('Form data restored', {
+              description: `Loaded ${loadedItems.join(', ')}${dateInfo}`,
+              icon: <Clock className="h-4 w-4" />,
+              duration: 5000
+            })
+            console.log('Toast shown for form data restoration')
+          }, 100)
+        } catch (error) {
+          console.error('Error loading saved form data:', error)
+          toast.error('Error loading saved data', {
+            description: 'Could not restore your previous progress',
+            icon: <AlertCircle className="h-4 w-4" />,
+            duration: 5000
+          })
+          setFormDataLoaded(true) // Mark as loaded anyway to prevent future load attempts
+        }
+      } else {
+        // No saved data found, just mark as loaded
+        setFormDataLoaded(true)
+      }
+    }
+  }
+  
+  // Function to clear saved form data and reset the form
+  const clearSavedData = () => {
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('voteFormData')
+      
+      // Reset form to initial state
+      setVoteTitle('')
+      setVoteDescription('')
+      setPolls([
+        {
+          id: "poll-1",
+          title: "",
+          description: "",
+          options: [
+            { id: "option-1-1", text: "", mediaUrl: null },
+            { id: "option-1-2", text: "", mediaUrl: null },
+          ],
+          isMultiSelect: false,
+          maxSelections: 1,
+          isRequired: true,
+        },
+      ])
+      
+      const tenMinutesFromNow = new Date(new Date().getTime() + 10 * 60 * 1000);
+      setVotingSettings({
+        requiredToken: "none",
+        requiredAmount: "",
+        paymentAmount: "0",
+        startDate: tenMinutesFromNow,
+        endDate: new Date(tenMinutesFromNow.getTime() + 7 * 24 * 60 * 60 * 1000),
+        requireAllPolls: true,
+        showLiveStats: false,
+        isTokenWeighted: false,
+        tokenWeight: "1",
+        enableWhitelist: false,
+        whitelistAddresses: []
+      })
+      
+      setActiveTab('details')
+      setActivePollIndex(0)
+      setShowLiveStats(false)
+      
+      toast.success('Form reset', {
+        description: 'All saved data has been cleared',
+        icon: <Trash2 className="h-4 w-4" />,
+        duration: 3000
+      })
+    }
+  }
+
+  // Debug function to check saved data (can be called from browser console)
+  const checkSavedData = () => {
+    if (typeof window !== 'undefined') {
+      const savedData = localStorage.getItem('voteFormData')
+      console.log('Current saved data:', savedData)
+      if (savedData) {
+        try {
+          const parsed = JSON.parse(savedData)
+          console.log('Parsed data:', parsed)
+          return parsed
+        } catch (e) {
+          console.error('Error parsing saved data:', e)
+        }
+      }
+      return null
+    }
+  }
+
+  // Make debug function available globally for testing
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      window.checkSavedData = checkSavedData
+      window.loadFormData = loadFormData
+    }
+  }, [])
+
+  // Load form data from localStorage on component mount
+  // This needs to run before any other effects that might set initial state
+  useEffect(() => {
+    // Longer timeout to ensure component is fully mounted and toast system is ready
+    const timer = setTimeout(() => {
+      console.log('Loading form data from localStorage...')
+      loadFormData()
+    }, 250) // Increased from 0 to 250ms
+    
+    return () => clearTimeout(timer)
+  }, [])
+
+  // Save form data to localStorage whenever relevant state changes
+  useEffect(() => {
+    // Only save if form data has been loaded (prevents overwriting with empty state)
+    if (formDataLoaded) {
+      // Use a debounce to prevent excessive saves
+      const saveTimer = setTimeout(() => {
+        saveFormData()
+      }, 500) // 500ms debounce
+      
+      return () => clearTimeout(saveTimer)
+    }
+  }, [voteTitle, voteDescription, polls, votingSettings, activeTab, activePollIndex, showLiveStats])
 
   // Check environment variables on component mount
   useEffect(() => {
@@ -198,13 +590,14 @@ export default function CreateVotePage() {
         environment: `Missing required configuration: ${missing.join(", ")}`,
       }))
 
-      uiToast({
-        variant: "destructive",
-        title: "Configuration Error",
+      // Use consistent Sonner toast
+      toast.error('Configuration Error', {
         description: `Missing required configuration: ${missing.join(", ")}`,
+        icon: <AlertCircle className="h-4 w-4" />,
+        duration: 10000 // Longer duration for important errors
       })
     }
-  }, [uiToast])
+  }, [])
 
   // Update document title when vote title changes
   useEffect(() => {
@@ -219,6 +612,8 @@ export default function CreateVotePage() {
 
       toast.error("Error creating vote", {
         description: error,
+        icon: <AlertCircle className="h-4 w-4" />,
+        duration: 10000
       })
       console.error("Transaction error:", error)
     }
@@ -227,13 +622,13 @@ export default function CreateVotePage() {
   // Check wallet connection status
   useEffect(() => {
     if (activeTab === "settings" && !wallet.connected) {
-      uiToast({
-        title: "Wallet not connected",
-        description: "Please connect your wallet to create a vote",
-        variant: "destructive",
+      toast.error('Wallet not connected', {
+        description: 'Please connect your wallet to create a vote',
+        icon: <Wallet className="h-4 w-4" />,
+        duration: 5000
       })
     }
-  }, [activeTab, wallet.connected, uiToast])
+  }, [activeTab, wallet.connected])
 
   // Update progress bar based on transaction status
   useEffect(() => {
@@ -464,9 +859,11 @@ const addPoll = () => {
         title: "Vote title is required"
       }))
 
-      // Show toast notification
+      // Show toast notification with Sonner
       toast.error("Vote title is required", {
-        description: "Please enter a title for your vote before proceeding"
+        description: "Please enter a title for your vote before proceeding",
+        icon: <AlertCircle className="h-4 w-4" />,
+        duration: 5000
       })
       return
     }
@@ -481,9 +878,11 @@ const addPoll = () => {
       // Validate the current section to show errors
       validateForm()
 
-      // Show toast notification
+      // Show toast notification with Sonner
       toast.error("Please complete the current section", {
-        description: "Fix all errors before proceeding to the next section"
+        description: "Fix all errors before proceeding to the next section",
+        icon: <AlertCircle className="h-4 w-4" />,
+        duration: 5000
       })
     }
   }
@@ -547,10 +946,10 @@ const preparePollDataForSubmission = () => {
     // Check for environment variable errors first
     if (missingEnvVars.length > 0) {
       newErrors.environment = `Missing required configuration: ${missingEnvVars.join(", ")}`
-      uiToast({
-        variant: "destructive",
-        title: "Configuration Error",
+      toast.error('Configuration Error', {
         description: `Missing required configuration: ${missingEnvVars.join(", ")}`,
+        icon: <AlertCircle className="h-4 w-4" />,
+        duration: 10000
       })
       return false
     }
@@ -670,10 +1069,10 @@ const preparePollDataForSubmission = () => {
 
     // Check wallet connection
     if (!wallet.connected) {
-      uiToast({
-        title: "Wallet not connected",
-        description: "Please connect your wallet to create a vote",
-        variant: "destructive",
+      toast.error('Wallet not connected', {
+        description: 'Please connect your wallet to create a vote',
+        icon: <Wallet className="h-4 w-4" />,
+        duration: 5000
       })
       return false
     }
@@ -705,19 +1104,25 @@ const preparePollDataForSubmission = () => {
       // Validate file size (max 5MB)
       const maxSize = 5 * 1024 * 1024
       if (file.size > maxSize) {
-        toast.error("File size exceeds the 5MB limit")
+        toast.error("File size exceeds the 5MB limit", {
+          icon: <AlertCircle className="h-4 w-4" />
+        })
         return
       }
   
       // Validate file type
       if (!file.type.startsWith('image/')) {
-        toast.error("Only image files are supported")
+        toast.error("Only image files are supported", {
+          icon: <AlertCircle className="h-4 w-4" />
+        })
         return
       }
   
       // Validate indices
       if (pollIndex >= polls.length || optionIndex >= polls[pollIndex].options.length) {
-        toast.error("Invalid poll or option index")
+        toast.error("Invalid poll or option index", {
+          icon: <AlertCircle className="h-4 w-4" />
+        })
         return
       }
   
@@ -741,7 +1146,9 @@ const preparePollDataForSubmission = () => {
           updatedPolls[pollIndex].options[optionIndex].fileId = fileId
           
           setPolls(updatedPolls)
-          toast.success(`Media added to option ${optionIndex + 1}`)
+          toast.success(`Media added to option ${optionIndex + 1}`, {
+            icon: <Check className="h-4 w-4" />
+          })
           
           console.log(`Media successfully added to poll ${pollIndex + 1}, option ${optionIndex + 1}`)
         } else {
@@ -749,7 +1156,9 @@ const preparePollDataForSubmission = () => {
           const errorPolls = [...polls]
           errorPolls[pollIndex].options[optionIndex].mediaUrl = null
           setPolls(errorPolls)
-          toast.error("Failed to generate preview")
+          toast.error("Failed to generate preview", {
+            icon: <AlertCircle className="h-4 w-4" />
+          })
         }
       }
   
@@ -757,13 +1166,17 @@ const preparePollDataForSubmission = () => {
         const errorPolls = [...polls]
         errorPolls[pollIndex].options[optionIndex].mediaUrl = null
         setPolls(errorPolls)
-        toast.error("Failed to read image file")
+        toast.error("Failed to read image file", {
+          icon: <AlertCircle className="h-4 w-4" />
+        })
       }
   
       reader.readAsDataURL(file)
     } catch (error) {
       console.error(`Error adding media to poll ${pollIndex + 1}, option ${optionIndex + 1}:`, error)
-      toast.error("Failed to add media file")
+      toast.error("Failed to add media file", {
+        icon: <AlertCircle className="h-4 w-4" />
+      })
       
       // Reset on error
       const errorPolls = [...polls]
@@ -788,11 +1201,15 @@ const preparePollDataForSubmission = () => {
       // Remove from media handler if it exists
       if (fileId && mediaHandlers) {
         mediaHandlers.removeMediaFile(fileId)
-        toast.success("Media removed successfully")
+        toast.success("Media removed successfully", {
+          icon: <Check className="h-4 w-4" />
+        })
       }
     } catch (error) {
       console.error(`Error removing media from poll ${pollIndex + 1}, option ${optionIndex + 1}:`, error)
-      toast.error("Failed to remove media file")
+      toast.error("Failed to remove media file", {
+        icon: <AlertCircle className="h-4 w-4" />
+      })
     }
   }
 
@@ -818,14 +1235,18 @@ const preparePollDataForSubmission = () => {
             }
           }, 100);
           toast.error("Please fix all validation errors before submitting", {
-            description: "Ensure all required fields are filled correctly"
+            description: "Ensure all required fields are filled correctly",
+            icon: <AlertCircle className="h-4 w-4" />,
+            duration: 8000
           });
           return;
         }
       }
       
       if (!validatePollOrder()) {
-        toast.error("Please fix poll validation errors before submitting")
+        toast.error("Please fix poll validation errors before submitting", {
+          icon: <AlertCircle className="h-4 w-4" />
+        })
         return
       }
       
@@ -856,13 +1277,17 @@ const preparePollDataForSubmission = () => {
       // If dates were auto-updated, notify the user
       if (datesUpdated) {
         toast.info("Voting dates updated", {
-          description: "Start and end dates have been automatically adjusted to ensure they are in the future."
+          description: "Start and end dates have been automatically adjusted to ensure they are in the future.",
+          icon: <Info className="h-4 w-4" />,
+          duration: 5000
         });
       }
 
       if (!wallet.connected) {
         toast.error("Wallet not connected", {
           description: "Please connect your wallet to create a vote",
+          icon: <Wallet className="h-4 w-4" />,
+          duration: 5000
         });
         return;
       }
@@ -924,8 +1349,15 @@ const preparePollDataForSubmission = () => {
       // Show success message
       toast.success("Vote created successfully!", {
         description: "Your vote has been published to the blockchain",
+        icon: <Check className="h-4 w-4" />,
+        duration: 8000
       });
 
+      // Clear saved form data on successful vote creation
+      if (typeof window !== 'undefined') {
+        localStorage.removeItem('voteFormData');
+      }
+      
       // Wait a moment to show the success state before redirecting
       setTimeout(() => {
         // Navigate to success page with vote data
@@ -942,11 +1374,11 @@ const preparePollDataForSubmission = () => {
 
       toast.error("Failed to create vote", {
         description: errorMessage,
+        icon: <AlertCircle className="h-4 w-4" />,
+        duration: 10000
       });
     }
   };
-
-
 
   // Get transaction explorer URL
   const getTransactionExplorerUrl = () => {
@@ -987,6 +1419,16 @@ const preparePollDataForSubmission = () => {
                 <h1 className="text-2xl font-bold tracking-tight truncate">{voteTitle ? voteTitle : "Create New Vote"}</h1>
               </div>
               <div className="flex items-center gap-2 w-full sm:w-auto">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={clearSavedData}
+                  className="w-full sm:w-auto sm:text-base sm:px-6 sm:py-2 sm:h-10 transition-all hover:scale-105"
+                  title="Clear all saved data and start fresh"
+                >
+                  <Trash2 className="h-4 w-4 mr-2" />
+                  Reset
+                </Button>
                 <Link href="/polls" className="w-full sm:w-auto">
                   <Button
                     variant="outline"
@@ -1089,39 +1531,41 @@ const preparePollDataForSubmission = () => {
                             </Button>
                           </div>
                           <div className="space-y-1 max-h-[300px] overflow-y-auto pr-1">
-                            {polls.map((poll, index) => (
-                              <div key={poll.id} className="flex items-center">
-                                <Button
-                                  variant={activePollIndex === index ? "secondary" : "ghost"}
-                                  size="sm"
-                                  className={cn(
-                                    "w-full justify-start text-left h-8 text-xs transition-all",
-                                    activePollIndex === index && "bg-muted",
-                                  )}
-                                  onClick={() => setActivePollIndex(index)}
-                                >
-                                  <span className="w-5 h-5 flex items-center justify-center rounded-full bg-muted-foreground/10 text-xs mr-2">
-                                    {index + 1}
-                                  </span>
-                                  {poll.title
-                                    ? poll.title.length > 20
-                                      ? poll.title.substring(0, 20) + "..."
-                                      : poll.title
-                                    : `Poll ${index + 1}`}
-                                </Button>
-                                {polls.length > 1 && (
-                                  <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    className="h-8 w-8 p-0 ml-1 text-muted-foreground hover:text-destructive transition-colors"
-                                    onClick={() => removePoll(index)}
-                                  >
-                                    <X className="h-3.5 w-3.5" />
-                                    <span className="sr-only">Remove poll</span>
-                                  </Button>
-                                )}
-                              </div>
-                            ))}
+                            <DndContext
+                              sensors={sensors}
+                              collisionDetection={closestCenter}
+                              onDragStart={handleDragStart}
+                              onDragEnd={handleDragEnd}
+                            >
+                              <SortableContext 
+                                items={polls.map(poll => poll.id)}
+                                strategy={verticalListSortingStrategy}
+                              >
+                                {polls.map((poll, index) => (
+                                  <SortablePollItem
+                                    key={poll.id}
+                                    poll={poll}
+                                    index={index}
+                                    activePollIndex={activePollIndex}
+                                    setActivePollIndex={setActivePollIndex}
+                                    removePoll={removePoll}
+                                    pollsLength={polls.length}
+                                  />
+                                ))}
+                              </SortableContext>
+                              <DragOverlay>
+                                {activeId ? (
+                                  <div className="bg-background border rounded-md shadow-md p-2 w-full">
+                                    <div className="flex items-center">
+                                      <GripVertical className="h-3.5 w-3.5 text-muted-foreground mr-2" />
+                                      <span className="text-xs">
+                                        {polls.find(poll => poll.id === activeId)?.title || `Poll ${polls.findIndex(poll => poll.id === activeId) + 1}`}
+                                      </span>
+                                    </div>
+                                  </div>
+                                ) : null}
+                              </DragOverlay>
+                            </DndContext>
                           </div>
                         </div>
                       )}
@@ -1272,7 +1716,8 @@ const preparePollDataForSubmission = () => {
                           if (!voteTitle.trim().length) {
                             // Show error but don't proceed
                             toast.error("Please complete all required fields", {
-                              description: "Vote title is required"
+                              description: "Vote title is required",
+                              icon: <AlertCircle className="h-4 w-4" />
                             });
                             return;
                           }
@@ -1636,7 +2081,8 @@ const preparePollDataForSubmission = () => {
                           } else {
                             validateForm();
                             toast.error("Please complete all poll options", {
-                              description: "All polls must have a title and at least 2 options with text"
+                              description: "All polls must have a title and at least 2 options with text",
+                              icon: <AlertCircle className="h-4 w-4" />
                             });
                           }
                         }} className="gap-2 transition-all hover:scale-105">
@@ -1883,7 +2329,8 @@ const preparePollDataForSubmission = () => {
                           } else {
                             validateForm();
                             toast.error("Please complete all settings", {
-                              description: "Ensure all voting settings are properly configured"
+                              description: "Ensure all voting settings are properly configured",
+                              icon: <AlertCircle className="h-4 w-4" />
                             });
                           }
                         }}

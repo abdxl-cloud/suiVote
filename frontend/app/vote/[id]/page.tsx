@@ -182,7 +182,6 @@ export default function VotePage() {
       if (!voteDetails) {
         throw new Error("Vote not found")
       }
-      console.log("Vote Details:", voteDetails)
 
       // If the vote is closed, redirect to the closed page
       // Only redirect if showLiveStats is false
@@ -344,7 +343,27 @@ export default function VotePage() {
   }
 
   useEffect(() => {
+    // Initial data fetch
     fetchVoteData()
+    
+    // Set up real-time updates subscription if we have a vote ID
+    if (params.id) {
+      // Subscribe to vote updates
+      const unsubscribe = suivote.subscribeToVoteUpdates(params.id as string, (updatedVoteDetails) => {
+        // Update the vote state with the latest data
+        setVote(updatedVoteDetails)
+        
+        // If showing results, update the UI accordingly
+        if (showingResults || (updatedVoteDetails.showLiveStats)) {
+          setShowingResults(true)
+        }
+      })
+      
+      // Clean up subscription when component unmounts or params change
+      return () => {
+        unsubscribe()
+      }
+    }
   }, [params.id, wallet.connected, wallet.address])
 
   // Function to handle starting a vote
@@ -651,7 +670,7 @@ export default function VotePage() {
       // We've already validated and confirmed there are no errors, so we can proceed
 
       // STEP 2.5: ISSUE 2 SOLUTION - Verify option mappings before proceeding
-      console.log("[Vote Debug] Verifying option mappings...");
+      
       verifyOptionMappings(polls, selections);
 
       // STEP 3: Prepare data for transaction
@@ -788,7 +807,8 @@ export default function VotePage() {
         if (vote?.showLiveStats) {
           // If live stats are enabled, just show results on this page
           setShowingResults(true);
-          fetchVoteData(); // Refresh data to show updated results
+          // No need to manually call fetchVoteData() as the subscription will update the UI
+          // The subscription will automatically refresh the data with the latest results
         } else {
           // Otherwise redirect to success page
           router.push(`/vote/${params.id}/success?digest=${response.digest}`);
@@ -1836,7 +1856,7 @@ export default function VotePage() {
                     {(() => {
                       // Verify option mappings before rendering
                       const currentPoll = polls[activePollIndex];
-                      console.log(`[Option Listing] Verifying options for poll: ${currentPoll.title}`);
+                      
 
                       try {
                         verifyOptionMappings([currentPoll], selections);

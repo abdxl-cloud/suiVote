@@ -1,6 +1,8 @@
 import { SuiClient, getFullnodeUrl } from "@mysten/sui/client"
 import { Transaction } from "@mysten/sui/transactions"
 import { SUI_CLOCK_OBJECT_ID } from "@mysten/sui/utils"
+import { SuiHTTPTransport } from "@mysten/sui/client"
+import SUI_CONFIG from "@/config/sui-config"
 
 // Constants from configuration
 const PACKAGE_ID = process.env.NEXT_PUBLIC_SUIVOTE_PACKAGE_ID || ""
@@ -132,10 +134,20 @@ export interface VoteList {
 export class SuiVoteService {
   private client: SuiClient
   private isInitialized = false
+  private subscriptions: Map<string, () => void> = new Map()
 
-  constructor(network = "testnet") {
+  constructor(network = SUI_CONFIG.NETWORK) {
     try {
-      this.client = new SuiClient({ url: getFullnodeUrl(network) })
+      // Initialize client with both HTTP and WebSocket transport
+      const transport = new SuiHTTPTransport({
+        url: getFullnodeUrl(network),
+        websocket: {
+          reconnectTimeout: 1000,
+          url: getFullnodeUrl(network).replace('http', 'ws'),
+        }
+      })
+      
+      this.client = new SuiClient({ transport })
       this.isInitialized = true
     } catch (error) {
       throw new Error(`Failed to initialize SuiVoteService: ${error instanceof Error ? error.message : String(error)}`)
@@ -417,6 +429,53 @@ export class SuiVoteService {
     }
   }
 
+  /**
+   * Subscribe to vote events for real-time updates
+   * @param voteId The vote object ID
+   * @param onUpdate Callback function to handle updates
+   * @returns Unsubscribe function
+   */
+  subscribeToVoteUpdates(voteId: string, onUpdate: (voteDetails: VoteDetails) => void): () => void {
+    this.checkInitialization()
+    
+    // Check if we already have a subscription for this vote
+    if (this.subscriptions.has(voteId)) {
+      // Return the existing unsubscribe function
+      return this.subscriptions.get(voteId)!
+    }
+    
+    try {
+      // Set up a polling mechanism for vote updates
+      // Note: Ideally we would use WebSocket subscriptions, but they're being deprecated
+      // This is a fallback using polling until the new streaming API is available
+      const intervalId = setInterval(async () => {
+        try {
+          const voteDetails = await this.getVoteDetails(voteId)
+          if (voteDetails) {
+            onUpdate(voteDetails)
+          }
+        } catch (error) {
+          console.error(`Error polling vote updates for ${voteId}:`, error)
+        }
+      }, 3000) // Poll every 3 seconds
+      
+      // Create unsubscribe function
+      const unsubscribe = () => {
+        clearInterval(intervalId)
+        this.subscriptions.delete(voteId)
+      }
+      
+      // Store the unsubscribe function
+      this.subscriptions.set(voteId, unsubscribe)
+      
+      return unsubscribe
+    } catch (error) {
+      console.error(`Failed to subscribe to vote updates for ${voteId}:`, error)
+      // Return a no-op function in case of error
+      return () => {}
+    }
+  }
+  
   /**
    * Get detailed information about a specific vote
    * @param voteId The vote object ID

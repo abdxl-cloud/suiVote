@@ -109,11 +109,20 @@ export default function VoteSuccessPage() {
     if (params.id) {
       setLoading(true);
       fetchVoteDetails();
+      
+      // Set up real-time updates subscription if we have a vote ID
+      const unsubscribe = suivote.subscribeToVoteUpdates(params.id, (updatedVoteDetails) => {
+        console.log("Received vote update on success page:", updatedVoteDetails)
+        // Update the vote state with the latest data
+        setVoteDetails(updatedVoteDetails)
+      })
+      
+      // Clean up subscription when component unmounts or params change
+      return () => {
+        unsubscribe()
+      }
     }
-    
-    // Don't include fetchVoteDetails in the dependency array
-    // This prevents re-fetching when the function reference changes
-  }, [params.id, hasInitialized]);
+  }, [params.id, hasInitialized, suivote, fetchVoteDetails]);
   
   // Format date helper
   const formatDate = (timestamp) => {
