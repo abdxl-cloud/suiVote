@@ -99,7 +99,7 @@ export function TransactionStatusDialog({
         onOpenChange(false)
       }
     }}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="w-[95vw] max-w-md mx-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-3 mb-1">
             {txStatus === TransactionStatus.SUCCESS && (
@@ -117,9 +117,9 @@ export function TransactionStatusDialog({
                 <Loader2 className="h-5 w-5 text-blue-600 dark:text-blue-400 animate-spin" />
               </div>
             )}
-            <span>{dialogTitle}</span>
+            <span className="text-sm sm:text-base">{dialogTitle}</span>
           </DialogTitle>
-          <DialogDescription className="text-sm">
+          <DialogDescription className="text-xs sm:text-sm">
             {dialogDescription}
           </DialogDescription>
         </DialogHeader>
@@ -133,17 +133,18 @@ export function TransactionStatusDialog({
                 txStatus > TransactionStatus.BUILDING && txStatus !== TransactionStatus.ERROR ? "bg-green-50 dark:bg-green-900/20" :
                   "bg-muted/20"
             )}>
-              <span className="flex items-center gap-2">
+              <span className="flex items-center gap-2 min-w-0 flex-1">
                 {txStatus === TransactionStatus.BUILDING ? (
-                  <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                  <Loader2 className="h-4 w-4 animate-spin text-primary flex-shrink-0" />
                 ) : txStatus > TransactionStatus.BUILDING && txStatus !== TransactionStatus.ERROR ? (
-                  <Check className="h-4 w-4 text-green-500" />
+                  <Check className="h-4 w-4 text-green-500 flex-shrink-0" />
                 ) : txStatus === TransactionStatus.ERROR ? (
-                  <AlertCircle className="h-4 w-4 text-red-500" />
+                  <AlertCircle className="h-4 w-4 text-red-500 flex-shrink-0" />
                 ) : (
-                  <Circle className="h-4 w-4 text-muted-foreground" />
+                  <Circle className="h-4 w-4 text-muted-foreground flex-shrink-0" />
                 )}
                 <span className={cn(
+                  "text-xs sm:text-sm truncate",
                   txStatus === TransactionStatus.BUILDING ? "font-medium text-primary" :
                     txStatus > TransactionStatus.BUILDING && txStatus !== TransactionStatus.ERROR ? "font-medium" :
                       txStatus === TransactionStatus.ERROR ? "text-red-600 dark:text-red-400" :
@@ -152,7 +153,7 @@ export function TransactionStatusDialog({
                   Building Transaction
                 </span>
               </span>
-              <span className="text-xs text-muted-foreground font-medium">Step 1/4</span>
+              <span className="text-xs text-muted-foreground font-medium flex-shrink-0 ml-2">1/4</span>
             </div>
 
             {/* Signing Transaction Step */}
@@ -162,17 +163,18 @@ export function TransactionStatusDialog({
                 txStatus > TransactionStatus.SIGNING && txStatus !== TransactionStatus.ERROR ? "bg-green-50 dark:bg-green-900/20" :
                   "bg-muted/20"
             )}>
-              <span className="flex items-center gap-2">
+              <span className="flex items-center gap-2 min-w-0 flex-1">
                 {txStatus === TransactionStatus.SIGNING ? (
-                  <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                  <Loader2 className="h-4 w-4 animate-spin text-primary flex-shrink-0" />
                 ) : txStatus > TransactionStatus.SIGNING && txStatus !== TransactionStatus.ERROR ? (
-                  <Check className="h-4 w-4 text-green-500" />
+                  <Check className="h-4 w-4 text-green-500 flex-shrink-0" />
                 ) : txStatus === TransactionStatus.ERROR && txStatus >= TransactionStatus.SIGNING ? (
-                  <AlertCircle className="h-4 w-4 text-red-500" />
+                  <AlertCircle className="h-4 w-4 text-red-500 flex-shrink-0" />
                 ) : (
-                  <Circle className="h-4 w-4 text-muted-foreground" />
+                  <Circle className="h-4 w-4 text-muted-foreground flex-shrink-0" />
                 )}
                 <span className={cn(
+                  "text-xs sm:text-sm truncate",
                   txStatus === TransactionStatus.SIGNING ? "font-medium text-primary" :
                     txStatus > TransactionStatus.SIGNING && txStatus !== TransactionStatus.ERROR ? "font-medium" :
                       txStatus === TransactionStatus.ERROR && txStatus >= TransactionStatus.SIGNING ? "text-red-600 dark:text-red-400" :
@@ -181,7 +183,7 @@ export function TransactionStatusDialog({
                   Signing Transaction
                 </span>
               </span>
-              <span className="text-xs text-muted-foreground font-medium">Step 2/4</span>
+              <span className="text-xs text-muted-foreground font-medium flex-shrink-0 ml-2">2/4</span>
             </div>
 
             {/* Executing Transaction Step */}
@@ -191,17 +193,18 @@ export function TransactionStatusDialog({
                 txStatus > TransactionStatus.EXECUTING && txStatus !== TransactionStatus.ERROR ? "bg-green-50 dark:bg-green-900/20" :
                   "bg-muted/20"
             )}>
-              <span className="flex items-center gap-2">
+              <span className="flex items-center gap-2 min-w-0 flex-1">
                 {txStatus === TransactionStatus.EXECUTING ? (
-                  <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                  <Loader2 className="h-4 w-4 animate-spin text-primary flex-shrink-0" />
                 ) : txStatus > TransactionStatus.EXECUTING && txStatus !== TransactionStatus.ERROR ? (
-                  <Check className="h-4 w-4 text-green-500" />
+                  <Check className="h-4 w-4 text-green-500 flex-shrink-0" />
                 ) : txStatus === TransactionStatus.ERROR && txStatus >= TransactionStatus.EXECUTING ? (
-                  <AlertCircle className="h-4 w-4 text-red-500" />
+                  <AlertCircle className="h-4 w-4 text-red-500 flex-shrink-0" />
                 ) : (
-                  <Circle className="h-4 w-4 text-muted-foreground" />
+                  <Circle className="h-4 w-4 text-muted-foreground flex-shrink-0" />
                 )}
                 <span className={cn(
+                  "text-xs sm:text-sm truncate",
                   txStatus === TransactionStatus.EXECUTING ? "font-medium text-primary" :
                     txStatus > TransactionStatus.EXECUTING && txStatus !== TransactionStatus.ERROR ? "font-medium" :
                       txStatus === TransactionStatus.ERROR && txStatus >= TransactionStatus.EXECUTING ? "text-red-600 dark:text-red-400" :
@@ -210,7 +213,7 @@ export function TransactionStatusDialog({
                   Executing Transaction
                 </span>
               </span>
-              <span className="text-xs text-muted-foreground font-medium">Step 3/4</span>
+              <span className="text-xs text-muted-foreground font-medium flex-shrink-0 ml-2">3/4</span>
             </div>
 
             {/* Confirming Transaction Step */}
@@ -220,17 +223,18 @@ export function TransactionStatusDialog({
                 txStatus > TransactionStatus.CONFIRMING && txStatus !== TransactionStatus.ERROR ? "bg-green-50 dark:bg-green-900/20" :
                   "bg-muted/20"
             )}>
-              <span className="flex items-center gap-2">
+              <span className="flex items-center gap-2 min-w-0 flex-1">
                 {txStatus === TransactionStatus.CONFIRMING ? (
-                  <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                  <Loader2 className="h-4 w-4 animate-spin text-primary flex-shrink-0" />
                 ) : txStatus > TransactionStatus.CONFIRMING && txStatus !== TransactionStatus.ERROR ? (
-                  <Check className="h-4 w-4 text-green-500" />
+                  <Check className="h-4 w-4 text-green-500 flex-shrink-0" />
                 ) : txStatus === TransactionStatus.ERROR && txStatus >= TransactionStatus.CONFIRMING ? (
-                  <AlertCircle className="h-4 w-4 text-red-500" />
+                  <AlertCircle className="h-4 w-4 text-red-500 flex-shrink-0" />
                 ) : (
-                  <Circle className="h-4 w-4 text-muted-foreground" />
+                  <Circle className="h-4 w-4 text-muted-foreground flex-shrink-0" />
                 )}
                 <span className={cn(
+                  "text-xs sm:text-sm truncate",
                   txStatus === TransactionStatus.CONFIRMING ? "font-medium text-primary" :
                     txStatus > TransactionStatus.CONFIRMING && txStatus !== TransactionStatus.ERROR ? "font-medium" :
                       txStatus === TransactionStatus.ERROR && txStatus >= TransactionStatus.CONFIRMING ? "text-red-600 dark:text-red-400" :
@@ -239,31 +243,36 @@ export function TransactionStatusDialog({
                   Confirming Transaction
                 </span>
               </span>
-              <span className="text-xs text-muted-foreground font-medium">Step 4/4</span>
+              <span className="text-xs text-muted-foreground font-medium flex-shrink-0 ml-2">4/4</span>
             </div>
           </div>
 
           {/* Success Transaction ID */}
           {txStatus === TransactionStatus.SUCCESS && txDigest && (
-            <div className="mt-4 space-y-2">
-              <div className="flex items-center justify-between">
+            <div className="mt-4 space-y-3">
+              {/* Header section - stack on mobile */}
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                 <span className="text-sm font-medium">Transaction ID</span>
                 <Link
                   href={`${explorerUrl}/txblock/${txDigest}`}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="text-xs text-primary hover:text-primary/80 flex items-center gap-1 transition-colors"
+                  className="text-xs text-primary hover:text-primary/80 flex items-center gap-1 transition-colors self-start sm:self-auto"
                 >
                   View on Explorer
-                  <ExternalLink className="h-3 w-3" />
+                  <ExternalLink className="h-3 w-3 flex-shrink-0" />
                 </Link>
               </div>
-              <div className="flex items-center gap-2 bg-muted/30 p-2 rounded-md">
-                <code className="text-xs text-muted-foreground flex-1 truncate">{txDigest}</code>
+              
+              {/* Transaction ID display */}
+              <div className="flex items-center gap-2 bg-muted/30 p-2 rounded-md min-w-0">
+                <code className="text-xs text-muted-foreground flex-1 truncate min-w-0 block">
+                  {txDigest}
+                </code>
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="h-7 w-7"
+                  className="h-7 w-7 flex-shrink-0"
                   onClick={handleCopy}
                 >
                   <Copy className="h-3.5 w-3.5" />
@@ -278,15 +287,15 @@ export function TransactionStatusDialog({
               <Alert variant="destructive">
                 <AlertCircle className="h-4 w-4" />
                 <AlertTitle>Transaction Failed</AlertTitle>
-                <AlertDescription className="text-xs break-all max-h-32 overflow-y-auto">{transactionError}</AlertDescription>
+                <AlertDescription className="text-xs break-words max-h-32 overflow-y-auto">{transactionError}</AlertDescription>
               </Alert>
 
               {/* Error-specific guidance */}
               {transactionError.includes("rejection") || transactionError.includes("cancelled") ? (
                 <div className="bg-amber-50 dark:bg-amber-900/20 p-3 rounded-md border border-amber-200 dark:border-amber-800/30">
                   <div className="flex gap-2 text-amber-800 dark:text-amber-300">
-                    <Info className="h-4 w-4 mt-0.5" />
-                    <div className="space-y-1">
+                    <Info className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                    <div className="space-y-1 min-w-0">
                       <p className="text-xs font-medium">You declined the transaction</p>
                       <p className="text-xs">You can try again when you're ready by clicking the "Try Again" button below.</p>
                     </div>
@@ -295,8 +304,8 @@ export function TransactionStatusDialog({
               ) : transactionError.includes("insufficient") ? (
                 <div className="bg-amber-50 dark:bg-amber-900/20 p-3 rounded-md border border-amber-200 dark:border-amber-800/30">
                   <div className="flex gap-2 text-amber-800 dark:text-amber-300">
-                    <Wallet className="h-4 w-4 mt-0.5" />
-                    <div className="space-y-1">
+                    <Wallet className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                    <div className="space-y-1 min-w-0">
                       <p className="text-xs font-medium">Insufficient funds</p>
                       <p className="text-xs">Please add more SUI to your wallet to cover the transaction fee, then try again.</p>
                     </div>
@@ -305,8 +314,8 @@ export function TransactionStatusDialog({
               ) : transactionError.includes("network") || transactionError.includes("timeout") ? (
                 <div className="bg-amber-50 dark:bg-amber-900/20 p-3 rounded-md border border-amber-200 dark:border-amber-800/30">
                   <div className="flex gap-2 text-amber-800 dark:text-amber-300">
-                    <Wifi className="h-4 w-4 mt-0.5" />
-                    <div className="space-y-1">
+                    <Wifi className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                    <div className="space-y-1 min-w-0">
                       <p className="text-xs font-medium">Network issue detected</p>
                       <p className="text-xs">Please check your internet connection and try again.</p>
                     </div>
@@ -315,8 +324,8 @@ export function TransactionStatusDialog({
               ) : transactionError.includes("wallet") ? (
                 <div className="bg-amber-50 dark:bg-amber-900/20 p-3 rounded-md border border-amber-200 dark:border-amber-800/30">
                   <div className="flex gap-2 text-amber-800 dark:text-amber-300">
-                    <Wallet className="h-4 w-4 mt-0.5" />
-                    <div className="space-y-1">
+                    <Wallet className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                    <div className="space-y-1 min-w-0">
                       <p className="text-xs font-medium">Wallet connection issue</p>
                       <p className="text-xs">Please check that your wallet is connected and try again.</p>
                     </div>
@@ -325,8 +334,8 @@ export function TransactionStatusDialog({
               ) : (
                 <div className="bg-blue-50 dark:bg-blue-900/20 p-3 rounded-md border border-blue-200 dark:border-blue-800/30">
                   <div className="flex gap-2 text-blue-800 dark:text-blue-300">
-                    <HelpCircle className="h-4 w-4 mt-0.5" />
-                    <div className="space-y-1">
+                    <HelpCircle className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                    <div className="space-y-1 min-w-0">
                       <p className="text-xs font-medium">Something went wrong</p>
                       <p className="text-xs">You can try again or come back later if the issue persists.</p>
                     </div>

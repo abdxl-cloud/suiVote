@@ -84,7 +84,7 @@ export default function DashboardPage() {
   const [now, setNow] = useState(new Date())
 
   const wallet = useWallet()
-  const { getMyVotes, loading, error } = useSuiVote()
+  const { getMyVotes, loading, error, subscribeToVoteUpdates } = useSuiVote()
   const [votes, setVotes] = useState([])
 
   // Update the current time every minute to keep countdowns accurate
@@ -101,13 +101,32 @@ export default function DashboardPage() {
         try {
           const { data } = await getMyVotes(wallet.address)
           setVotes(data)
+          
+          // Set up real-time updates for each vote
+          const unsubscribers = data.map((vote) => {
+            // Only subscribe to active votes or votes with live stats enabled
+            if (vote.status === "active" || vote.showLiveStats) {
+              return subscribeToVoteUpdates(vote.id, (updatedVote) => {
+                // Update the specific vote in the votes array
+                setVotes(prevVotes => 
+                  prevVotes.map(v => v.id === updatedVote.id ? { ...v, ...updatedVote } : v)
+                )
+              })
+            }
+            return () => {}
+          })
+          
+          // Clean up subscriptions when component unmounts or when votes change
+          return () => {
+            unsubscribers.forEach(unsubscribe => unsubscribe())
+          }
         } catch (err) {
           console.error("Error fetching votes:", err)
         }
       }
       fetchVotes()
     }
-  }, [wallet.connected, wallet.address, getMyVotes])
+  }, [wallet.connected, wallet.address, getMyVotes, subscribeToVoteUpdates])
 
   useEffect(() => {
     // Check if we're coming from a successful vote creation

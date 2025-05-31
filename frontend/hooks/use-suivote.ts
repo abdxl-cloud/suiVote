@@ -20,6 +20,30 @@ export function useSuiVote() {
   const wallet = useWallet()
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  
+  /**
+   * Subscribe to vote updates for real-time data
+   * @param voteId The vote object ID
+   * @param onUpdate Callback function to handle updates
+   * @returns Unsubscribe function
+   */
+  const subscribeToVoteUpdates = useCallback(
+    (voteId: string, onUpdate: (voteDetails: VoteDetails) => void): (() => void) => {
+      try {
+        if (!voteId) {
+          throw new Error("Vote ID is required")
+        }
+        
+        return suiVoteService.subscribeToVoteUpdates(voteId, onUpdate)
+      } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : String(err)
+        console.error("Error subscribing to vote updates:", errorMessage)
+        // Return a no-op function in case of error
+        return () => {}
+      }
+    },
+    []
+  )
 
   /**
    * Get votes created by, participated in, or whitelisted for the current user
@@ -581,5 +605,7 @@ export function useSuiVote() {
     addAllowedVotersTransaction,
     isVoterWhitelisted,
     getWhitelistedVoters,
+    // Real-time updates
+    subscribeToVoteUpdates,
   }
 }

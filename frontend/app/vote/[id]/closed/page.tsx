@@ -170,7 +170,30 @@ export default function ClosedVotePage() {
       }
     }
     
+    // Initial data fetch
     fetchVoteData()
+    
+    // Set up real-time updates subscription if we have a vote ID
+    if (params.id) {
+      // Subscribe to vote updates
+      const unsubscribe = suivote.subscribeToVoteUpdates(params.id, (updatedVoteDetails) => {
+        console.log("Received vote update on closed page:", updatedVoteDetails)
+        
+        // If vote is not closed, but has live stats, redirect to main vote page
+        if (updatedVoteDetails.status !== "closed" && updatedVoteDetails.showLiveStats) {
+          router.push(`/vote/${params.id}`)
+          return
+        }
+        
+        // Update the vote state with the latest data
+        setVote(updatedVoteDetails)
+      })
+      
+      // Clean up subscription when component unmounts or params change
+      return () => {
+        unsubscribe()
+      }
+    }
   }, [params.id, suivote, router])
   
   const handleShare = () => {

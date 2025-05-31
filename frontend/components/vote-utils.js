@@ -17,9 +17,6 @@ export function mapOptionIdsToIndices(poll, selectedOptionIds) {
   // Create a map of option ID to index for quick lookups
   const optionIndexMap = {};
   
-  // Log all options for debugging
-  console.log(`[Mapping Debug] Poll "${poll.title}" has ${poll.options.length} options:`);
-  
   // Build the mapping
   poll.options.forEach((option, index) => {
     if (!option.id) {
@@ -29,9 +26,7 @@ export function mapOptionIdsToIndices(poll, selectedOptionIds) {
     
     // Store the mapping (convert to 1-based index for contract)
     optionIndexMap[option.id] = index + 1;
-    
-    // Debug output for each option
-    console.log(`[Mapping Debug] Option "${option.text}" (ID: ${option.id}) → Index: ${index + 1}`);
+  
   });
   
   // Map selected IDs to indices
@@ -45,13 +40,6 @@ export function mapOptionIdsToIndices(poll, selectedOptionIds) {
     
     return index;
   }).filter(index => index !== null);
-  
-  // Log the mapping results
-  console.log("[Mapping Debug] Selection mapping results:", {
-    selectedIds: selectedOptionIds,
-    mappedIndices: mappedIndices
-  });
-  
   return mappedIndices;
 }
 
@@ -82,13 +70,7 @@ export function mapIndicesToOptionIds(poll, optionIndices) {
     const option = poll.options[arrayIndex];
     return option.id;
   }).filter(id => id !== null);
-  
-  // Log the mapping results
-  console.log("[Mapping Debug] Index to ID mapping results:", {
-    indices: optionIndices,
-    mappedIds: mappedIds
-  });
-  
+
   return mappedIds;
 }
 
@@ -96,40 +78,26 @@ export function mapIndicesToOptionIds(poll, optionIndices) {
  * Diagnostic function to verify option mappings
  */
 export function verifyOptionMappings(polls, selections) {
-  console.group("🔍 Option Mapping Verification");
   
   polls.forEach((poll, pollIdx) => {
-    console.group(`Poll ${pollIdx + 1}: "${poll.title}"`);
     
-    // Log all options in this poll
-    console.log("Options:");
     poll.options.forEach((option, optIdx) => {
-      console.log(`  ${optIdx + 1}. ID: ${option.id}, Text: "${option.text}"`);
     });
     
     // Log selections for this poll
     const selectedIds = selections[poll.id] || [];
-    console.log("User selections:");
     if (selectedIds.length === 0) {
-      console.log("  None");
     } else {
       selectedIds.forEach(id => {
         const option = poll.options.find(opt => opt.id === id);
         if (option) {
           const index = poll.options.indexOf(option) + 1;
-          console.log(`  Selected: "${option.text}" (ID: ${id}, Index: ${index})`);
         } else {
           console.error(`  ERROR: Selected ID ${id} not found in poll options`);
         }
       });
     }
-    
-    // Calculate expected blockchain indices
-    const expectedIndices = mapOptionIdsToIndices(poll, selectedIds);
-    console.log("Mapped indices (will be sent to blockchain):", expectedIndices);
-    
-    console.groupEnd();
+
   });
   
-  console.groupEnd();
 }
