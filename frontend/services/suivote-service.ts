@@ -450,8 +450,27 @@ export class SuiVoteService {
       // This is a fallback using polling until the new streaming API is available
       const intervalId = setInterval(async () => {
         try {
+          // Get the vote details
           const voteDetails = await this.getVoteDetails(voteId)
           if (voteDetails) {
+            // Get polls and options data to ensure we have the latest vote counts
+            try {
+              // Get polls for the vote
+              const pollsData = await this.getVotePolls(voteId)
+              
+              // Fetch options for each poll to get the latest vote counts
+              await Promise.all(
+                pollsData.map(async (poll, index) => {
+                  // Get options for this poll (index + 1 because poll indices are 1-based)
+                  await this.getPollOptions(voteId, index + 1)
+                })
+              )
+            } catch (pollError) {
+              console.error(`Error fetching poll data during subscription update for ${voteId}:`, pollError)
+              // Continue with the vote details update even if poll data fetch fails
+            }
+            
+            // Update with the latest vote details
             onUpdate(voteDetails)
           }
         } catch (error) {
