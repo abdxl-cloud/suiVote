@@ -349,13 +349,43 @@ export default function VotePage() {
     // Set up real-time updates subscription if we have a vote ID
     if (params.id) {
       // Subscribe to vote updates
-      const unsubscribe = suivote.subscribeToVoteUpdates(params.id as string, (updatedVoteDetails) => {
+      const unsubscribe = suivote.subscribeToVoteUpdates(params.id as string, async (updatedVoteDetails) => {
         // Update the vote state with the latest data
         setVote(updatedVoteDetails)
         
         // If showing results, update the UI accordingly
         if (showingResults || (updatedVoteDetails.showLiveStats)) {
           setShowingResults(true)
+          
+          try {
+            // Get polls for the vote to update the UI with latest vote counts
+            const pollsData = await suivote.getVotePolls(params.id as string)
+            
+            // Fetch options for each poll
+            const pollsWithOptions = await Promise.all(
+              pollsData.map(async (poll, index) => {
+                // Get options for this poll (index + 1 because poll indices are 1-based)
+                const options = await suivote.getPollOptions(params.id as string, index + 1)
+                
+                // Calculate percentage for each option based on votes
+                const totalVotesForPoll = options.reduce((sum, option) => sum + option.votes, 0)
+                const optionsWithPercentage = options.map(option => ({
+                  ...option,
+                  percentage: totalVotesForPoll > 0 ? (option.votes / totalVotesForPoll) * 100 : 0
+                }))
+                
+                return {
+                  ...poll,
+                  options: optionsWithPercentage || []
+                }
+              })
+            )
+            
+            // Update the polls state with the latest data
+            setPolls(pollsWithOptions || [])
+          } catch (error) {
+            console.error("Error updating polls data:", error)
+          }
         }
       })
       
@@ -807,8 +837,9 @@ export default function VotePage() {
         if (vote?.showLiveStats) {
           // If live stats are enabled, just show results on this page
           setShowingResults(true);
-          // No need to manually call fetchVoteData() as the subscription will update the UI
-          // The subscription will automatically refresh the data with the latest results
+          // Explicitly fetch vote data to update the UI with the latest results
+          fetchVoteData();
+          // The subscription will continue to update the UI with subsequent changes
         } else {
           // Otherwise redirect to success page
           router.push(`/vote/${params.id}/success?digest=${response.digest}`);
