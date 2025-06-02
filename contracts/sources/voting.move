@@ -12,7 +12,7 @@ module contracts::voting {
     use std::string::{Self, String};
 
     // ===== Constants =====
-    const SUI_DECIMALS: u64 = 1_000_000_000; // 1 SUI = 10^9 MIST
+    // SUI_DECIMALS constant removed - payment amounts are now handled in MIST directly
     const CURRENT_VERSION: u64 = 1; // Contract version for upgrade management
 
     // ===== Error codes =====
@@ -27,7 +27,6 @@ module contracts::voting {
     const EPollNotFound: u64 = 10;
     const EInvalidSelection: u64 = 11;
     const EInvalidPollCount: u64 = 12;
-    const EInvalidOptionCount: u64 = 13;
     const EInvalidInputLength: u64 = 14;
     const ENotWhitelisted: u64 = 15;
     const EInvalidTokenWeightRatio: u64 = 16;
@@ -230,12 +229,8 @@ module contracts::voting {
             tokens_per_vote = 0;
         };
 
-        // Convert payment_amount from SUI to MIST for internal storage
-        let payment_in_mist = if (payment_amount > 0) {
-            payment_amount * SUI_DECIMALS
-        } else {
-            0
-        };
+        // payment_amount is now expected to be in MIST directly
+        let payment_in_mist = payment_amount;
 
         // Create the vote object with whitelist setting and version
         let mut vote = Vote {
@@ -631,12 +626,8 @@ module contracts::voting {
             tokens_per_vote = 0;
         };
 
-        // Convert payment_amount from SUI to MIST for internal storage
-        let payment_in_mist = if (payment_amount > 0) {
-            payment_amount * SUI_DECIMALS
-        } else {
-            0
-        };
+        // payment_amount is now expected to be in MIST directly
+        let payment_in_mist = payment_amount;
 
         // Create the vote object with token weighting fields and whitelist setting
         let mut vote = Vote {

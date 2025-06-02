@@ -62,7 +62,7 @@ import { isAfter, addDays } from "date-fns"
 import { motion, AnimatePresence } from "framer-motion"
 import { cn } from "@/lib/utils"
 import Link from "next/link"
-import { useWallet } from "@suiet/wallet-kit"
+import { useWallet } from "@/contexts/wallet-context"
 import { useSuiVote } from "@/hooks/use-suivote"
 import { SUI_CONFIG } from "@/config/sui-config"
 import { Progress } from "@/components/ui/progress"
@@ -229,6 +229,7 @@ export default function CreateVotePage() {
   });
 
   const [errors, setErrors] = useState<ValidationErrors>({})
+  const [submitting, setSubmitting] = useState(false)
   const [activeTab, setActiveTab] = useState("details")
   const [activePollIndex, setActivePollIndex] = useState(0)
   const [showLiveStats, setShowLiveStats] = useState(false)
@@ -239,6 +240,7 @@ export default function CreateVotePage() {
   const [txDigest, setTxDigest] = useState<string | null>(null)
   const [txStatusDialogOpen, setTxStatusDialogOpen] = useState(false)
   const [txProgress, setTxProgress] = useState(0)
+  const [failedStep, setFailedStep] = useState<TransactionStatus | undefined>(undefined)
 
   // New state for environment variable checks
   const [envVarsChecked, setEnvVarsChecked] = useState(false)
@@ -1213,170 +1215,334 @@ const preparePollDataForSubmission = () => {
     }
   }
 
-  // Update your handleSubmit function to use the media handler
+  // Enhanced form validation with better error handling
+  const validateFormSection = (section: string) => {
+    const errors: any = {}
+    
+    switch (section) {
+      case 'details':
+        if (!voteTitle.trim()) {
+          errors.title = 'Vote title is required'
+        } else if (voteTitle.length < 3) {
+          errors.title = 'Vote title must be at least 3 characters'
+        } else if (voteTitle.length > 100) {
+          errors.title = 'Vote title must be less than 100 characters'
+        }
+        
+        if (!voteDescription.trim()) {
+          errors.description = 'Vote description is required'
+        } else if (voteDescription.length < 10) {
+          errors.description = 'Vote description must be at least 10 characters'
+        } else if (voteDescription.length > 1000) {
+          errors.description = 'Vote description must be less than 1000 characters'
+        }
+        break
+        
+      case 'polls':
+        if (polls.length === 0) {
+          errors.polls = 'At least one poll is required'
+        }
+        
+        polls.forEach((poll, pollIndex) => {
+          if (!poll.question.trim()) {
+            errors[`poll_${pollIndex}_question`] = `Poll ${pollIndex + 1} question is required`
+          }
+          
+          if (poll.options.length < 2) {
+            errors[`poll_${pollIndex}_options`] = `Poll ${pollIndex + 1} must have at least 2 options`
+          }
+          
+          poll.options.forEach((option, optionIndex) => {
+            if (!option.text.trim()) {
+              errors[`poll_${pollIndex}_option_${optionIndex}`] = `Option ${optionIndex + 1} text is required`
+            }
+          })
+        })
+        break
+        
+      case 'settings':
+        if (!votingSettings.startDate) {
+          errors.startDate = 'Start date is required'
+        }
+        
+        if (!votingSettings.endDate) {
+          errors.endDate = 'End date is required'
+        }
+        
+        if (votingSettings.startDate && votingSettings.endDate) {
+          if (votingSettings.endDate <= votingSettings.startDate) {
+            errors.endDate = 'End date must be after start date'
+          }
+        }
+        break
+    }
+    
+    return errors
+  }
+
+  // Enhanced comprehensive form validation
+  const validateCompleteForm = () => {
+    const detailsErrors = validateFormSection('details')
+    const pollsErrors = validateFormSection('polls')
+    const settingsErrors = validateFormSection('settings')
+    
+    const allErrors = { ...detailsErrors, ...pollsErrors, ...settingsErrors }
+    setValidationErrors(allErrors)
+    
+    return Object.keys(allErrors).length === 0
+  }
+
+  // Enhanced vote creation submission with comprehensive validation
   const handleSubmit = async (mediaHandlers: any) => {
     try {
       const now = new Date();
       let datesUpdated = false;
       
-      // Validate all form sections before proceeding
-      const detailsComplete = isSectionComplete("details");
-      const pollsComplete = isSectionComplete("polls");
-      const settingsComplete = isSectionComplete("settings");
+      // STEP 1: Pre-flight validation checks
+      setSubmitting(true);
       
-      if (!detailsComplete || !pollsComplete || !settingsComplete) {
-        // Validate to show all errors
-        if (!validateForm()) {
-          // Scroll to the error alert if present
-          setTimeout(() => {
-            const errorAlert = document.querySelector('[role="alert"]')
-            if (errorAlert) {
-              errorAlert.scrollIntoView({ behavior: "smooth", block: "center" })
-            }
-          }, 100);
-          toast.error("Please fix all validation errors before submitting", {
-            description: "Ensure all required fields are filled correctly",
-            icon: <AlertCircle className="h-4 w-4" />,
-            duration: 8000
-          });
-          return;
+      // Validate form completeness
+      if (!validateForm(true)) {
+        setSubmitting(false);
+        return;
+      }
+      
+      // Check for required fields with detailed feedback
+      const missingFields = [];
+      if (!voteTitle.trim()) missingFields.push('Vote title');
+      if (polls.length === 0) missingFields.push('At least one poll');
+      if (!votingSettings.startDate) missingFields.push('Start date');
+      if (!votingSettings.endDate) missingFields.push('End date');
+      
+      if (missingFields.length > 0) {
+        toast.error('Missing required fields', {
+          description: `Please provide: ${missingFields.join(', ')}`,
+          icon: <AlertCircle className="h-4 w-4" />,
+          duration: 6000
+        });
+        setSubmitting(false);
+        return;
+      }
+      
+      // STEP 2: Validate poll structure and data
+      const pollValidationErrors = [];
+      polls.forEach((poll, index) => {
+        if (!poll.title.trim()) {
+          pollValidationErrors.push(`Poll ${index + 1}: Missing title`);
         }
+        if (poll.options.length < 2) {
+          pollValidationErrors.push(`Poll ${index + 1}: Needs at least 2 options`);
+        }
+        const emptyOptions = poll.options.filter(opt => !opt.text.trim()).length;
+        if (emptyOptions > 0) {
+          pollValidationErrors.push(`Poll ${index + 1}: ${emptyOptions} empty option(s)`);
+        }
+      });
+      
+      if (pollValidationErrors.length > 0) {
+        toast.error('Poll validation failed', {
+          description: pollValidationErrors.slice(0, 3).join('; ') + (pollValidationErrors.length > 3 ? '...' : ''),
+          icon: <AlertCircle className="h-4 w-4" />,
+          duration: 8000
+        });
+        setSubmitting(false);
+        return;
       }
       
-      if (!validatePollOrder()) {
-        toast.error("Please fix poll validation errors before submitting", {
-          icon: <AlertCircle className="h-4 w-4" />
-        })
-        return
-      }
+      // STEP 3: Date validation and auto-correction
+      const minStartTime = new Date(now.getTime() + 5 * 60 * 1000); // 5 minutes from now
       
-      // Prepare poll data with proper ordering
-      const pollData = preparePollDataForSubmission()
-
-      // Check if startDate is not set or is in the past
-      if (!votingSettings.startDate || votingSettings.startDate < now) {
+      if (!votingSettings.startDate || votingSettings.startDate < minStartTime) {
         const newStartDate = new Date(now.getTime() + 10 * 60 * 1000);
         setVotingSettings(prev => ({
           ...prev,
           startDate: newStartDate
         }));
-        setStartDate(newStartDate);
         datesUpdated = true;
 
-        // Also update endDate if necessary
+        // Auto-adjust end date if needed
         if (!votingSettings.endDate || !isAfter(votingSettings.endDate, newStartDate)) {
           const newEndDate = new Date(newStartDate.getTime() + 7 * 24 * 60 * 60 * 1000);
           setVotingSettings(prev => ({
             ...prev,
             endDate: newEndDate
           }));
-          setEndDate(newEndDate);
         }
       }
 
-      // If dates were auto-updated, notify the user
       if (datesUpdated) {
-        toast.info("Voting dates updated", {
-          description: "Start and end dates have been automatically adjusted to ensure they are in the future.",
-          icon: <Info className="h-4 w-4" />,
-          duration: 5000
+        toast.info('Voting schedule adjusted', {
+          description: 'Start time has been set to ensure proper blockchain processing time.',
+          icon: <Clock className="h-4 w-4" />,
+          duration: 4000
         });
       }
 
+      // STEP 4: Wallet and network validation
       if (!wallet.connected) {
-        toast.error("Wallet not connected", {
-          description: "Please connect your wallet to create a vote",
+        toast.error('Wallet connection required', {
+          description: 'Please connect your wallet to create and publish the vote',
           icon: <Wallet className="h-4 w-4" />,
-          duration: 5000
+          duration: 6000
         });
+        setSubmitting(false);
         return;
       }
 
-      // Reset states
+      // STEP 5: Initialize transaction process
       setTransactionError(null);
       setTxStatus(TransactionStatus.BUILDING);
       setTxStatusDialogOpen(true);
+      setTxProgress(10);
 
-      
+      toast.info('Preparing vote transaction', {
+        description: 'Building transaction data and validating parameters...',
+        duration: 3000
+      });
 
-      // Create the combined transaction
-      setTxStatus(TransactionStatus.BUILDING);
-
+      // STEP 6: Prepare transaction data
       const whitelistAddressesToSend = votingSettings.enableWhitelist
-        ? votingSettings.whitelistAddresses
+        ? votingSettings.whitelistAddresses.filter(addr => addr.trim())
         : [];
 
-      // Create the transaction with corrected whitelist handling
-      const transaction = await mediaHandlers.createVoteWithMedia({
-        voteTitle,
-        voteDescription,
-        startDate: votingSettings.startDate,
-        endDate: votingSettings.endDate,
-        requiredToken: votingSettings.requiredToken !== "none" ? votingSettings.requiredToken : "",
-        requiredAmount: votingSettings.requiredAmount || "0",
-        paymentAmount: votingSettings.paymentAmount || "0",
-        requireAllPolls: votingSettings.requireAllPolls,
-        showLiveStats: votingSettings.showLiveStats || false,
-        isTokenWeighted: votingSettings.isTokenWeighted && votingSettings.requiredToken !== "none",
-        tokenWeight: votingSettings.isTokenWeighted ? votingSettings.tokenWeight : "1",
-        enableWhitelist: votingSettings.enableWhitelist,
-        whitelistAddresses: whitelistAddressesToSend, // Use the filtered addresses
-        polls: pollData,
-        onSuccess: (voteId) => {
-          console.log("Vote created successfully with ID:", voteId);
-        }
+      const pollData = polls.map((poll, index) => ({
+        ...poll,
+        order: index,
+        options: poll.options.map((option, optIndex) => ({
+          ...option,
+          order: optIndex
+        }))
+      }));
+
+      setTxProgress(30);
+      setTxStatus(TransactionStatus.BUILDING);
+
+      // STEP 7: Create transaction with media handling
+      let transaction;
+      try {
+        transaction = await mediaHandlers.createVoteWithMedia({
+          voteTitle: voteTitle.trim(),
+          voteDescription: voteDescription.trim(),
+          startDate: votingSettings.startDate,
+          endDate: votingSettings.endDate,
+          requiredToken: votingSettings.requiredToken !== "none" ? votingSettings.requiredToken : "",
+          requiredAmount: votingSettings.requiredAmount || "0",
+          paymentAmount: votingSettings.paymentAmount || "0",
+          requireAllPolls: votingSettings.requireAllPolls,
+          showLiveStats: votingSettings.showLiveStats || false,
+          isTokenWeighted: votingSettings.isTokenWeighted && votingSettings.requiredToken !== "none",
+          tokenWeight: votingSettings.isTokenWeighted ? votingSettings.tokenWeight : "1",
+          enableWhitelist: votingSettings.enableWhitelist,
+          whitelistAddresses: whitelistAddressesToSend,
+          polls: pollData
+        });
+      } catch (buildError) {
+        setFailedStep(TransactionStatus.BUILDING);
+        throw buildError;
+      }
+
+      setTxProgress(50);
+      setTxStatus(TransactionStatus.SIGNING);
+      
+      toast.success('Transaction ready for signing', {
+        description: 'Please approve the transaction in your wallet',
+        duration: 3000
       });
 
-      console.log("Transaction prepared successfully, executing transaction...");
-      setTxStatus(TransactionStatus.SIGNING);
-
-      // Execute the transaction
-      const result = await transaction.execute();
-
-      console.log("Transaction executed successfully:", result);
+      // STEP 8: Execute transaction
+      let result;
+      try {
+        result = await transaction.execute();
+      } catch (signingError) {
+        setFailedStep(TransactionStatus.SIGNING);
+        throw signingError;
+      }
+      
+      setTxProgress(80);
       setTxStatus(TransactionStatus.EXECUTING);
       setTxDigest(result.digest);
-
-      // Wait for confirmation (simulate with timeout in this example)
-      setTxStatus(TransactionStatus.CONFIRMING);
-
-      // Simulate waiting for confirmation
-      await new Promise((resolve) => setTimeout(resolve, 2000));
-
-      // Transaction confirmed
-      setTxStatus(TransactionStatus.SUCCESS);
-
-      // Show success message
-      toast.success("Vote created successfully!", {
-        description: "Your vote has been published to the blockchain",
-        icon: <Check className="h-4 w-4" />,
-        duration: 8000
+      
+      toast.success('Transaction submitted', {
+        description: 'Waiting for blockchain confirmation...',
+        duration: 3000
       });
 
-      // Clear saved form data on successful vote creation
+      // STEP 9: Wait for confirmation
+      setTxStatus(TransactionStatus.CONFIRMING);
+      setTxProgress(90);
+      
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+      } catch (confirmError) {
+        setFailedStep(TransactionStatus.CONFIRMING);
+        throw confirmError;
+      }
+
+      // STEP 10: Success handling
+      setTxStatus(TransactionStatus.SUCCESS);
+      setTxProgress(100);
+
+      toast.success('Vote created successfully!', {
+        description: 'Your vote has been published to the blockchain and is now live',
+        icon: <Check className="h-4 w-4" />,
+        duration: 6000
+      });
+
+      // Clear form data and prepare for redirect
       if (typeof window !== 'undefined') {
         localStorage.removeItem('voteFormData');
       }
       
-      // Wait a moment to show the success state before redirecting
       setTimeout(() => {
         // Navigate to success page with vote data
         router.push(`/success?digest=${result.digest}${result.voteId ? `&voteId=${result.voteId}` : ''}`);
       }, 1500);
     } catch (err) {
-      console.error("Error creating vote:", err);
-
-      // Extract error message
-      const errorMessage = err instanceof Error ? err.message : "An unknown error occurred while creating the vote";
-
-      setTransactionError(errorMessage);
+      console.error('Vote creation failed:', err);
+      
       setTxStatus(TransactionStatus.ERROR);
-
-      toast.error("Failed to create vote", {
-        description: errorMessage,
+      setSubmitting(false);
+      
+      // Determine error type and provide specific guidance
+      let errorTitle = 'Failed to create vote';
+      let errorDescription = 'Please try again or contact support if the issue persists';
+      
+      if (err instanceof Error) {
+        const errorMsg = err.message.toLowerCase();
+        
+        if (errorMsg.includes('user rejected') || errorMsg.includes('rejected')) {
+          errorTitle = 'Transaction cancelled';
+          errorDescription = 'You cancelled the transaction in your wallet. You can try again when ready.';
+        } else if (errorMsg.includes('insufficient')) {
+          errorTitle = 'Insufficient funds';
+          errorDescription = 'You need more SUI tokens to pay for transaction fees. Please add funds to your wallet.';
+        } else if (errorMsg.includes('network') || errorMsg.includes('connection')) {
+          errorTitle = 'Network error';
+          errorDescription = 'Please check your internet connection and try again.';
+        } else if (errorMsg.includes('timeout')) {
+          errorTitle = 'Transaction timeout';
+          errorDescription = 'The transaction took too long to process. Please try again.';
+        } else if (errorMsg.includes('wallet')) {
+          errorTitle = 'Wallet error';
+          errorDescription = 'There was an issue with your wallet connection. Please reconnect and try again.';
+        } else {
+          errorDescription = err.message;
+        }
+      }
+      
+      setTransactionError(errorTitle);
+      
+      toast.error(errorTitle, {
+        description: errorDescription,
         icon: <AlertCircle className="h-4 w-4" />,
-        duration: 10000
+        duration: 8000,
+        action: errorTitle === 'Transaction cancelled' ? {
+          label: 'Try Again',
+          onClick: () => handleSubmit(mediaHandlers)
+        } : undefined
       });
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -1406,36 +1572,49 @@ const preparePollDataForSubmission = () => {
   return (
     <VoteMediaHandler>
       {(mediaHandlers) => (
-        <motion.div initial="hidden" animate="visible" variants={fadeIn} className="container max-w-7xl py-6 px-4 md:px-6">
-          {/* Header */}
+        <motion.div initial="hidden" animate="visible" variants={fadeIn} className="container max-w-7xl py-4 sm:py-6 lg:py-8 px-3 sm:px-4 lg:px-6">
+          {/* Enhanced Responsive Header */}
           <motion.div
             initial={{ opacity: 0, y: -10 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.4 }}
-            className="bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 border-b mb-6 -mx-4 px-4 py-3"
+            className="bg-gradient-to-r from-background/95 via-background/98 to-background/95 backdrop-blur-xl supports-[backdrop-filter]:bg-background/80 border border-border/50 rounded-xl sm:rounded-2xl shadow-lg mb-6 sm:mb-8 p-4 sm:p-6"
           >
-            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+            <div className="flex flex-col gap-4 sm:gap-6">
               <div className="flex-1">
-                <h1 className="text-2xl font-bold tracking-tight truncate">{voteTitle ? voteTitle : "Create New Vote"}</h1>
+                <div className="flex items-start sm:items-center gap-3 mb-3">
+                  <div className="p-2 sm:p-3 rounded-lg sm:rounded-xl bg-gradient-to-br from-primary/20 to-blue-500/10 flex-shrink-0">
+                    <PlusCircle className="h-5 w-5 sm:h-6 sm:w-6 text-primary" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <h1 className="text-xl sm:text-2xl lg:text-3xl xl:text-4xl font-bold bg-gradient-to-r from-foreground via-primary to-foreground bg-clip-text text-transparent leading-tight">
+                      {voteTitle ? voteTitle : "Create New Vote"}
+                    </h1>
+                    <p className="text-muted-foreground mt-1 text-sm sm:text-base lg:text-lg">
+                      Build transparent and secure voting experiences
+                    </p>
+                  </div>
+                </div>
               </div>
-              <div className="flex items-center gap-2 w-full sm:w-auto">
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full">
                 <Button
                   variant="outline"
-                  size="sm"
+                  size="default"
                   onClick={clearSavedData}
-                  className="w-full sm:w-auto sm:text-base sm:px-6 sm:py-2 sm:h-10 transition-all hover:scale-105"
+                  className="flex-1 sm:flex-none gap-2 hover:bg-destructive/5 hover:border-destructive/20 hover:text-destructive transition-all duration-300 min-w-0"
                   title="Clear all saved data and start fresh"
                 >
-                  <Trash2 className="h-4 w-4 mr-2" />
-                  Reset
+                  <Trash2 className="h-4 w-4 flex-shrink-0" />
+                  <span className="truncate">Reset</span>
                 </Button>
-                <Link href="/polls" className="w-full sm:w-auto">
+                <Link href="/dashboard" className="flex-1 sm:flex-none">
                   <Button
                     variant="outline"
-                    size="sm"
-                    className="w-full sm:w-auto sm:text-base sm:px-6 sm:py-2 sm:h-10 transition-all hover:scale-105"
+                    size="default"
+                    className="w-full gap-2 hover:bg-muted/50 transition-all duration-300 min-w-0"
                   >
-                    Cancel
+                    <ChevronLeft className="h-4 w-4 flex-shrink-0" />
+                    <span className="truncate">Back to Dashboard</span>
                   </Button>
                 </Link>
               </div>
@@ -1478,44 +1657,53 @@ const preparePollDataForSubmission = () => {
           </AnimatePresence>
 
           <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
-            {/* Sticky tab navigation - visible on all screen sizes */}
+            {/* Enhanced Responsive Sticky Tab Navigation */}
             <motion.div
               initial={{ opacity: 0, y: -5 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.3, delay: 0.1 }}
-              className="sticky top-14 md:top-16 z-30 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 border-b mb-6 -mx-4 px-4 py-3"
+              className="sticky top-14 md:top-16 z-30 bg-gradient-to-r from-background/95 via-background/98 to-background/95 backdrop-blur-xl supports-[backdrop-filter]:bg-background/80 border border-border/50 rounded-xl sm:rounded-2xl shadow-lg mb-6 sm:mb-8 p-3 sm:p-4"
             >
-              <TabsList className="grid grid-cols-3 w-full">
+              <TabsList className="grid grid-cols-3 w-full bg-muted/30 p-1 rounded-lg sm:rounded-xl">
                 <TabsTrigger
                   value="details"
-                  className="flex items-center gap-2 transition-all data-[state=active]:scale-105"
+                  className="flex items-center justify-center gap-1 sm:gap-2 transition-all duration-300 data-[state=active]:bg-background data-[state=active]:shadow-md data-[state=active]:scale-105 rounded-md sm:rounded-lg py-2 sm:py-3 px-2 sm:px-3 min-w-0"
                 >
-                  <FileText className="h-4 w-4" />
-                  <span className="hidden sm:inline">Details</span>
-                  <span className="sm:hidden">Details</span>
+                  <FileText className="h-3.5 w-3.5 sm:h-4 sm:w-4 flex-shrink-0" />
+                  <span className="font-medium text-xs sm:text-sm truncate">Details</span>
+                  {isSectionComplete("details") && (
+                    <Check className="h-2.5 w-2.5 sm:h-3 sm:w-3 text-green-600 flex-shrink-0" />
+                  )}
                 </TabsTrigger>
-                <TabsTrigger value="polls" className="flex items-center gap-2 transition-all data-[state=active]:scale-105">
-                  <ListChecks className="h-4 w-4" />
-                  <span className="hidden sm:inline">Polls</span>
-                  <span className="sm:hidden">Polls</span>
+                <TabsTrigger 
+                  value="polls" 
+                  className="flex items-center justify-center gap-1 sm:gap-2 transition-all duration-300 data-[state=active]:bg-background data-[state=active]:shadow-md data-[state=active]:scale-105 rounded-md sm:rounded-lg py-2 sm:py-3 px-2 sm:px-3 min-w-0"
+                >
+                  <ListChecks className="h-3.5 w-3.5 sm:h-4 sm:w-4 flex-shrink-0" />
+                  <span className="font-medium text-xs sm:text-sm truncate">Polls</span>
+                  {isSectionComplete("polls") && (
+                    <Check className="h-2.5 w-2.5 sm:h-3 sm:w-3 text-green-600 flex-shrink-0" />
+                  )}
                 </TabsTrigger>
                 <TabsTrigger
                   value="settings"
-                  className="flex items-center gap-2 transition-all data-[state=active]:scale-105"
+                  className="flex items-center justify-center gap-1 sm:gap-2 transition-all duration-300 data-[state=active]:bg-background data-[state=active]:shadow-md data-[state=active]:scale-105 rounded-md sm:rounded-lg py-2 sm:py-3 px-2 sm:px-3 min-w-0"
                 >
-                  <Settings className="h-4 w-4" />
-                  <span className="hidden sm:inline">Settings</span>
-                  <span className="sm:hidden">Settings</span>
+                  <Settings className="h-3.5 w-3.5 sm:h-4 sm:w-4 flex-shrink-0" />
+                  <span className="font-medium text-xs sm:text-sm truncate">Settings</span>
+                  {isSectionComplete("settings") && (
+                    <Check className="h-2.5 w-2.5 sm:h-3 sm:w-3 text-green-600 flex-shrink-0" />
+                  )}
                 </TabsTrigger>
               </TabsList>
             </motion.div>
 
-            <div className="flex flex-col md:flex-row gap-6">
-              {/* Sidebar */}
-              <motion.div variants={slideUp} className="w-full md:w-64 lg:w-72 flex-shrink-0">
-                <div className="md:sticky md:top-32">
-                  <Card className="transition-all hover:shadow-md">
-                    <CardContent className="p-4">
+            <div className="flex flex-col lg:flex-row gap-4 sm:gap-6">
+              {/* Enhanced Responsive Sidebar */}
+              <motion.div variants={slideUp} className="w-full lg:w-64 xl:w-72 flex-shrink-0 order-2 lg:order-1">
+                <div className="lg:sticky lg:top-32">
+                  <Card className="border-0 bg-gradient-to-br from-background/80 to-muted/10 backdrop-blur-sm shadow-lg hover:shadow-xl transition-all duration-500">
+                    <CardContent className="p-4 sm:p-6">
                       {activeTab === "polls" && (
                         <div className="mt-4 space-y-1">
                           <div className="flex items-center justify-between mb-2">
@@ -1570,34 +1758,53 @@ const preparePollDataForSubmission = () => {
                         </div>
                       )}
 
-                      {/* Progress indicator */}
-                      <div className="mt-6 space-y-2">
-                        <div className="flex justify-between text-xs text-muted-foreground">
-                          <span>Progress</span>
-                          <span>{activeTab === "details" ? "1" : activeTab === "polls" ? "2" : "3"}/3</span>
+                      {/* Enhanced Progress indicator */}
+                      <div className="mt-8 space-y-4">
+                        <div className="flex justify-between text-sm font-medium">
+                          <span className="text-foreground">Progress</span>
+                          <span className="text-primary">{activeTab === "details" ? "1" : activeTab === "polls" ? "2" : "3"}/3</span>
                         </div>
-                        <div className="w-full bg-muted h-1.5 rounded-full overflow-hidden">
+                        <div className="w-full bg-muted/50 h-2 rounded-full overflow-hidden">
                           <motion.div
                             initial={{ width: activeTab === "details" ? "33%" : activeTab === "polls" ? "66%" : "100%" }}
                             animate={{ width: activeTab === "details" ? "33%" : activeTab === "polls" ? "66%" : "100%" }}
-                            transition={{ duration: 0.5 }}
-                            className="bg-primary h-full"
+                            transition={{ duration: 0.5, ease: "easeInOut" }}
+                            className="bg-gradient-to-r from-primary to-blue-500 h-full rounded-full shadow-sm"
                           ></motion.div>
+                        </div>
+                        <div className="grid grid-cols-3 gap-2 text-xs">
+                          <div className={`text-center p-2 rounded-lg transition-all duration-300 ${
+                            activeTab === "details" ? "bg-primary/10 text-primary font-medium" : "text-muted-foreground"
+                          }`}>
+                            Details
+                          </div>
+                          <div className={`text-center p-2 rounded-lg transition-all duration-300 ${
+                            activeTab === "polls" ? "bg-primary/10 text-primary font-medium" : "text-muted-foreground"
+                          }`}>
+                            Polls
+                          </div>
+                          <div className={`text-center p-2 rounded-lg transition-all duration-300 ${
+                            activeTab === "settings" ? "bg-primary/10 text-primary font-medium" : "text-muted-foreground"
+                          }`}>
+                            Settings
+                          </div>
                         </div>
                       </div>
 
-                      {/* Quick tips */}
-                      <div className="mt-6 p-3 bg-muted/30 rounded-lg">
-                        <h3 className="text-sm font-medium mb-2 flex items-center gap-1.5">
-                          <Info className="h-3.5 w-3.5 text-primary" />
-                          Tips
+                      {/* Enhanced Quick tips */}
+                      <div className="mt-8 p-4 bg-gradient-to-br from-primary/5 to-blue-500/5 rounded-xl border border-primary/10">
+                        <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
+                          <div className="p-1.5 rounded-lg bg-primary/10">
+                            <Info className="h-4 w-4 text-primary" />
+                          </div>
+                          Quick Tips
                         </h3>
-                        <ul className="text-xs space-y-2 text-muted-foreground">
-                          <li className="flex gap-2">
-                            <div className="h-3.5 w-3.5 rounded-full bg-green-500 flex items-center justify-center flex-shrink-0 mt-0.5">
-                              <Check className="h-2.5 w-2.5 text-white" />
+                        <ul className="text-sm space-y-3 text-muted-foreground">
+                          <li className="flex gap-3">
+                            <div className="h-5 w-5 rounded-full bg-green-500 flex items-center justify-center flex-shrink-0 mt-0.5">
+                              <Check className="h-3 w-3 text-white" />
                             </div>
-                            <span>Keep poll questions clear and concise</span>
+                            <span className="leading-relaxed">Keep poll questions clear and concise</span>
                           </li>
                           <li className="flex gap-2">
                             <div className="h-3.5 w-3.5 rounded-full bg-green-500 flex items-center justify-center flex-shrink-0 mt-0.5">
@@ -1663,12 +1870,12 @@ const preparePollDataForSubmission = () => {
                 </div>
               </motion.div>
 
-              {/* Main content area */}
-              <motion.div variants={slideUp} className="flex-1">
+              {/* Enhanced Responsive Main Content Area */}
+              <motion.div variants={slideUp} className="flex-1 order-1 lg:order-2 min-w-0">
                 <TabsContent value="details" className="mt-0">
                   <Card className="transition-all hover:shadow-md">
-                    <CardHeader>
-                      <CardTitle className="text-2xl">Vote Details</CardTitle>
+                    <CardHeader className="p-4 sm:p-6">
+                      <CardTitle className="text-xl sm:text-2xl">Vote Details</CardTitle>
                       <CardDescription>Create a new vote with multiple polls</CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-6">
@@ -2419,9 +2626,11 @@ const preparePollDataForSubmission = () => {
             txStatus={txStatus}
             txDigest={txDigest}
             transactionError={transactionError}
+            failedStep={failedStep}
             onRetry={() => {
               setTxStatusDialogOpen(false)
               setTxStatus(TransactionStatus.IDLE)
+              setFailedStep(undefined)
             }}
             onSuccess={() => router.push(`/success?digest=${txDigest}`)}
             onClose={() => setTxStatusDialogOpen(false)}

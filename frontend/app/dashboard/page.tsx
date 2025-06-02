@@ -43,7 +43,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert"
 import { motion, AnimatePresence } from "framer-motion"
 import Link from "next/link"
 import { useSuiVote } from "@/hooks/use-suivote"
-import { useWallet } from "@suiet/wallet-kit"
+import { useWallet } from "@/contexts/wallet-context"
 import { formatDistanceToNow, format, subDays, differenceInDays, addDays } from "date-fns"
 import { Progress } from "@/components/ui/progress"
 import { Separator } from "@/components/ui/separator"
@@ -104,16 +104,52 @@ export default function DashboardPage() {
           
           // Set up real-time updates for each vote
           const unsubscribers = data.map((vote) => {
-            // Only subscribe to active votes or votes with live stats enabled
-            if (vote.status === "active" || vote.showLiveStats) {
-              return subscribeToVoteUpdates(vote.id, (updatedVote) => {
-                // Update the specific vote in the votes array
-                setVotes(prevVotes => 
-                  prevVotes.map(v => v.id === updatedVote.id ? { ...v, ...updatedVote } : v)
-                )
-              })
-            }
-            return () => {}
+            return subscribeToVoteUpdates(vote.id, (updatedVoteDetails) => {
+              // Update the specific vote in the votes array
+              setVotes(prevVotes => 
+                prevVotes.map(v => {
+                  if (v.id === updatedVoteDetails.id) {
+                    // Determine the correct status based on the update
+                    let finalStatus = v.status;
+                    
+                    // Handle status transitions based on current state and updates
+                    if (updatedVoteDetails.status === "voted") {
+                      // If the service detected the user has voted, always use "voted"
+                      finalStatus = "voted";
+                    } else if (v.status === "voted") {
+                      // Once voted, status should never change back
+                      finalStatus = "voted";
+                    } else if (v.status === "pending") {
+                      // Pending votes can transition to closed when they end
+                      if (updatedVoteDetails.status === "closed") {
+                        finalStatus = "closed";
+                      } else {
+                        // Otherwise, keep pending status (don't let it become "active")
+                        finalStatus = "pending";
+                      }
+                    } else {
+                      // For other statuses (upcoming, active, closed), use the updated status
+                      finalStatus = updatedVoteDetails.status;
+                    }
+                    
+                    return {
+                      ...v,
+                      status: finalStatus,
+                      votes: updatedVoteDetails.totalVotes,
+                      pollCount: updatedVoteDetails.pollsCount,
+                      endTimestamp: updatedVoteDetails.endTimestamp,
+                      startTimestamp: updatedVoteDetails.startTimestamp,
+                      tokenRequirement: updatedVoteDetails.tokenRequirement,
+                      tokenAmount: updatedVoteDetails.tokenAmount,
+                      hasWhitelist: updatedVoteDetails.hasWhitelist,
+                      title: updatedVoteDetails.title,
+                      description: updatedVoteDetails.description
+                    }
+                  }
+                  return v
+                })
+              )
+            })
           })
           
           // Clean up subscriptions when component unmounts or when votes change
@@ -414,11 +450,11 @@ export default function DashboardPage() {
           className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4"
         >
           <div>
-            <h1 className="text-3xl font-bold tracking-tight">Dashboard</h1>
-            <p className="text-muted-foreground mt-1">Your voting analytics and insights</p>
+            <h1 className="text-4xl md:text-5xl font-bold tracking-tight bg-gradient-to-r from-foreground via-primary to-foreground bg-clip-text text-transparent">Dashboard</h1>
+            <p className="text-lg md:text-xl text-muted-foreground mt-2 leading-relaxed max-w-2xl">Your voting analytics and insights with transparency and security</p>
           </div>
           <Link href="/create">
-            <Button size="lg" className="gap-2 w-full sm:w-auto">
+            <Button size="lg" className="gap-2 w-full sm:w-auto shadow-lg hover:shadow-xl transition-all duration-300">
               <Plus className="h-4 w-4" />
               Create New Vote
             </Button>
@@ -460,19 +496,19 @@ export default function DashboardPage() {
         {wallet.connected && (
           <div className="space-y-8">
             {/* Quick Stats */}
-            <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              <Card>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm font-medium">Total Votes</CardTitle>
+            <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 lg:gap-8">
+              <Card className="border-0 bg-gradient-to-br from-background/80 to-primary/5 backdrop-blur-sm hover:shadow-xl hover:shadow-primary/10 transition-all duration-500 hover:-translate-y-1 group">
+                <CardHeader className="pb-4">
+                  <CardTitle className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Total Votes</CardTitle>
                 </CardHeader>
                 <CardContent className="pb-3">
                   <div className="flex items-center">
-                    <div className="mr-2 rounded-full bg-blue-500/10 p-1.5">
-                      <Vote className="h-5 w-5 text-blue-500" />
+                    <div className="mr-3 p-3 rounded-xl bg-gradient-to-br from-primary/20 to-blue-500/10 group-hover:scale-110 transition-transform duration-300">
+                      <Vote className="h-6 w-6 text-primary" />
                     </div>
-                    <div className="text-2xl font-bold">{votes.length}</div>
+                    <div className="text-3xl font-bold bg-gradient-to-r from-foreground to-foreground/80 bg-clip-text text-transparent">{votes.length}</div>
                   </div>
-                  <div className="mt-1 flex flex-wrap gap-2">
+                  <div className="mt-3 flex flex-wrap gap-2">
                     <Badge variant="outline" className="bg-green-100/50 dark:bg-green-900/20 text-green-700 dark:text-green-400">
                       {analytics?.activeCount || 0} Active
                     </Badge>
@@ -489,18 +525,18 @@ export default function DashboardPage() {
                 </CardContent>
               </Card>
               
-              <Card>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm font-medium">Votes Received</CardTitle>
+              <Card className="border-0 bg-gradient-to-br from-background/80 to-green-500/5 backdrop-blur-sm hover:shadow-xl hover:shadow-green-500/10 transition-all duration-500 hover:-translate-y-1 group">
+                <CardHeader className="pb-4">
+                  <CardTitle className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Votes Received</CardTitle>
                 </CardHeader>
                 <CardContent className="pb-3">
                   <div className="flex items-center">
-                    <div className="mr-2 rounded-full bg-green-500/10 p-1.5">
-                      <Users className="h-5 w-5 text-green-500" />
+                    <div className="mr-3 p-3 rounded-xl bg-gradient-to-br from-green-500/20 to-emerald-500/10 group-hover:scale-110 transition-transform duration-300">
+                      <Users className="h-6 w-6 text-green-600" />
                     </div>
-                    <div className="text-2xl font-bold">{analytics?.totalVotes || 0}</div>
+                    <div className="text-3xl font-bold bg-gradient-to-r from-foreground to-foreground/80 bg-clip-text text-transparent">{analytics?.totalVotes || 0}</div>
                   </div>
-                  <div className="mt-1 text-sm text-muted-foreground">
+                  <div className="mt-2 text-sm text-muted-foreground font-medium">
                     {votes.length > 0 ? (
                       <div className="flex items-center gap-1">
                         <Target className="h-3 w-3" />
@@ -513,18 +549,18 @@ export default function DashboardPage() {
                 </CardContent>
               </Card>
               
-              <Card>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm font-medium">Polls Created</CardTitle>
+              <Card className="border-0 bg-gradient-to-br from-background/80 to-purple-500/5 backdrop-blur-sm hover:shadow-xl hover:shadow-purple-500/10 transition-all duration-500 hover:-translate-y-1 group">
+                <CardHeader className="pb-4">
+                  <CardTitle className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Polls Created</CardTitle>
                 </CardHeader>
                 <CardContent className="pb-3">
                   <div className="flex items-center">
-                    <div className="mr-2 rounded-full bg-purple-500/10 p-1.5">
-                      <ListChecks className="h-5 w-5 text-purple-500" />
+                    <div className="mr-3 p-3 rounded-xl bg-gradient-to-br from-purple-500/20 to-violet-500/10 group-hover:scale-110 transition-transform duration-300">
+                      <ListChecks className="h-6 w-6 text-purple-600" />
                     </div>
-                    <div className="text-2xl font-bold">{analytics?.totalPolls || 0}</div>
+                    <div className="text-3xl font-bold bg-gradient-to-r from-foreground to-foreground/80 bg-clip-text text-transparent">{analytics?.totalPolls || 0}</div>
                   </div>
-                  <div className="mt-1 text-sm text-muted-foreground">
+                  <div className="mt-2 text-sm text-muted-foreground font-medium">
                     {votes.length > 0 ? (
                       <div className="flex items-center gap-1">
                         <TrendingUp className="h-3 w-3" />
@@ -537,23 +573,23 @@ export default function DashboardPage() {
                 </CardContent>
               </Card>
               
-              <Card>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm font-medium">Engagement Rate</CardTitle>
+              <Card className="border-0 bg-gradient-to-br from-background/80 to-amber-500/5 backdrop-blur-sm hover:shadow-xl hover:shadow-amber-500/10 transition-all duration-500 hover:-translate-y-1 group">
+                <CardHeader className="pb-4">
+                  <CardTitle className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Engagement Rate</CardTitle>
                 </CardHeader>
                 <CardContent className="pb-3">
                   <div className="flex items-center">
-                    <div className="mr-2 rounded-full bg-amber-500/10 p-1.5">
-                      <Award className="h-5 w-5 text-amber-500" />
+                    <div className="mr-3 p-3 rounded-xl bg-gradient-to-br from-amber-500/20 to-orange-500/10 group-hover:scale-110 transition-transform duration-300">
+                      <Award className="h-6 w-6 text-amber-600" />
                     </div>
-                    <div className="text-2xl font-bold">
+                    <div className="text-3xl font-bold bg-gradient-to-r from-foreground to-foreground/80 bg-clip-text text-transparent">
                       {analytics?.engagementRate || 0}%
                     </div>
                   </div>
-                  <div className="mt-1 flex items-center">
+                  <div className="mt-2 flex items-center">
                     <Progress 
                       value={analytics?.engagementRate || 0} 
-                      className="h-1.5 flex-grow" 
+                      className="h-2 flex-grow" 
                     />
                   </div>
                 </CardContent>
@@ -821,6 +857,130 @@ export default function DashboardPage() {
                 </Card>
               </div>
             </div>
+            {/* Enhanced Polls Section */}
+            <div className="space-y-8">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                <div>
+                  <h2 className="text-3xl font-bold bg-gradient-to-r from-foreground to-foreground/80 bg-clip-text text-transparent">
+                    Your Polls
+                  </h2>
+                  <p className="text-muted-foreground mt-2">
+                    Manage and monitor your active voting campaigns
+                  </p>
+                </div>
+                <div className="flex gap-3">
+                  <Button variant="outline" size="lg" className="gap-2">
+                    <Filter className="h-4 w-4" />
+                    Filter
+                  </Button>
+                  <Link href="/create">
+                    <Button size="lg" className="gap-2 shadow-lg hover:shadow-xl transition-all duration-300">
+                      <Plus className="h-4 w-4" />
+                      Create Poll
+                    </Button>
+                  </Link>
+                </div>
+              </div>
+
+              {loading ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 lg:gap-8">
+                  {[...Array(6)].map((_, i) => (
+                    <Card key={i} className="animate-pulse border-0 bg-gradient-to-br from-background/80 to-muted/20 backdrop-blur-sm">
+                      <CardHeader className="pb-4">
+                        <div className="h-5 bg-muted/50 rounded-lg w-3/4"></div>
+                        <div className="h-4 bg-muted/30 rounded-lg w-1/2 mt-2"></div>
+                      </CardHeader>
+                      <CardContent>
+                        <div className="space-y-3">
+                          <div className="h-4 bg-muted/40 rounded-lg"></div>
+                          <div className="h-4 bg-muted/40 rounded-lg w-5/6"></div>
+                          <div className="h-10 bg-muted/30 rounded-lg mt-4"></div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              ) : filteredVotes.length === 0 ? (
+                <Card className="border-0 bg-gradient-to-br from-background/80 to-muted/10 backdrop-blur-sm text-center py-16">
+                  <CardContent>
+                    <div className="max-w-md mx-auto">
+                      <div className="p-6 rounded-2xl bg-gradient-to-br from-primary/10 to-blue-500/5 mb-6 inline-block">
+                        <Vote className="h-16 w-16 text-primary mx-auto" />
+                      </div>
+                      <h3 className="text-2xl font-bold mb-3 bg-gradient-to-r from-foreground to-foreground/80 bg-clip-text text-transparent">
+                        No polls yet
+                      </h3>
+                      <p className="text-muted-foreground mb-8 text-lg leading-relaxed">
+                        Create your first poll to start collecting votes and engaging with your community
+                      </p>
+                      <Link href="/create">
+                        <Button size="lg" className="gap-2 shadow-lg hover:shadow-xl transition-all duration-300">
+                          <Plus className="h-5 w-5" />
+                          Create Your First Poll
+                        </Button>
+                      </Link>
+                    </div>
+                  </CardContent>
+                </Card>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 lg:gap-8">
+                  {filteredVotes.map((vote) => (
+                    <Card key={vote.id} className="border-0 bg-gradient-to-br from-background/80 to-muted/5 backdrop-blur-sm hover:shadow-xl hover:shadow-primary/5 transition-all duration-500 hover:-translate-y-1 group">
+                      <CardHeader className="pb-4">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex-1">
+                            <CardTitle className="text-xl mb-3 group-hover:text-primary transition-colors duration-300 line-clamp-2">
+                              {vote.title || "Untitled Vote"}
+                            </CardTitle>
+                            <CardDescription className="line-clamp-3 text-base leading-relaxed">
+                              {vote.description || "No description provided"}
+                            </CardDescription>
+                          </div>
+                          {renderStatusBadge(vote.status)}
+                        </div>
+                        {renderFeatureBadges(vote)}
+                      </CardHeader>
+                      <CardContent>
+                        <div className="space-y-6">
+                          <div className="grid grid-cols-2 gap-4">
+                            <div className="text-center p-3 rounded-xl bg-gradient-to-br from-primary/5 to-blue-500/5">
+                              <div className="text-2xl font-bold text-primary mb-1">{vote.votes || 0}</div>
+                              <div className="text-xs text-muted-foreground font-medium uppercase tracking-wide">Total Votes</div>
+                            </div>
+                            <div className="text-center p-3 rounded-xl bg-gradient-to-br from-green-500/5 to-emerald-500/5">
+                              <div className="text-2xl font-bold text-green-600 mb-1">
+                                {vote.pollCount || 0}
+                              </div>
+                              <div className="text-xs text-muted-foreground font-medium uppercase tracking-wide">Polls</div>
+                            </div>
+                          </div>
+                          {vote.status === "active" || vote.status === "pending" ? (
+                            <div className="text-center p-3 rounded-xl bg-gradient-to-br from-amber-500/5 to-orange-500/5">
+                              <div className="text-sm font-medium text-amber-600 mb-1">
+                                {formatTimeRemaining(vote.endTimestamp)}
+                              </div>
+                              <div className="text-xs text-muted-foreground font-medium uppercase tracking-wide">Time Remaining</div>
+                            </div>
+                          ) : null}
+                          <div className="flex gap-2">
+                            <Link href={`/vote/${vote.id}`} className="flex-1">
+                              <Button variant="outline" size="sm" className="w-full hover:bg-primary/5 hover:border-primary/20 transition-all duration-300">
+                                <BarChart2 className="h-4 w-4 mr-2" />
+                                View Details
+                              </Button>
+                            </Link>
+                            <Button variant="outline" size="sm" className="hover:bg-primary/5 hover:border-primary/20 transition-all duration-300">
+                              <ExternalLink className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              )}
+            </div>
+
             {/* Help Section */}
             {votes.length > 0 && (
               <section className="mt-8">

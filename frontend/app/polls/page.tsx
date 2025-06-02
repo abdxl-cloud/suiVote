@@ -40,7 +40,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { motion, AnimatePresence } from "framer-motion"
 import Link from "next/link"
 import { useSuiVote } from "@/hooks/use-suivote"
-import { useWallet } from "@suiet/wallet-kit"
+import { useWallet } from "@/contexts/wallet-context"
 import { format, formatDistance } from "date-fns"
 import { ShareDialog } from "@/components/share-dialog"
 
@@ -154,15 +154,21 @@ const SortablePollCard = ({ vote, index, handleShare, wallet, isClient, now, for
                   value={(() => {
                     try {
                       const endTime = vote.endTimestamp || 0;
-                      const startTime = new Date(vote.created || vote.startTimestamp || Date.now()).getTime();
-                      const remaining = endTime - now.getTime();
-                      const total = endTime - startTime;
+                      const startTime = vote.startTimestamp || 0;
+                      const currentTime = now.getTime();
                       
-                      if (isNaN(remaining) || isNaN(total) || total <= 0) {
+                      if (!endTime || !startTime || endTime <= startTime) {
                         return 0;
                       }
                       
-                      return 100 - calculatePercentage(remaining, total);
+                      // Calculate progress from start to end
+                      const totalDuration = endTime - startTime;
+                      const elapsed = currentTime - startTime;
+                      
+                      // Ensure we don't go below 0 or above 100
+                      const progress = Math.max(0, Math.min(100, (elapsed / totalDuration) * 100));
+                      
+                      return progress;
                     } catch (e) {
                       return 0;
                     }
@@ -313,16 +319,54 @@ export default function PollsPage() {
           
           // Set up real-time updates for each vote
           const unsubscribers = data.map((vote: any) => {
-            // Only subscribe to active votes or votes with live stats enabled
-            if (vote.status === "active" || vote.showLiveStats) {
-              return subscribeToVoteUpdates(vote.id, (updatedVote) => {
-                // Update the specific vote in the votes array
-                setVotes(prevVotes => 
-                  prevVotes.map(v => v.id === updatedVote.id ? { ...v, ...updatedVote } : v)
-                )
-              })
-            }
-            return () => {}
+            // Subscribe to all votes to catch status changes (e.g., upcoming -> active)
+            return subscribeToVoteUpdates(vote.id, async (updatedVoteDetails) => {
+              // Update the specific vote in the votes array
+              setVotes(prevVotes => 
+                prevVotes.map(v => {
+                  if (v.id === updatedVoteDetails.id) {
+                    // Determine the correct status based on the update
+                    let finalStatus = v.status;
+                    
+                    // Handle status transitions based on current state and updates
+                    if (updatedVoteDetails.status === "voted") {
+                      // If the service detected the user has voted, always use "voted"
+                      finalStatus = "voted";
+                    } else if (v.status === "voted") {
+                      // Once voted, status should never change back
+                      finalStatus = "voted";
+                    } else if (v.status === "pending") {
+                      // Pending votes can transition to closed when they end
+                      if (updatedVoteDetails.status === "closed") {
+                        finalStatus = "closed";
+                      } else {
+                        // Otherwise, keep pending status (don't let it become "active")
+                        finalStatus = "pending";
+                      }
+                    } else {
+                      // For other statuses (upcoming, active, closed), use the updated status
+                      finalStatus = updatedVoteDetails.status;
+                    }
+                    
+                    // Merge the updated vote details with the existing vote list item
+                    return {
+                      ...v,
+                      status: finalStatus,
+                      votes: updatedVoteDetails.totalVotes,
+                      pollCount: updatedVoteDetails.pollsCount,
+                      endTimestamp: updatedVoteDetails.endTimestamp,
+                      startTimestamp: updatedVoteDetails.startTimestamp,
+                      tokenRequirement: updatedVoteDetails.tokenRequirement,
+                      tokenAmount: updatedVoteDetails.tokenAmount,
+                      hasWhitelist: updatedVoteDetails.hasWhitelist,
+                      title: updatedVoteDetails.title,
+                      description: updatedVoteDetails.description
+                    }
+                  }
+                  return v
+                })
+              )
+            })
           })
           
           // Clean up subscriptions when component unmounts or when votes change
@@ -334,6 +378,9 @@ export default function PollsPage() {
         }
       }
       fetchVotes()
+    } else {
+      // Clear votes when wallet is disconnected
+      setVotes([])
     }
   }, [wallet.connected, wallet.address, getMyVotes, subscribeToVoteUpdates])
 

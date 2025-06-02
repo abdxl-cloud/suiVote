@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, ReactNode } from "react"
 import { useParams, useRouter } from "next/navigation"
-import { useWallet } from "@suiet/wallet-kit"
+import { useWallet } from "@/contexts/wallet-context"
 import { useSuiVote } from "@/hooks/use-suivote"
 import { SUI_CONFIG } from "@/config/sui-config"
 import { motion, AnimatePresence } from "framer-motion"
@@ -10,6 +10,7 @@ import { toast } from "sonner"
 import { format, formatDistanceToNow } from "date-fns"
 import Link from "next/link"
 import { TransactionStatusDialog, TransactionStatus } from "@/components/transaction-status-dialog"
+import { formatTokenAmount } from "@/utils/token-utils"
 
 // UI Components
 import {
@@ -137,6 +138,7 @@ export default function VotePage() {
   const [txStatus, setTxStatus] = useState(TransactionStatus.IDLE)
   const [txDigest, setTxDigest] = useState(null)
   const [txProgress, setTxProgress] = useState(0)
+  const [failedStep, setFailedStep] = useState<TransactionStatus | undefined>(undefined)
 
   // State to track selections for each poll
   const [selections, setSelections] = useState({})
@@ -407,14 +409,26 @@ export default function VotePage() {
       setTxProgress(20)
 
       // Create the transaction
-      const transaction = suivote.startVoteTransaction(params.id as string)
+      let transaction;
+      try {
+        transaction = suivote.startVoteTransaction(params.id as string)
+      } catch (buildError) {
+        setFailedStep(TransactionStatus.BUILDING);
+        throw buildError;
+      }
 
       // Update progress
       setTxStatus(TransactionStatus.SIGNING)
       setTxProgress(40)
 
       // Execute the transaction
-      const response = await suivote.executeTransaction(transaction)
+      let response;
+      try {
+        response = await suivote.executeTransaction(transaction)
+      } catch (signingError) {
+        setFailedStep(TransactionStatus.SIGNING);
+        throw signingError;
+      }
 
       // Update progress
       setTxStatus(TransactionStatus.EXECUTING)
@@ -424,6 +438,14 @@ export default function VotePage() {
       // Wait for confirmation
       setTxStatus(TransactionStatus.CONFIRMING)
       setTxProgress(80)
+      
+      try {
+        // Simulate confirmation wait
+        await new Promise((resolve) => setTimeout(resolve, 1000))
+      } catch (confirmError) {
+        setFailedStep(TransactionStatus.CONFIRMING);
+        throw confirmError;
+      }
 
       // Transaction successful
       setTxStatus(TransactionStatus.SUCCESS)
@@ -474,11 +496,13 @@ export default function VotePage() {
     }
   }, [txStatus])
 
-  // Validate selections and update validation errors in real-time
+  // Enhanced validation with detailed error messages and better UX
   const validateSelections = (selections) => {
     const validationErrors = {};
     let hasValidSelections = false;
     let hasRequiredSelections = true;
+    let requiredPollsCount = 0;
+    let completedRequiredPolls = 0;
 
     // Don't validate if user hasn't interacted yet or if we're still loading
     if (!hasUserInteracted || loading || polls.length === 0) {
@@ -488,20 +512,30 @@ export default function VotePage() {
     // Check each poll for validation issues
     polls.forEach(poll => {
       const selectedOptions = selections[poll.id] || [];
+      
+      // Count required polls
+      if (poll.isRequired) {
+        requiredPollsCount++;
+      }
 
       // Check if required poll has selections
       if (poll.isRequired && selectedOptions.length === 0) {
-        validationErrors[poll.id] = "This poll requires a response";
+        validationErrors[poll.id] = `${poll.title} requires a response`;
         hasRequiredSelections = false;
+      } else if (poll.isRequired && selectedOptions.length > 0) {
+        completedRequiredPolls++;
       }
 
       // Validate selection count based on poll type
       if (selectedOptions.length > 0) {
         if (!poll.isMultiSelect && selectedOptions.length > 1) {
-          validationErrors[poll.id] = "This poll allows only one selection";
+          validationErrors[poll.id] = `${poll.title} allows only one selection`;
         } else if (poll.isMultiSelect && poll.maxSelections &&
           selectedOptions.length > poll.maxSelections) {
-          validationErrors[poll.id] = `Maximum ${poll.maxSelections} selections allowed`;
+          validationErrors[poll.id] = `${poll.title}: Maximum ${poll.maxSelections} selections allowed`;
+        } else if (poll.isMultiSelect && poll.minSelections &&
+          selectedOptions.length < poll.minSelections) {
+          validationErrors[poll.id] = `${poll.title}: Minimum ${poll.minSelections} selections required`;
         }
       }
 
@@ -511,15 +545,19 @@ export default function VotePage() {
       }
     });
 
-    // Only show "make at least one selection" if user has interacted but made no selections
+    // Provide more specific error messages
     if (hasUserInteracted && !hasValidSelections) {
-      validationErrors.general = "Please make at least one selection";
+      if (requiredPollsCount > 0) {
+        validationErrors.general = `Please complete ${requiredPollsCount} required poll${requiredPollsCount > 1 ? 's' : ''}`;
+      } else {
+        validationErrors.general = "Please make at least one selection to submit your vote";
+      }
     }
 
-    // All required polls must have selections (only if user has interacted)
-    if (hasUserInteracted && !hasRequiredSelections) {
+    // Show progress for required polls
+    if (hasUserInteracted && requiredPollsCount > 0 && completedRequiredPolls < requiredPollsCount) {
       if (!validationErrors.general) {
-        validationErrors.general = "Please complete all required polls";
+        validationErrors.general = `Complete ${requiredPollsCount - completedRequiredPolls} more required poll${(requiredPollsCount - completedRequiredPolls) > 1 ? 's' : ''} (${completedRequiredPolls}/${requiredPollsCount})`;
       }
     }
 
@@ -659,9 +697,8 @@ export default function VotePage() {
   }
 
   /**
- * Handles the submission of all vote selections in a single transaction
- * with precise option mapping to ensure correct display of results
- */
+   * Enhanced vote submission with comprehensive validation and error handling
+   */
   const handleSubmitVote = async () => {
     try {
       // Set UI state to submitting
@@ -669,115 +706,113 @@ export default function VotePage() {
       setTxStatusDialogOpen(true);
       setTransactionError(null);
       setTxStatus(TransactionStatus.BUILDING);
-      setTxProgress(20);
+      setTxProgress(10);
 
-      
-      // STEP 1: Validate wallet is connected
+      // STEP 1: Pre-flight checks
       if (!wallet || !wallet.address) {
-        console.error("[Vote Debug] Wallet not connected");
-        setTransactionError("Please connect your wallet to vote");
-        setTxStatus(TransactionStatus.ERROR);
-        setSubmitting(false);
-        return;
+        throw new Error("Please connect your wallet to vote");
       }
 
-      // STEP 2: Validate all poll selections using our validation function
+      if (!vote) {
+        throw new Error("Vote data not loaded. Please refresh the page.");
+      }
+
+      if (vote.status !== "active") {
+        throw new Error(vote.status === "upcoming" ? "This vote has not started yet" : "This vote has ended");
+      }
+
+      if (hasVoted) {
+        throw new Error("You have already voted in this poll");
+      }
+
+      if (!userCanVote) {
+        throw new Error("You are not eligible to vote in this poll");
+      }
+
+      // STEP 2: Comprehensive validation
+      setTxProgress(20);
       const validationErrors = validateSelections(selections);
       
-      // If there are validation errors, stop submission
       if (Object.keys(validationErrors).length > 0) {
         console.error("[Vote Debug] Validation errors:", validationErrors);
         setValidationErrors(validationErrors);
-        setTxStatus(TransactionStatus.ERROR);
-        setSubmitting(false);
-        return;
+        
+        // Show the first validation error in a toast
+        const firstError = validationErrors.general || Object.values(validationErrors)[0];
+        toast.error("Validation Error", {
+          description: firstError,
+          duration: 5000,
+        });
+        
+        throw new Error("Please fix the validation errors before submitting");
       }
-      
-      let hasValidSelections = true; // We've already validated
 
-      // We've already validated with validateSelections, so we can skip the redundant validation
-
-      // We've already validated and confirmed there are no errors, so we can proceed
-
-      // STEP 2.5: ISSUE 2 SOLUTION - Verify option mappings before proceeding
-      
-      verifyOptionMappings(polls, selections);
-
-      // STEP 3: Prepare data for transaction
-      // Arrays to store poll indices (1-based) and options
+      // STEP 3: Token balance verification for weighted voting
+      setTxProgress(30);
+      if (vote.tokenRequirement && !userHasRequiredTokens) {
+        throw new Error(`You need at least ${vote.tokenAmount} ${vote.tokenRequirement.split("::").pop()} to vote`);
+      }
+      // STEP 4: Prepare transaction data
+      setTxProgress(40);
       const pollIndices = [];
       const optionIndicesPerPoll = [];
+      let processedPolls = 0;
 
-      
-      // For each poll in this vote
+      // Process each poll with selections
       polls.forEach((poll, pollIdx) => {
-        // Get the user's selections for this poll (if any)
         const selectedOptionIds = selections[poll.id] || [];
 
         // Skip polls with no selections
         if (selectedOptionIds.length === 0) {
-           return; // Skip this poll
+          return;
         }
 
-        // ISSUE 2 SOLUTION: Use utility function for precise option mapping
-        const optionIndices = mapOptionIdsToIndices(poll, selectedOptionIds);
+        // Map option IDs to indices for the smart contract
+        const optionIndices = [];
+        selectedOptionIds.forEach(optionId => {
+          const optionIndex = poll.options.findIndex(option => option.id === optionId);
+          if (optionIndex !== -1) {
+            optionIndices.push(optionIndex + 1); // 1-based indexing for smart contract
+          }
+        });
 
-        // Verify mapping was successful
-        if (optionIndices.length === 0) {
-          console.error(`[Vote Debug] Failed to map options for poll: ${poll.title}`);
-          return; // Skip this poll due to mapping failure
+        if (optionIndices.length === selectedOptionIds.length) {
+          pollIndices.push(pollIdx + 1); // 1-based poll index
+          optionIndicesPerPoll.push(optionIndices);
+          processedPolls++;
+        } else {
+          console.warn(`[Vote Debug] Option mapping failed for poll: ${poll.title}`);
         }
+      });
 
-        // Verify we got the same number of mapped indices as selected IDs
-        if (optionIndices.length !== selectedOptionIds.length) {
-          console.error(`[Vote Debug] Mapping count mismatch for poll: ${poll.title}`, {
-            selectedCount: selectedOptionIds.length,
-            mappedCount: optionIndices.length
-          });
-          return; // Skip this poll due to mapping inconsistency
-        }
-
-        // Store valid poll data for transaction
-        pollIndices.push(pollIdx + 1); // 1-based poll index
-        optionIndicesPerPoll.push(optionIndices);
-});
-
-      // Verify we have something to submit after mapping
       if (pollIndices.length === 0) {
-        console.error("[Vote Debug] No valid poll mappings to submit");
-        setValidationErrors({ general: "Error processing your selections. Please try again." });
-        setTxStatus(TransactionStatus.ERROR);
-        setTransactionError("Error processing your selections. Please try again.");
-        setSubmitting(false);
-        return;
+        throw new Error("Error processing your selections. Please try again.");
       }
 
-      // STEP 4: Get token balance for token-weighted voting
+      // STEP 5: Get token balance for weighted voting
+      setTxProgress(50);
       let tokenBalance = 0;
-      try {
-        const tokenResult = await suivote.checkTokenBalance(
-          wallet.address,
-          vote.tokenRequirement,
-          vote.tokenAmount
-        );
-        tokenBalance =  Math.floor(Number(tokenResult.tokenBalance));
-       } catch (tokenError) {
-        console.error("[Vote Debug] Error checking token balance:", tokenError);
-        // Default to 0 balance on error
+      if (vote.tokenRequirement) {
+        try {
+          const tokenResult = await suivote.checkTokenBalance(
+            wallet.address,
+            vote.tokenRequirement,
+            vote.tokenAmount
+          );
+          tokenBalance = Math.floor(Number(tokenResult.tokenBalance));
+        } catch (tokenError) {
+          console.warn("[Vote Debug] Error checking token balance:", tokenError);
+          // Continue with 0 balance for non-weighted voting
+        }
       }
-      
 
-      // STEP 5: Create the transaction
+      // STEP 6: Create and execute transaction
       setTxStatus(TransactionStatus.BUILDING);
+      setTxProgress(60);
 
-      // ISSUE 1 SOLUTION: Create a single batched transaction
       let transaction;
-
-      
-      
-      // If only one poll, use simple vote transaction
       if (pollIndices.length === 1) {
-         transaction = suivote.castVoteTransaction(
+        transaction = await suivote.castVoteTransaction(
           params.id,
           pollIndices[0],
           optionIndicesPerPoll[0],
@@ -785,8 +820,7 @@ export default function VotePage() {
           vote.paymentAmount || 0
         );
       } else {
-        // If multiple polls, use batched transaction
-        transaction = suivote.castMultipleVotesTransaction(
+        transaction = await suivote.castMultipleVotesTransaction(
           params.id,
           pollIndices,
           optionIndicesPerPoll,
@@ -795,124 +829,127 @@ export default function VotePage() {
         );
       }
 
-      // STEP 6: Execute the transaction
+      // STEP 7: Sign and execute transaction
       setTxStatus(TransactionStatus.SIGNING);
-      setTxProgress(40);
+      setTxProgress(70);
 
-      // Send single transaction to wallet (no multiple signatures needed)
-      const response = await suivote.executeTransaction(transaction);
+      toast.info("Please sign the transaction in your wallet", {
+        description: `Submitting votes for ${processedPolls} poll${processedPolls > 1 ? 's' : ''}`,
+        duration: 3000,
+      });
 
-      // Update progress
+      let response;
+      try {
+        response = await suivote.executeTransaction(transaction);
+      } catch (signingError) {
+        setFailedStep(TransactionStatus.SIGNING);
+        throw signingError;
+      }
+
+      // STEP 8: Transaction execution
       setTxStatus(TransactionStatus.EXECUTING);
-      setTxProgress(60);
+      setTxProgress(80);
       setTxDigest(response.digest);
 
-      // Wait for confirmation
-      setTxStatus(TransactionStatus.CONFIRMING);
-      setTxProgress(80);
+      toast.success("Transaction submitted!", {
+        description: "Waiting for blockchain confirmation...",
+        duration: 3000,
+      });
 
-      // Transaction successful
+      // STEP 9: Wait for confirmation
+      setTxStatus(TransactionStatus.CONFIRMING);
+      setTxProgress(90);
+      
+      try {
+        // Simulate confirmation wait
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      } catch (confirmError) {
+        setFailedStep(TransactionStatus.CONFIRMING);
+        throw confirmError;
+      }
+
+      // STEP 10: Success handling
       setTxStatus(TransactionStatus.SUCCESS);
       setTxProgress(100);
 
-      // Update UI on success
-      toast.success("Vote submitted successfully!");
-
-      // Update local state
+      // Update local state immediately
       setSubmitted(true);
       setHasVoted(true);
 
-      // Store transaction digest in localStorage for the success page
-      if (response && response.digest) {
+      // Store transaction data
+      if (response?.digest) {
         setTxDigest(response.digest);
         localStorage.setItem(`vote_${params.id}_txDigest`, response.digest);
+        localStorage.setItem(`vote_${params.id}_timestamp`, Date.now().toString());
       }
 
-      // Redirect to success page or show results based on vote settings
+      // Success notification with details
+      toast.success("Vote submitted successfully!", {
+        description: `Your vote${processedPolls > 1 ? 's' : ''} ${processedPolls > 1 ? 'have' : 'has'} been recorded on the blockchain.`,
+        duration: 5000,
+      });
+
+      // Handle post-submission flow
       setTimeout(() => {
-        // Reset transaction status to prevent reopening
         setTxStatus(TransactionStatus.IDLE);
-        // Explicitly close the dialog
         setTxStatusDialogOpen(false);
+        
         if (vote?.showLiveStats) {
-          // If live stats are enabled, just show results on this page
+          // Show live results on the same page
           setShowingResults(true);
-          // Explicitly fetch vote data to update the UI with the latest results
-          fetchVoteData();
-          // The subscription will continue to update the UI with subsequent changes
+          fetchVoteData(); // Refresh to show updated results
         } else {
-          // Otherwise redirect to success page
+          // Redirect to success page
           router.push(`/vote/${params.id}/success?digest=${response.digest}`);
         }
-      }, 1500);
+      }, 2000);
 
     } catch (error) {
-      // Detailed error logging
-      console.error("[Vote Debug] Transaction failed:", error);
-      console.error("[Vote Debug] Error details:", {
-        message: error.message,
-        code: error.code,
-        name: error.name,
-        stack: error.stack
-      });
-
+      console.error("[Vote Debug] Transaction failed:", error instanceof Error ? error.message : String(error));
+      
       // Update UI state
       setTxStatus(TransactionStatus.ERROR);
-      setTxProgress(100); // Complete the progress bar even for errors
-
-      // Format user-friendly error message
-      let userErrorMessage = "Failed to submit vote";
-      let errorType = "unknown";
-
+      setTxProgress(100);
+      
+      // Determine error type and provide appropriate feedback
+      let errorMessage = "An unexpected error occurred";
+      let errorDescription = "Please try again or contact support if the issue persists";
+      
       if (error.message) {
-        // Check for common wallet interaction errors
-        if (error.message.includes("insufficient gas") || error.message.includes("insufficient balance")) {
-          userErrorMessage = "Insufficient SUI to complete transaction. Please add more SUI to your wallet and try again.";
-          errorType = "insufficient_funds";
-        } else if (error.message.includes("rejected") || error.message.includes("user reject") ||
-          error.message.includes("user denied") || error.message.includes("user cancelled")) {
-          userErrorMessage = "Transaction rejected by wallet. You can try again when ready.";
-          errorType = "user_rejected";
-        } else if (error.message.includes("user abort") || error.message.includes("cancelled") ||
-          error.message.includes("canceled")) {
-          userErrorMessage = "Transaction cancelled. You can try again when ready.";
-          errorType = "user_cancelled";
-        } else if (error.message.includes("timeout") || error.message.includes("timed out")) {
-          userErrorMessage = "Transaction timed out. Please check your network connection and try again.";
-          errorType = "timeout";
+        errorMessage = error.message;
+        
+        // Provide specific guidance for common errors
+        if (error.message.includes("User rejected") || error.message.includes("rejected")) {
+          errorMessage = "Transaction cancelled";
+          errorDescription = "You cancelled the transaction in your wallet";
+        } else if (error.message.includes("insufficient")) {
+          errorMessage = "Insufficient funds";
+          errorDescription = "You don't have enough SUI to pay for transaction fees";
         } else if (error.message.includes("network") || error.message.includes("connection")) {
-          userErrorMessage = "Network error. Please check your internet connection and try again.";
-          errorType = "network";
-        } else if (error.message.includes("wallet not connected") || error.message.includes("wallet disconnected")) {
-          userErrorMessage = "Wallet disconnected. Please reconnect your wallet and try again.";
-          errorType = "wallet_disconnected";
-        } else {
-          // Clean up technical details for user display
-          userErrorMessage = error.message
-            .replace(/Error invoking RPC method '[^']+': /g, '')
-            .replace(/\([^)]+\)/g, '')
-            .trim();
-
-          // If the message is too technical or long, provide a more generic message
-          if (userErrorMessage.length > 100) {
-            userErrorMessage = "An unexpected error occurred with the blockchain transaction. Please try again later.";
-          }
+          errorMessage = "Network error";
+          errorDescription = "Please check your internet connection and try again";
+        } else if (error.message.includes("already voted")) {
+          errorMessage = "Already voted";
+          errorDescription = "You have already submitted your vote for this poll";
+        } else if (error.message.includes("not eligible")) {
+          errorMessage = "Not eligible to vote";
+          errorDescription = "You don't meet the requirements to vote in this poll";
         }
       }
+      
+      setTransactionError(errorMessage);
+      
+      // Show error toast with actionable information
+      toast.error(errorMessage, {
+        description: errorDescription,
+        duration: 7000,
+      });
 
       // Store error information for display
-      setTransactionError(userErrorMessage);
       setSubmitting(false);
-
-      // Show error toast with appropriate action guidance
-      toast.error("Vote submission failed", {
-        description: userErrorMessage,
-        action: errorType === "user_rejected" || errorType === "user_cancelled" ? {
-          label: "Try Again",
-          onClick: () => handleSubmitVote()
-        } : undefined,
-        duration: 5000 // Show longer for errors so user can read the message
-      });
+      
+      // Keep dialog open for user to see error details or retry
+      // User can manually close it or try again
     }
   }
 
@@ -1330,7 +1367,7 @@ export default function VotePage() {
                     </div>
                     <div>
                       <p className="text-sm font-medium">Payment Required</p>
-                      <p className="text-xs text-muted-foreground">{vote.paymentAmount / 1000000000} SUI to vote</p>
+                      <p className="text-xs text-muted-foreground">{formatTokenAmount(vote.paymentAmount, 9)} SUI to vote</p>
                     </div>
                   </div>
                 )}
@@ -1659,10 +1696,10 @@ export default function VotePage() {
                             <Badge 
                               variant="outline" 
                               className="text-xs gap-1 bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/20 dark:text-amber-400 cursor-help transition-all hover:scale-105"
-                              title={`💰 A payment of ${vote.paymentAmount / 1000000000} SUI is required to submit your vote. This fee helps prevent spam and supports the voting system.`}
+                              title={`💰 A payment of ${formatTokenAmount(vote.paymentAmount, 9)} SUI is required to submit your vote. This fee helps prevent spam and supports the voting system.`}
                             >
                               <Wallet className="h-3 w-3" />
-                              {vote.paymentAmount / 1000000000} SUI
+                              {formatTokenAmount(vote.paymentAmount, 9)} SUI
                             </Badge>
                           )}
 
@@ -2494,7 +2531,11 @@ export default function VotePage() {
         txStatus={txStatus}
         transactionError={transactionError}
         txDigest={txDigest}
-        onRetry={handleTryAgain}
+        failedStep={failedStep}
+        onRetry={() => {
+          setFailedStep(undefined);
+          handleTryAgain();
+        }}
         explorerUrl={SUI_CONFIG.explorerUrl}
       />
     </div>

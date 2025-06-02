@@ -32,6 +32,7 @@ import { Switch } from "@/components/ui/switch"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { cn } from "@/lib/utils"
 import { tokenService, type TokenInfo } from "@/services/token-service"
+import { getMaxVoteAmount, validateMaxAmount, formatTokenAmount, toDecimalUnits } from "@/utils/token-utils"
 
 // Simplified token interface focused on coin type
 interface CoinType {
@@ -541,20 +542,52 @@ export function TokenSelector({
                 id="token-amount"
                 type="number"
                 min="0"
+                max={selectedToken.decimals !== undefined ? getMaxVoteAmount(selectedToken.decimals) : undefined}
                 step="any"
                 placeholder="Enter amount"
                 value={amount || ""}
-                onChange={(e) => onAmountChange(e.target.value)}
+                onChange={(e) => {
+                  const value = e.target.value
+                  // Validate max amount if decimals are available
+                  if (value && selectedToken.decimals !== undefined) {
+                    try {
+                      const maxAmount = getMaxVoteAmount(selectedToken.decimals)
+                      validateMaxAmount(value, maxAmount, selectedToken.symbol)
+                    } catch (error) {
+                      // Show error but still allow the input for user feedback
+                      console.warn(error instanceof Error ? error.message : 'Invalid amount')
+                    }
+                  }
+                  onAmountChange(value)
+                }}
                 className="flex-1"
               />
               <div className="flex-shrink-0 text-sm font-medium text-muted-foreground w-16 text-center">
                 {selectedToken.symbol}
               </div>
             </div>
-            <p className="text-xs text-muted-foreground">
-              {selectedToken.decimals !== undefined && `${selectedToken.decimals} decimals • `}
-              Voters need at least this amount to participate
-            </p>
+            <div className="space-y-1">
+              <p className="text-xs text-muted-foreground">
+                {selectedToken.decimals !== undefined && `${selectedToken.decimals} decimals • `}
+                Voters need at least this amount to participate
+              </p>
+              {selectedToken.decimals !== undefined && amount && (
+                <p className="text-xs text-blue-600">
+                  Decimal value: {(() => {
+                    try {
+                      return toDecimalUnits(amount, selectedToken.decimals)
+                    } catch {
+                      return 'Invalid amount'
+                    }
+                  })()} smallest units
+                </p>
+              )}
+              {selectedToken.decimals !== undefined && (
+                <p className="text-xs text-muted-foreground">
+                  Max allowed: {formatTokenAmount(getMaxVoteAmount(selectedToken.decimals), selectedToken.symbol)}
+                </p>
+              )}
+            </div>
           </div>
           
           {/* Token-weighted voting section */}

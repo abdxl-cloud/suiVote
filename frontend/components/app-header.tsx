@@ -88,94 +88,86 @@ export function AppHeader() {
   return (
     <header
       className={cn(
-        "sticky top-0 z-50 w-full transition-all duration-300",
-        isScrolled
-          ? "bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 border-b shadow-md"
-          : "bg-background",
+        "sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur-md supports-[backdrop-filter]:bg-background/60 transition-all duration-300",
+        isScrolled && "shadow-lg border-border/50",
+        isLandingPage && "bg-transparent border-transparent"
       )}
     >
-      <div className="container flex h-14 md:h-16 items-center justify-between">
+      <div className="container flex h-16 items-center justify-between px-6">
         <div className="flex items-center">
-          <Link href="/" className="flex items-center gap-2">
-            <motion.div
-              initial={{ scale: 0.8, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              transition={{ duration: 0.3 }}
-              className="h-8 w-8"
-            >
+          <Link href="/" className="flex items-center space-x-3 group">
+            <div className="h-9 w-9 transition-all duration-300 group-hover:scale-110 group-hover:rotate-12">
               <img 
                 src="/logo.svg" 
                 alt="SuiVote Logo" 
-                className="h-full w-full dark:invert-[0.15]" 
+                className="h-full w-full drop-shadow-sm" 
               />
-            </motion.div>
-            <motion.span
-              initial={{ x: -10, opacity: 0 }}
-              animate={{ x: 0, opacity: 1 }}
-              transition={{ duration: 0.3, delay: 0.1 }}
-              className="text-xl font-extrabold tracking-tight"
-            >
+            </div>
+            <span className="font-bold text-xl bg-gradient-to-r from-primary via-blue-600 to-purple-600 bg-clip-text text-transparent">
               SuiVote
-            </motion.span>
+            </span>
           </Link>
         </div>
 
         {/* Desktop Navigation - Centered */}
         <div className="hidden md:flex justify-center absolute left-1/2 transform -translate-x-1/2">
-          <TooltipProvider>
-            <nav className="flex items-center gap-2">
-              {navItems.map((item) => {
-                const isActive = pathname === item.href || pathname?.startsWith(`${item.href}/`)
-                return (
-                  <Tooltip key={item.href}>
+          <nav className="hidden md:flex items-center space-x-2">
+            {navItems.map((item) => {
+              const isActive = pathname === item.href
+              return (
+                <TooltipProvider key={item.name}>
+                  <Tooltip>
                     <TooltipTrigger asChild>
                       <Link
                         href={item.href}
                         className={cn(
-                          "flex h-10 w-10 items-center justify-center rounded-full transition-colors hover:bg-muted",
-                          isActive ? "bg-primary text-primary-foreground hover:bg-primary/90" : "text-muted-foreground",
+                          "flex items-center space-x-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 hover:bg-accent hover:text-accent-foreground group relative",
+                          isActive
+                            ? "bg-primary/10 text-primary shadow-sm border border-primary/20"
+                            : "text-muted-foreground hover:text-foreground"
                         )}
-                        aria-label={item.name}
                       >
-                        <item.icon className="h-5 w-5" />
+                        <item.icon className={cn(
+                          "h-4 w-4 transition-all duration-200",
+                          isActive ? "text-primary" : "group-hover:scale-110"
+                        )} />
+                        <span>{item.name}</span>
+                        {isActive && (
+                          <div className="absolute inset-0 rounded-lg bg-primary/5 -z-10" />
+                        )}
                       </Link>
                     </TooltipTrigger>
-                    <TooltipContent side="bottom">
+                    <TooltipContent>
                       <p>{item.name}</p>
                     </TooltipContent>
                   </Tooltip>
-                )
-              })}
-            </nav>
-          </TooltipProvider>
+                </TooltipProvider>
+              )
+            })}
+          </nav>
         </div>
 
-        <div className="flex items-center gap-2 md:gap-4">
-          {/* Theme toggle - desktop */}
-          <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }} className="hidden md:block">
-            <Button variant="ghost" size="icon" onClick={toggleTheme} className="rounded-full">
-              <Sun className="h-[1.2rem] w-[1.2rem] rotate-0 scale-100 transition-all dark:-rotate-90 dark:scale-0" />
-              <Moon className="absolute h-[1.2rem] w-[1.2rem] rotate-90 scale-0 transition-all dark:rotate-0 dark:scale-100" />
-              <span className="sr-only">Toggle theme</span>
-            </Button>
-          </motion.div>
-
-          {/* Mobile theme toggle */}
-          <Button variant="ghost" size="icon" className="md:hidden h-8 w-8 rounded-full" onClick={toggleTheme}>
-            <Sun className="h-[1.2rem] w-[1.2rem] rotate-0 scale-100 transition-all dark:-rotate-90 dark:scale-0" />
-            <Moon className="absolute h-[1.2rem] w-[1.2rem] rotate-90 scale-0 transition-all dark:rotate-0 dark:scale-100" />
-            <span className="sr-only">Toggle theme</span>
-          </Button>
-
-          {/* Connect button - desktop */}
-          <div className="hidden md:block">
-            <WalletConnectButton />
-          </div>
-
-          {/* Connect button - mobile */}
-          <div className="md:hidden">
-            <WalletConnectButton size="sm" />
-          </div>
+        <div className="flex items-center space-x-3">
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={toggleTheme}
+                  className="h-9 w-9 hover:bg-accent/80 transition-all duration-200"
+                >
+                  <Sun className="h-4 w-4 rotate-0 scale-100 transition-all duration-300 dark:-rotate-90 dark:scale-0" />
+                  <Moon className="absolute h-4 w-4 rotate-90 scale-0 transition-all duration-300 dark:rotate-0 dark:scale-100" />
+                  <span className="sr-only">Toggle theme</span>
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>Toggle theme</p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+          <WalletConnectButton variant="default" size="sm" className="shadow-sm" />
 
           {/* Mobile Menu Button */}
           <Button variant="ghost" size="icon" className="md:hidden h-8 w-8" onClick={() => setMobileMenuOpen(true)}>

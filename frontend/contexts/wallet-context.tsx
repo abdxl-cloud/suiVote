@@ -1,7 +1,7 @@
 "use client"
 
 import { createContext, useContext, useState, useEffect, type ReactNode } from "react"
-import { useWallet as useSuietWallet } from "@suiet/wallet-kit"
+import { useCurrentAccount, useConnectWallet, useDisconnectWallet, useWallets } from "@mysten/dapp-kit"
 import { toast } from "@/components/ui/use-toast"
 
 // Note: We're not importing the CSS file directly to avoid the MIME type error
@@ -28,43 +28,63 @@ const WalletContext = createContext<WalletContextType>({
 
 export const useWallet = () => useContext(WalletContext)
 
-// Create a wrapper component that uses the Suiet wallet hook
+// Create a wrapper component that uses the Mysten dApp Kit hooks
 function WalletContextWrapper({ children }: { children: ReactNode }) {
-  const suietWallet = useSuietWallet()
+  const currentAccount = useCurrentAccount()
+  const { mutate: connectWallet } = useConnectWallet()
+  const { mutate: disconnectWallet } = useDisconnectWallet()
+  const wallets = useWallets()
   const [connecting, setConnecting] = useState(false)
-  const [availableWallets, setAvailableWallets] = useState<string[]>([])
 
-  // Map Suiet wallet state to our context
-  const connected = !!suietWallet.connected
-  const address = suietWallet.address || null
-  const walletName = suietWallet.name || "Sui Wallet"
+  // Map Mysten dApp Kit state to our context
+  const connected = !!currentAccount
+  const address = currentAccount?.address || null
+  const walletName = currentAccount?.label || "Sui Wallet"
+  const availableWallets = wallets.map(wallet => wallet.name)
+
+  // Store wallet name when connected for future reference
+  useEffect(() => {
+    if (connected && currentAccount?.label) {
+      localStorage.setItem('lastConnectedWallet', currentAccount.label)
+    }
+  }, [connected, currentAccount?.label])
 
   // Connect to wallet with error handling
   const connect = async () => {
     try {
       setConnecting(true)
-      await suietWallet.select()
-      await suietWallet.connect()
-
-      // Verify connection
-      if (!suietWallet.address) {
-        throw new Error("Failed to connect to wallet. No address found.")
+      
+      // If there are available wallets, connect to the first one
+      // In a real implementation, you might want to show a selection dialog
+      if (wallets.length > 0) {
+        connectWallet(
+          { wallet: wallets[0] },
+          {
+            onSuccess: () => {
+              // Store the connected wallet name
+              localStorage.setItem('lastConnectedWallet', wallets[0].name)
+              toast({
+                title: "Wallet connected",
+                description: `Connected to ${wallets[0].name}.`,
+              })
+            },
+            onError: (error) => {
+              console.error("Error connecting to wallet:", error)
+              toast({
+                title: "Connection failed",
+                description: "Failed to connect to wallet. Please try again.",
+                variant: "destructive",
+              })
+            },
+          }
+        )
+      } else {
+        throw new Error("No wallets available")
       }
-
-      toast({
-        title: "Wallet connected",
-        description: `Connected to ${suietWallet.name || "wallet"}.`,
-      })
 
       return true
     } catch (error) {
       console.error("Error connecting to wallet:", error)
-
-      // Check if the error is about no wallets detected
-      if (error instanceof Error && error.message.includes("No wallet detected")) {
-        setAvailableWallets([])
-      }
-
       throw error
     } finally {
       setConnecting(false)
@@ -74,37 +94,32 @@ function WalletContextWrapper({ children }: { children: ReactNode }) {
   // Disconnect from wallet
   const disconnect = async () => {
     try {
-      await suietWallet.disconnect()
-      toast({
-        title: "Wallet disconnected",
-        description: "Your wallet has been disconnected.",
-      })
+      disconnectWallet(
+        {},
+        {
+          onSuccess: () => {
+            // Remove wallet from localStorage when disconnecting
+            localStorage.removeItem('lastConnectedWallet')
+            toast({
+              title: "Wallet disconnected",
+              description: "Your wallet has been disconnected.",
+            })
+          },
+          onError: (error) => {
+            console.error("Error disconnecting from wallet:", error)
+          },
+        }
+      )
     } catch (error) {
       console.error("Error disconnecting from wallet:", error)
       throw error
     }
   }
 
-  // Update available wallets when component mounts
-  useEffect(() => {
-    const updateWallets = async () => {
-      try {
-        // Get available wallets if the Suiet API provides this
-        const wallets = suietWallet.supportedWallets || []
-        setAvailableWallets(wallets.map((w) => w.name))
-      } catch (error) {
-        console.error("Error getting available wallets:", error)
-        setAvailableWallets([])
-      }
-    }
-
-    updateWallets()
-  }, [suietWallet.supportedWallets])
-
   return (
     <WalletContext.Provider
       value={{
-        connecting: connecting || suietWallet.connecting,
+        connecting,
         connected,
         address,
         connect,
@@ -118,9 +133,7 @@ function WalletContextWrapper({ children }: { children: ReactNode }) {
   )
 }
 
-// Export the provider component that includes the Suiet WalletProvider
+// Export the provider component
 export function WalletContextProvider({ children }: { children: ReactNode }) {
-  // We're not using the Suiet WalletProvider directly here to avoid the CSS import
-  // Instead, we'll use the hook directly in our wrapper
   return <WalletContextWrapper>{children}</WalletContextWrapper>
 }

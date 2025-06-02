@@ -3,10 +3,12 @@ import { Transaction } from "@mysten/sui/transactions"
 import { SUI_CLOCK_OBJECT_ID } from "@mysten/sui/utils"
 import { SuiHTTPTransport } from "@mysten/sui/client"
 import SUI_CONFIG from "@/config/sui-config"
+import { toDecimalUnits, fromDecimalUnits } from "@/utils/token-utils"
+import { tokenService } from "@/services/token-service"
 
 // Constants from configuration
-const PACKAGE_ID = process.env.NEXT_PUBLIC_SUIVOTE_PACKAGE_ID || ""
-const ADMIN_ID = process.env.NEXT_PUBLIC_SUIVOTE_ADMIN_ID || ""
+const PACKAGE_ID = SUI_CONFIG.PACKAGE_ID
+const ADMIN_ID = SUI_CONFIG.ADMIN_ID
 
 /**
  * Vote details interface
@@ -435,7 +437,7 @@ export class SuiVoteService {
    * @param onUpdate Callback function to handle updates
    * @returns Unsubscribe function
    */
-  subscribeToVoteUpdates(voteId: string, onUpdate: (voteDetails: VoteDetails) => void): () => void {
+  subscribeToVoteUpdates(voteId: string, onUpdate: (voteDetails: VoteDetails) => void, userAddress?: string): () => void {
     this.checkInitialization()
     
     // Check if we already have a subscription for this vote
@@ -468,6 +470,20 @@ export class SuiVoteService {
             } catch (pollError) {
               console.error(`Error fetching poll data during subscription update for ${voteId}:`, pollError)
               // Continue with the vote details update even if poll data fetch fails
+            }
+            
+            // If we have a user address, check if they have voted to provide accurate status
+            if (userAddress && voteDetails.status === 'active') {
+              try {
+                const hasVoted = await this.hasVoted(userAddress, voteId)
+                if (hasVoted) {
+                  // Override status to 'voted' if user has voted
+                  voteDetails.status = 'voted'
+                }
+              } catch (votingCheckError) {
+                console.warn(`Could not check voting status for user ${userAddress} on vote ${voteId}:`, votingCheckError)
+                // Continue with original status if voting check fails
+              }
             }
             
             // Update with the latest vote details
@@ -520,7 +536,7 @@ export class SuiVoteService {
 
     if (!data || !data.content || data.content.dataType !== "moveObject") {
       const error = new Error(`Vote object not found or invalid: ${voteId}`);
-      console.error(error);
+      console.error(error instanceof Error ? error.message : String(error));
       throw error;
     }
 
@@ -564,6 +580,22 @@ export class SuiVoteService {
     if ('tokens_per_vote' in fields) {
       tokensPerVote = Number(fields.tokens_per_vote);
     }
+
+    // Convert token amounts from decimal units back to human-readable format
+    if (tokenRequirement && tokenAmount > 0) {
+      try {
+        const tokenInfo = await this.tokenService.getTokenInfo(tokenRequirement)
+        if (tokenInfo && tokenInfo.decimals !== undefined) {
+          tokenAmount = parseFloat(fromDecimalUnits(tokenAmount.toString(), tokenInfo.decimals))
+          if (useTokenWeighting && tokensPerVote > 0) {
+            tokensPerVote = parseFloat(fromDecimalUnits(tokensPerVote.toString(), tokenInfo.decimals))
+          }
+        }
+      } catch (error) {
+        console.warn('Failed to convert token amounts from decimal units:', error)
+        // Continue with original values if conversion fails
+      }
+    }
     
     // Build the vote details object with all fields
     const voteDetails: VoteDetails = {
@@ -573,7 +605,7 @@ export class SuiVoteService {
       description: fields.description,
       startTimestamp,
       endTimestamp,
-      paymentAmount: Number(fields.payment_amount || 0),
+      paymentAmount: Number(fields.payment_amount || 0) / Math.pow(10, tokenService.getSuiTokenInfo().decimals), // Convert MIST to SUI using token service
       requireAllPolls: !!fields.require_all_polls,
       pollsCount: Number(fields.polls_count || 0),
       totalVotes: Number(fields.total_votes || 0),
@@ -590,13 +622,13 @@ export class SuiVoteService {
     return voteDetails
   } catch (error) {
     if (error.message?.includes("not found")) {
-      console.error(`Vote ${voteId} not found:`, error);
+      console.error(`Vote ${voteId} not found:`, error instanceof Error ? error.message : String(error));
       throw new Error(`Vote ${voteId} not found. It may have been deleted or never existed.`);
     } else if (error.message?.includes("network")) {
-      console.error(`Network error fetching vote ${voteId}:`, error);
+      console.error(`Network error fetching vote ${voteId}:`, error instanceof Error ? error.message : String(error));
       throw new Error("Network error. Please check your connection and try again.");
     } else {
-      console.error(`Failed to fetch vote details for ${voteId}:`, error);
+      console.error(`Failed to fetch vote details for ${voteId}:`, error instanceof Error ? error.message : String(error));
       throw new Error(`Failed to fetch vote details: ${error.message || "Unknown error"}`);
     }
   }
@@ -796,13 +828,13 @@ export class SuiVoteService {
      * @param description Vote description
      * @param startTimestamp Start timestamp in milliseconds
      * @param endTimestamp End timestamp in milliseconds
-     * @param paymentAmount Payment amount in SUI
+     * @param paymentAmount Payment amount in SUI (will be converted to MIST)
      * @param requireAllPolls Whether all polls must be answered
      * @param showLiveStats Whether to show live stats
      * @param pollData Poll configuration data
      * @returns Transaction to be signed
      */
-  createCompleteVoteTransaction(
+  async createCompleteVoteTransaction(
     title: string,
     description: string,
     startTimestamp: number,
@@ -816,7 +848,7 @@ export class SuiVoteService {
     useTokenWeighting = false, 
     tokensPerVote = 0,
     whitelistAddresses: string[] = []   
-  ): Transaction {
+  ): Promise<Transaction> {
     try {
       this.checkInitialization()
 
@@ -904,7 +936,7 @@ export class SuiVoteService {
           tx.pure.string(description),
           tx.pure.u64(startTimestamp),
           tx.pure.u64(endTimestamp),
-          tx.pure.u64(paymentAmount),
+          tx.pure.u64(paymentAmount * Math.pow(10, tokenService.getSuiTokenInfo().decimals)), // Convert SUI to MIST using token service
           tx.pure.bool(requireAllPolls),
           tx.pure.string(requiredToken),
           tx.pure.u64(requiredAmount),               
@@ -935,7 +967,7 @@ export class SuiVoteService {
   /**
    * Create a combined transaction for uploading media to Walrus and creating a vote
    */
-  createVoteWithMediaTransaction(
+  async createVoteWithMediaTransaction(
     title: string,
     description: string,
     startTimestamp: number,
@@ -950,7 +982,7 @@ export class SuiVoteService {
     pollData: PollData[],
     mediaFiles: Record<string, { data: Uint8Array, contentType: string }>,
     whitelistAddresses: string[] = []
-  ): Transaction {
+  ): Promise<Transaction> {
     try {
       this.checkInitialization()
 
@@ -1095,6 +1127,26 @@ export class SuiVoteService {
         ? Array.from(new TextEncoder().encode(requiredToken))
         : []
 
+      // Convert token amounts to decimal units before sending to contract
+      let convertedRequiredAmount = requiredAmount
+      let convertedTokensPerVote = tokensPerVote
+      
+      if (requiredToken && requiredAmount > 0) {
+        try {
+          // Get token info to determine decimals
+          const tokenInfo = await this.tokenService.getTokenInfo(requiredToken)
+          if (tokenInfo && tokenInfo.decimals !== undefined) {
+            convertedRequiredAmount = parseInt(toDecimalUnits(requiredAmount.toString(), tokenInfo.decimals))
+            if (useTokenWeighting && tokensPerVote > 0) {
+              convertedTokensPerVote = parseInt(toDecimalUnits(tokensPerVote.toString(), tokenInfo.decimals))
+            }
+          }
+        } catch (error) {
+          console.warn('Failed to convert token amounts to decimal units:', error)
+          // Continue with original values if conversion fails
+        }
+      }
+
       // 3. Create the vote using the actual SuiVote package ID
       const voteObj = tx.moveCall({
         target: `${PACKAGE_ID}::voting::create_complete_vote`,
@@ -1104,13 +1156,13 @@ export class SuiVoteService {
           tx.pure.string(description),
           tx.pure.u64(startTimestamp),
           tx.pure.u64(endTimestamp),
-          tx.pure.u64(paymentAmount),
+          tx.pure.u64(paymentAmount * Math.pow(10, tokenService.getSuiTokenInfo().decimals)), // Convert SUI to MIST using token service
           tx.pure.bool(requireAllPolls),
           tx.pure.string(requiredToken),  
-          tx.pure.u64(requiredAmount),     
+          tx.pure.u64(convertedRequiredAmount),     
           tx.pure.bool(showLiveStats),
           tx.pure.bool(useTokenWeighting),
-          tx.pure.u64(tokensPerVote),            
+          tx.pure.u64(convertedTokensPerVote),            
           tx.pure.vector("string", pollTitles),
           tx.pure.vector("string", pollDescriptions),
           tx.pure.vector("bool", pollIsMultiSelect),
@@ -1355,7 +1407,7 @@ export class SuiVoteService {
    * @param payment SUI payment amount (if required)
    * @returns Transaction to be signed
    */
-  castVoteTransaction(voteId: string, pollIndex: number, optionIndices: number[],tokenBalance: number = 0, payment = 0): Transaction {
+  async castVoteTransaction(voteId: string, pollIndex: number, optionIndices: number[],tokenBalance: number = 0, payment = 0): Promise<Transaction> {
     try {
       this.checkInitialization()
 
@@ -1374,6 +1426,24 @@ export class SuiVoteService {
 
       if (payment < 0) {
         throw new Error("Payment amount must be non-negative")
+      }
+
+      // Convert tokenBalance to decimal units if needed
+      let convertedTokenBalance = tokenBalance
+      if (tokenBalance > 0) {
+        try {
+          // Get vote details to determine token requirement
+          const voteDetails = await this.getVoteDetails(voteId)
+          if (voteDetails && voteDetails.tokenRequirement) {
+            const tokenInfo = await this.tokenService.getTokenInfo(voteDetails.tokenRequirement)
+            if (tokenInfo && tokenInfo.decimals !== undefined) {
+              convertedTokenBalance = parseInt(toDecimalUnits(tokenBalance.toString(), tokenInfo.decimals))
+            }
+          }
+        } catch (error) {
+          console.warn('Failed to convert token balance to decimal units:', error)
+          // Continue with original value if conversion fails
+        }
       }
 
       const tx = new Transaction()
@@ -1397,7 +1467,7 @@ export class SuiVoteService {
           tx.object(voteId),
           tx.object(ADMIN_ID),
           tx.pure.u64(pollIndex),
-          tx.pure.u64(tokenBalance),
+          tx.pure.u64(convertedTokenBalance),
           tx.pure.vector("u64", optionIndices),
           paymentCoin,
           clockObj,
@@ -1421,13 +1491,13 @@ export class SuiVoteService {
  * @param payment SUI payment amount (if required)
  * @returns Transaction to be signed
  */
-castMultipleVotesTransaction(
+async castMultipleVotesTransaction(
   voteId: string,
   pollIndices: number[],
   optionIndicesPerPoll: number[][],
   tokenBalance: number = 0,
   payment = 0,
-): Transaction {
+): Promise<Transaction> {
   try {
     this.checkInitialization()
 
@@ -1480,10 +1550,29 @@ castMultipleVotesTransaction(
       throw new Error("Payment amount must be non-negative")
     }
 
+    // Convert tokenBalance to decimal units if needed
+    let convertedTokenBalance = tokenBalance;
+    if (tokenBalance > 0) {
+      try {
+        // Get vote details to find the token requirement
+        const voteDetails = await this.getVoteDetails(voteId);
+        if (voteDetails.tokenRequirement) {
+          // Get token info to determine decimals
+          const tokenInfo = await this.getTokenInfo(voteDetails.tokenRequirement);
+          if (tokenInfo) {
+            convertedTokenBalance = toDecimalUnits(tokenBalance, tokenInfo.decimals);
+          }
+        }
+      } catch (error) {
+        console.warn('Failed to convert token balance to decimal units:', error);
+        // Use original value if conversion fails
+      }
+    }
+
     // Set a default token balance if none provided
-    if (tokenBalance <= 0) {
+    if (convertedTokenBalance <= 0) {
       // Use a reasonable default value (the contract will check actual balance)
-      tokenBalance = 1;
+      convertedTokenBalance = 1;
     }
 
     const tx = new Transaction()
@@ -1507,6 +1596,7 @@ castMultipleVotesTransaction(
       pollIndices,
       optionIndicesPerPoll,
       tokenBalance,
+      convertedTokenBalance,
       payment
     })
 
@@ -1517,7 +1607,7 @@ castMultipleVotesTransaction(
         tx.object(ADMIN_ID),
         tx.pure.vector("u64", pollIndices),
         tx.pure.vector("vector<u64>", optionIndicesPerPoll),
-        tx.pure.u64(tokenBalance),
+        tx.pure.u64(convertedTokenBalance),
         paymentCoin,
         clockObj,
       ],
@@ -1814,14 +1904,14 @@ castMultipleVotesTransaction(
       const requiredBase = this.parseToBaseUnits(requiredAmount, decimals);
       const userBalance = BigInt(totalBalance);
       
-      // Convert BigInt to number for the transaction
-      const tokenBalance = Number(userBalance);
+      // Convert balance from decimal units to human-readable format
+      const tokenBalance = fromDecimalUnits(Number(userBalance), decimals);
       return { 
         hasBalance: userBalance >= requiredBase,
-        tokenBalance: tokenBalance/1000000000
+        tokenBalance: tokenBalance
       };
     } catch (error) {
-      console.error("checkTokenBalance error:", error);
+      console.error("checkTokenBalance error:", error instanceof Error ? error.message : String(error));
       return { hasBalance: false, tokenBalance: 0 };
     }
   }

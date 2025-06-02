@@ -19,7 +19,7 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog"
-import { useWallet } from "@suiet/wallet-kit"
+import { useCurrentAccount, useConnectWallet, useDisconnectWallet, useWallets } from "@mysten/dapp-kit"
 
 interface WalletConnectButtonProps {
   variant?: "default" | "outline" | "secondary" | "ghost" | "link" | "destructive"
@@ -34,7 +34,14 @@ export function WalletConnectButton({ variant = "default", size = "default", cla
   const [showWalletSelectionDialog, setShowWalletSelectionDialog] = useState(false)
   const [connectingWallet, setConnectingWallet] = useState<string | null>(null)
 
-  const { connected, connecting, disconnect, address, detectedWallets, select, configuredWallets } = useWallet()
+  const currentAccount = useCurrentAccount()
+  const { mutate: connectWallet } = useConnectWallet()
+  const { mutate: disconnectWallet } = useDisconnectWallet()
+  const wallets = useWallets()
+  
+  const connected = !!currentAccount
+  const connecting = isLoading
+  const address = currentAccount?.address || null
 
   // Get wallet icon URL
   const getWalletIcon = (wallet: any) => {
@@ -52,12 +59,8 @@ export function WalletConnectButton({ variant = "default", size = "default", cla
     return "/images/sui-logo.png"
   }
   const getAvailableWallets = () => {
-    const allWallets = [...configuredWallets, ...detectedWallets]
-    // Remove duplicates based on wallet name
-    const uniqueWallets = allWallets.filter((wallet, index, self) =>
-      index === self.findIndex((w) => w.name === wallet.name)
-    )
-    return uniqueWallets.filter((wallet) => wallet.installed)
+    // In Mysten dApp Kit, wallets are automatically filtered to show only available ones
+    return wallets.filter((wallet) => wallet.features['standard:connect'])
   }
 
   const handleConnect = async () => {
@@ -71,56 +74,62 @@ export function WalletConnectButton({ variant = "default", size = "default", cla
 
     if (availableWallets.length === 1) {
       // Only one wallet available, connect directly
-      await connectWallet(availableWallets[0].name)
+      await handleConnectWallet(availableWallets[0])
     } else {
       // Multiple wallets available, show selection dialog
       setShowWalletSelectionDialog(true)
     }
   }
 
-  const connectWallet = async (walletName: string) => {
+  const handleConnectWallet = async (wallet: any) => {
     setIsLoading(true)
-    setConnectingWallet(walletName)
+    setConnectingWallet(wallet.name)
     try {
-      await select(walletName)
+      connectWallet(
+        { wallet },
+        {
+          onSuccess: () => {
+            // Close the dialog immediately after successful selection
+            setShowWalletSelectionDialog(false)
+            
+            // Show success toast
+            toast({
+              title: "Wallet connected",
+              description: `Connected to ${wallet.name}.`,
+            })
+          },
+          onError: (error: any) => {
+            console.error("Failed to connect wallet:", error)
 
-      // Close the dialog immediately after successful selection
-      setShowWalletSelectionDialog(false)
-      
-      // Show success toast
-      toast({
-        title: "Wallet connected",
-        description: `Connected to ${walletName}.`,
-      })
-    } catch (error: any) {
-      console.error("Failed to connect wallet:", error)
+            const errorString = (error.message || error.toString()).toLowerCase()
 
-      const errorString = (error.message || error.toString()).toLowerCase()
-
-      // Handle user rejection
-      if (errorString.includes("user rejection") || errorString.includes("user denied")) {
-        toast({
-          title: "Connection cancelled",
-          description: "You cancelled the wallet connection request.",
-        })
-        // Keep the wallet selection dialog open so user can try another wallet
-      }
-      // Handle timeout errors
-      else if (errorString.includes("timeout")) {
-        toast({
-          title: "Connection timed out",
-          description: "The wallet connection request timed out. Please try again.",
-          variant: "destructive",
-        })
-      }
-      // Handle all other errors
-      else {
-        toast({
-          title: "Connection failed",
-          description: errorString || "Failed to connect wallet. Please try again.",
-          variant: "destructive",
-        })
-      }
+            // Handle user rejection
+            if (errorString.includes("user rejection") || errorString.includes("user denied")) {
+              toast({
+                title: "Connection cancelled",
+                description: "You cancelled the wallet connection request.",
+              })
+              // Keep the wallet selection dialog open so user can try another wallet
+            }
+            // Handle timeout errors
+            else if (errorString.includes("timeout")) {
+              toast({
+                title: "Connection timed out",
+                description: "The wallet connection request timed out. Please try again.",
+                variant: "destructive",
+              })
+            }
+            // Handle all other errors
+            else {
+              toast({
+                title: "Connection failed",
+                description: errorString || "Failed to connect wallet. Please try again.",
+                variant: "destructive",
+              })
+            }
+          },
+        }
+      )
     } finally {
       setIsLoading(false)
       setConnectingWallet(null)
@@ -129,11 +138,20 @@ export function WalletConnectButton({ variant = "default", size = "default", cla
 
   const handleDisconnect = async () => {
     try {
-      await disconnect()
-      toast({
-        title: "Wallet disconnected",
-        description: "Your wallet has been disconnected.",
-      })
+      disconnectWallet(
+        {},
+        {
+          onSuccess: () => {
+            toast({
+              title: "Wallet disconnected",
+              description: "Your wallet has been disconnected.",
+            })
+          },
+          onError: (error) => {
+            console.error("Failed to disconnect wallet:", error)
+          },
+        }
+      )
     } catch (error) {
       console.error("Failed to disconnect wallet:", error)
     }
@@ -207,7 +225,7 @@ export function WalletConnectButton({ variant = "default", size = "default", cla
                   key={wallet.name}
                   variant="outline"
                   className="w-full justify-start gap-3 h-auto p-4"
-                  onClick={() => connectWallet(wallet.name)}
+                  onClick={() => handleConnectWallet(wallet)}
                   disabled={connectingWallet === wallet.name}
                 >
                   <img 
@@ -243,7 +261,7 @@ export function WalletConnectButton({ variant = "default", size = "default", cla
 
   // NoWalletDialog component to guide users to install a wallet
   const NoWalletDialog = () => {
-    const allWallets = [...configuredWallets, ...detectedWallets];
+    const allWallets = wallets;
     const uniqueWallets = allWallets.filter((wallet, index, self) =>
       index === self.findIndex((w) => w.name === wallet.name)
     );
