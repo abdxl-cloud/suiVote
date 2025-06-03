@@ -1,14 +1,15 @@
 /**
- * Enhanced Token Service for Sui Blockchain using BlockVision v2 API
+ * Enhanced Token Service for Sui Blockchain
  * 
  * This service provides comprehensive token information using:
- * - BlockVision v2 API for enhanced coin details with real-time market data
- * - BlockVision RPC API for on-chain metadata fallback
+ * - Sui SDK for on-chain metadata
+ * - CoinGecko API for market data and verification
+ * - SuiVision API for holder count
  * - Comprehensive token validation and caching
  */
 
-import { SuiClient, getFullnodeUrl } from "@mysten/sui/client"
-import { SUI_CONFIG } from "@/config/sui-config"
+import { SuiClient, getFullnodeUrl } from '@mysten/sui/client'
+import { SUI_CONFIG } from '@/config/sui-config'
 
 export interface TokenInfo {
   id: string
@@ -28,94 +29,49 @@ export interface TokenInfo {
   createdTime?: number
 }
 
-interface BlockVisionApiResponse {
-  code: number
-  message: string
-  result: BlockVisionCoinDetail
-}
-
-interface BlockVisionCoinDetail {
-  name: string
-  symbol: string
-  decimals: number
-  logo: string
-  price: string
-  priceChangePercentage24H: string
-  totalSupply: string
-  holders: number
-  marketCap: string
-  packageID: string
-  coinType: string
-  objectType: string
-  website: string
-  creator: string
-  volume24H: string
-  createdTime: number
-  verified: boolean
-  circulating: string
-  scamFlag: number
-  birdeyeLink: string
-}
-
-interface SuiCoinMetadata {
-  decimals: number
-  name: string
-  symbol: string
-  description?: string
-  iconUrl?: string | null
-  id?: string
-}
-
 export class TokenService {
   private client: SuiClient
   private isInitialized = false
   private tokenCache = new Map<string, TokenInfo>()
-  private blockVisionRpcUrl: string
-  private blockVisionApiKey: string
 
-  // Only SUI as the common token
-  private readonly COMMON_TOKENS: Record<string, Partial<TokenInfo>> = {
+  // Common tokens with their CoinGecko IDs
+  private readonly COMMON_TOKENS: Record<string, { coingeckoId: string; info: Partial<TokenInfo> }> = {
     "0x2::sui::SUI": {
-      id: "0x2::sui::SUI",
-      name: "Sui",
-      symbol: "SUI",
-      decimals: 9,
-      iconUrl: "https://assets.coingecko.com/coins/images/26375/large/sui_asset.jpeg",
-      verified: true,
+      coingeckoId: "sui",
+      info: {
+        id: "0x2::sui::SUI",
+        name: "Sui",
+        symbol: "SUI",
+        decimals: 9,
+        iconUrl: "https://assets.coingecko.com/coins/images/26375/large/sui_asset.jpeg",
+        verified: true,
+      }
     }
   }
 
-  constructor(
-    rpcUrl = process.env.NEXT_PUBLIC_BLOCKVISION_RPC_URL || "https://sui-testnet.blockvision.org/v1/2xo63eBBrjZ4n1FKbON8dht4ovo",
-    apiKey = process.env.NEXT_PUBLIC_BLOCKVISION_API_KEY || "2xo63eBBrjZ4n1FKbON8dht4ovo"
-  ) {
+  constructor(network: 'mainnet' | 'testnet' | 'devnet' = 'mainnet') {
     try {
-      this.blockVisionRpcUrl = rpcUrl
-      this.blockVisionApiKey = apiKey
-
-      // Initialize standard Sui client for fallback
-      this.client = new SuiClient({ url: this.blockVisionRpcUrl })
+      this.client = new SuiClient({ url: getFullnodeUrl(network) })
       this.isInitialized = true
       
-      console.log(`✅ BlockVision TokenService initialized`)
-      console.log(`📡 RPC URL: ${this.blockVisionRpcUrl}`)
-      console.log(`🔑 API Key: ${this.blockVisionApiKey.substring(0, 8)}...`)
+      console.log(`✅ TokenService initialized for ${network}`)
 
-      // Pre-populate cache with SUI token
-      const suiToken = this.COMMON_TOKENS["0x2::sui::SUI"]
-      if (suiToken.name && suiToken.symbol && suiToken.decimals !== undefined) {
-        this.tokenCache.set("0x2::sui::SUI", {
-          id: "0x2::sui::SUI",
-          name: suiToken.name,
-          symbol: suiToken.symbol,
-          decimals: suiToken.decimals,
-          iconUrl: suiToken.iconUrl,
-          verified: suiToken.verified || false,
-        })
-      }
+      // Pre-populate cache with common tokens
+      Object.entries(this.COMMON_TOKENS).forEach(([coinType, { info }]) => {
+        if (info.name && info.symbol && info.decimals !== undefined) {
+          this.tokenCache.set(coinType, {
+            id: coinType,
+            name: info.name,
+            symbol: info.symbol,
+            decimals: info.decimals,
+            iconUrl: info.iconUrl,
+            verified: info.verified || false,
+          })
+        }
+      })
 
     } catch (error) {
-      console.error(`❌ Failed to initialize BlockVision TokenService:`, error)
+      console.error(`❌ Failed to initialize TokenService:`, error)
       throw new Error(`TokenService initialization failed: ${error instanceof Error ? error.message : String(error)}`)
     }
   }
@@ -127,401 +83,342 @@ export class TokenService {
   }
 
   /**
-   * Get enhanced coin details from BlockVision v2 API
+   * Heuristic to determine if CoinGecko token is verified
    */
-  private async getCoinDetailFromBlockVision(coinType: string): Promise<BlockVisionCoinDetail | null> {
+  private isCoinGeckoVerified(cg: any): boolean {
+    return !!cg?.market_cap_rank
+  }
+
+  /**
+   * Verify token exists on SUI blockchain
+   */
+  private async isValidSuiToken(coinType: string): Promise<boolean> {
     try {
-      const encodedCoinType = encodeURIComponent(coinType)
-      const url = `https://api.blockvision.org/v2/sui/coin/detail?coinType=${encodedCoinType}`
-      
-      console.log(`🔍 Fetching coin detail from BlockVision v2: ${url}`)
-      
-      const response = await fetch(url, {
-        method: 'GET',
-        headers: {
-          'accept': 'application/json',
-          'x-api-key': this.blockVisionApiKey,
-        },
-      })
+      const metadata = await this.client.getCoinMetadata({ coinType })
+      return metadata !== null
+    } catch (err) {
+      console.warn(`Token validation failed for ${coinType}:`, err instanceof Error ? err.message : String(err))
+      return false
+    }
+  }
 
-      if (!response.ok) {
-        if (response.status === 404) {
-          console.warn(`⚠️ Coin not found in BlockVision API: ${coinType}`)
-          return null
-        }
-        throw new Error(`BlockVision API error: ${response.status} ${response.statusText}`)
-      }
-
-      const data: BlockVisionApiResponse = await response.json()
-      
-      if (!data || data.code !== 200) {
-        console.warn(`⚠️ BlockVision API returned error for ${coinType}:`, data.message)
-        return null
-      }
-
-      if (!data.result) {
-        console.warn(`⚠️ No result in BlockVision response for ${coinType}`)
-        return null
-      }
-
-      console.log(`✅ Got coin detail from BlockVision v2 for ${coinType}:`, data.result)
-      return data.result
-
-    } catch (error) {
-      console.error(`❌ BlockVision v2 API failed for ${coinType}:`, error)
+  /**
+   * Get holder count from SuiVision
+   */
+  private async getHoldersFromSuiVision(coinType: string): Promise<number | null> {
+    try {
+      const res = await fetch(`https://api.suivision.xyz/token/${coinType}`)
+      const data = await res.json()
+      return data?.holders ?? null
+    } catch (err) {
+      console.warn(`SuiVision holders fetch failed for ${coinType}:`, err instanceof Error ? err.message : String(err))
       return null
     }
   }
 
   /**
-   * Get coin metadata using BlockVision RPC (standard Sui RPC)
+   * Get extended coin metadata from multiple sources
    */
-  private async getCoinMetadataFromBlockVisionRpc(coinType: string): Promise<SuiCoinMetadata | null> {
+  private async getExtendedCoinMetadata(coinType: string, coingeckoId?: string): Promise<TokenInfo | null> {
     try {
-      const response = await fetch(this.blockVisionRpcUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          jsonrpc: '2.0',
-          id: 1,
-          method: 'suix_getCoinMetadata',
-          params: [coinType],
-        }),
-      })
-
-      if (!response.ok) {
-        throw new Error(`BlockVision RPC failed: ${response.status} ${response.statusText}`)
-      }
-
-      const data = await response.json()
-      
-      if (data.error) {
-        console.warn(`BlockVision RPC error for ${coinType}:`, data.error.message)
+      // 1. First validate that the token exists on SUI blockchain
+      const isValidToken = await this.isValidSuiToken(coinType)
+      if (!isValidToken) {
+        console.error(`Token ${coinType} not found on SUI blockchain`)
         return null
       }
 
-      if (!data.result) {
-        console.warn(`No metadata found in BlockVision RPC for ${coinType}`)
-        return null
-      }
+      // 2. Fetch from Sui SDK (we know this will work since validation passed)
+      const metadata = await this.client.getCoinMetadata({ coinType })
+      const supplyData = await this.client.getTotalSupply({ coinType })
 
-      console.log(`✅ Got metadata from BlockVision RPC for ${coinType}`)
-      return data.result as SuiCoinMetadata
+      let cg: any = null
+      let holders: number | null = null
 
-    } catch (error) {
-      console.error(`❌ BlockVision RPC getCoinMetadata failed for ${coinType}:`, error)
-      return null
-    }
-  }
-
-  /**
-   * Enhanced coin type validation
-   */
-  private validateCoinType(coinType: string): boolean {
-    if (!coinType || typeof coinType !== 'string') return false
-    
-    // Standard Sui coin type format: 0xPACKAGE::MODULE::STRUCT
-    const standardFormat = /^0x[a-fA-F0-9]+::[a-zA-Z_][a-zA-Z0-9_]*::[a-zA-Z_][a-zA-Z0-9_]*$/
-    
-    // 64-character object ID format
-    const objectIdFormat = /^0x[a-fA-F0-9]{64}$/
-    
-    // Shorter package addresses (common in Sui)
-    const shortFormat = /^0x[a-fA-F0-9]{1,40}::[a-zA-Z_][a-zA-Z0-9_]*::[a-zA-Z_][a-zA-Z0-9_]*$/
-    
-    return standardFormat.test(coinType) || objectIdFormat.test(coinType) || shortFormat.test(coinType)
-  }
-
-  /**
-   * Get comprehensive token information using BlockVision APIs
-   */
-  async getTokenInfo(tokenAddress: string): Promise<TokenInfo | null> {
-    try {
-      this.checkInitialization()
-
-      // Check cache first
-      if (this.tokenCache.has(tokenAddress)) {
-        console.log(`📋 Retrieved from cache: ${tokenAddress}`)
-        return this.tokenCache.get(tokenAddress)!
-      }
-
-      // Check predefined tokens
-      if (this.COMMON_TOKENS[tokenAddress]) {
-        const commonToken = this.COMMON_TOKENS[tokenAddress]
-        if (commonToken.name && commonToken.symbol && commonToken.decimals !== undefined) {
-          const tokenInfo: TokenInfo = {
-            id: tokenAddress,
-            name: commonToken.name,
-            symbol: commonToken.symbol,
-            decimals: commonToken.decimals,
-            iconUrl: commonToken.iconUrl,
-            verified: commonToken.verified || false,
-          }
-          this.tokenCache.set(tokenAddress, tokenInfo)
-          return tokenInfo
-        }
-      }
-
-      // Handle object IDs (try to extract coin type)
-      if (tokenAddress.match(/^0x[a-fA-F0-9]{64}$/)) {
+      // 3. Fetch from CoinGecko if ID is provided
+      if (coingeckoId) {
         try {
-          const object = await this.client.getObject({
-            id: tokenAddress,
-            options: { showType: true, showContent: true },
-          })
-
-          if (object.data?.type?.includes('::coin::Coin<')) {
-            const match = object.data.type.match(/::coin::Coin<(.+)>/)
-            if (match?.[1]) {
-              const coinType = match[1]
-              console.log(`🔍 Extracted coin type ${coinType} from object ${tokenAddress}`)
-              
-              const coinTokenInfo = await this.getTokenInfo(coinType)
-              if (coinTokenInfo) {
-                const modifiedTokenInfo = { ...coinTokenInfo, id: tokenAddress }
-                this.tokenCache.set(tokenAddress, modifiedTokenInfo)
-                return modifiedTokenInfo
-              }
-            }
+          const cgRes = await fetch(`https://api.coingecko.com/api/v3/coins/${coingeckoId}`)
+          if (cgRes.ok) {
+            cg = await cgRes.json()
           }
-        } catch (objectError) {
-          console.warn(`⚠️ Failed to get object info for ${tokenAddress}:`, objectError)
+        } catch (err) {
+          console.warn(`CoinGecko fetch failed for ${coingeckoId}:`, err instanceof Error ? err.message : String(err))
         }
       }
 
-      // Try BlockVision v2 API first (provides enhanced data)
-      const blockVisionDetail = await this.getCoinDetailFromBlockVision(tokenAddress)
-      if (blockVisionDetail) {
-        const tokenInfo: TokenInfo = {
-          id: tokenAddress,
-          name: blockVisionDetail.name,
-          symbol: blockVisionDetail.symbol,
-          decimals: blockVisionDetail.decimals,
-          iconUrl: blockVisionDetail.logo,
-          verified: blockVisionDetail.verified,
-          description: `Website: ${blockVisionDetail.website}`,
-          price: parseFloat(blockVisionDetail.price),
-          priceChange24h: parseFloat(blockVisionDetail.priceChangePercentage24H),
-          holders: blockVisionDetail.holders,
-          totalSupply: blockVisionDetail.totalSupply,
-          marketCap: parseFloat(blockVisionDetail.marketCap),
-          volume24H: parseFloat(blockVisionDetail.volume24H),
-          website: blockVisionDetail.website,
-          createdTime: blockVisionDetail.createdTime,
-        }
-        
-        this.tokenCache.set(tokenAddress, tokenInfo)
-        console.log(`✅ Created token info from BlockVision v2 API for ${tokenAddress}`)
-        return tokenInfo
+      // 4. Fetch holders from SuiVision
+      holders = await this.getHoldersFromSuiVision(coinType)
+
+      // 5. Construct response
+      return {
+        id: coinType,
+        name: metadata?.name ?? cg?.name ?? null,
+        symbol: metadata?.symbol ?? cg?.symbol?.toUpperCase() ?? null,
+        decimals: metadata?.decimals ?? null,
+        iconUrl: metadata?.iconUrl ?? cg?.image?.large ?? null,
+        verified: cg ? this.isCoinGeckoVerified(cg) : false,
+        price: cg?.market_data?.current_price?.usd ?? null,
+        priceChange24h: cg?.market_data?.price_change_percentage_24h ?? null,
+        marketCap: cg?.market_data?.market_cap?.usd ?? null,
+        description: metadata?.description ?? cg?.description?.en ?? null,
+        holders,
+        totalSupply: supplyData?.totalSupply ?? null,
+        volume24H: cg?.market_data?.total_volume?.usd ?? null,
+        website: cg?.links?.homepage?.[0] ?? null,
+        createdTime: cg?.genesis_date ? new Date(cg.genesis_date).getTime() : null,
       }
-
-      // Fallback to BlockVision RPC (standard Sui RPC)
-      const metadata = await this.getCoinMetadataFromBlockVisionRpc(tokenAddress)
-      if (metadata) {
-        const tokenInfo: TokenInfo = {
-          id: tokenAddress,
-          name: metadata.name,
-          symbol: metadata.symbol,
-          decimals: metadata.decimals,
-          iconUrl: metadata.iconUrl || undefined,
-          verified: false,
-          description: metadata.description,
-        }
-        
-        this.tokenCache.set(tokenAddress, tokenInfo)
-        console.log(`✅ Created token info from BlockVision RPC for ${tokenAddress}`)
-        return tokenInfo
-      }
-
-      // Create fallback token info for valid-looking addresses
-      if (this.validateCoinType(tokenAddress)) {
-        let symbol = "UNKNOWN"
-        let name = "Unknown Token"
-        
-        if (tokenAddress.includes("::")) {
-          const parts = tokenAddress.split("::")
-          symbol = parts[parts.length - 1]?.toUpperCase() || "UNKNOWN"
-          name = `Token (${symbol})`
-        } else if (tokenAddress.startsWith("0x")) {
-          const shortAddr = tokenAddress.length > 10 ? 
-            `${tokenAddress.substring(0, 6)}...${tokenAddress.substring(tokenAddress.length - 4)}` : 
-            tokenAddress
-          symbol = shortAddr
-          name = `Token ${shortAddr}`
-        }
-
-        const fallbackTokenInfo: TokenInfo = {
-          id: tokenAddress,
-          name,
-          symbol,
-          decimals: 9, // Default for Sui
-          verified: false,
-        }
-
-        this.tokenCache.set(tokenAddress, fallbackTokenInfo)
-        console.log(`⚠️ Created fallback token info for ${tokenAddress}`)
-        return fallbackTokenInfo
-      }
-
-      return null
-
-    } catch (error) {
-      console.error(`❌ Failed to get token info for ${tokenAddress}:`, error)
+    } catch (err) {
+      console.error('Error fetching extended metadata:', err)
       return null
     }
   }
 
   /**
-   * Get popular tokens - SUI only per user request
+   * Get basic token metadata from Sui SDK only
    */
-  async getPopularTokens(limit = 10): Promise<TokenInfo[]> {
+  private async getBasicTokenMetadata(coinType: string): Promise<TokenInfo | null> {
     try {
-      this.checkInitialization()
-
-      // Return only SUI token as requested by user
-      const suiTokenInfo = await this.getTokenInfo("0x2::sui::SUI")
-      if (suiTokenInfo) {
-        console.log('✅ Returning SUI token only')
-        return [suiTokenInfo]
+      const metadata = await this.client.getCoinMetadata({ coinType })
+      if (!metadata) {
+        return null
       }
 
-      return []
-
+      return {
+        id: coinType,
+        name: metadata.name || 'Unknown Token',
+        symbol: metadata.symbol || 'UNKNOWN',
+        decimals: metadata.decimals || 9,
+        iconUrl: metadata.iconUrl || undefined,
+        verified: false,
+        description: metadata.description || undefined,
+      }
     } catch (error) {
-      console.error('❌ Failed to get popular tokens:', error)
-      return []
+      console.error(`Failed to fetch basic metadata for ${coinType}:`, error)
+      return null
     }
   }
 
   /**
-   * Enhanced token search using BlockVision v2 API
+   * Get token information with caching
    */
-  async searchTokens(query: string, limit = 10): Promise<TokenInfo[]> {
+  async getTokenInfo(coinType: string): Promise<TokenInfo | null> {
+    this.checkInitialization()
+
+    // Check cache first
+    if (this.tokenCache.has(coinType)) {
+      return this.tokenCache.get(coinType)!
+    }
+
     try {
-      this.checkInitialization()
+      let tokenInfo: TokenInfo | null = null
 
-      if (!query.trim()) {
-        return this.getPopularTokens(limit)
+      // Check if it's a common token with CoinGecko ID
+      const commonToken = this.COMMON_TOKENS[coinType]
+      if (commonToken) {
+        tokenInfo = await this.getExtendedCoinMetadata(coinType, commonToken.coingeckoId)
+      } else {
+        // For unknown tokens, try basic metadata first
+        tokenInfo = await this.getBasicTokenMetadata(coinType)
       }
 
-      // If query looks like a token address, try to get that specific token
-      if (this.validateCoinType(query.trim())) {
-        const token = await this.getTokenInfo(query.trim())
-        return token ? [token] : []
+      if (tokenInfo) {
+        // Cache the result
+        this.tokenCache.set(coinType, tokenInfo)
+        console.log(`✅ Token info cached for ${coinType}: ${tokenInfo.name} (${tokenInfo.symbol})`)
+      } else {
+        console.warn(`⚠️ No token info found for ${coinType}`)
       }
 
-      // Search in cache
-      const lowerQuery = query.toLowerCase()
-      const allCachedTokens = Array.from(this.tokenCache.values())
-      
-      const results = allCachedTokens
-        .filter(token =>
-          token.name.toLowerCase().includes(lowerQuery) ||
-          token.symbol.toLowerCase().includes(lowerQuery) ||
-          token.id.toLowerCase().includes(lowerQuery)
-        )
-        .slice(0, limit)
-
-      console.log(`🔍 Search for "${query}" returned ${results.length} results`)
-      return results
-
+      return tokenInfo
     } catch (error) {
-      console.error('❌ Token search failed:', error)
-      return []
+      console.error(`❌ Error fetching token info for ${coinType}:`, error)
+      return null
     }
   }
 
   /**
-   * Enhanced token address validation using BlockVision v2 API
+   * Get multiple token information
    */
-  async validateTokenAddress(tokenAddress: string): Promise<{
+  async getMultipleTokenInfo(coinTypes: string[]): Promise<Record<string, TokenInfo | null>> {
+    this.checkInitialization()
+
+    const results: Record<string, TokenInfo | null> = {}
+    
+    // Process tokens in parallel
+    const promises = coinTypes.map(async (coinType) => {
+      const info = await this.getTokenInfo(coinType)
+      return { coinType, info }
+    })
+
+    const resolvedPromises = await Promise.allSettled(promises)
+    
+    resolvedPromises.forEach((result, index) => {
+      const coinType = coinTypes[index]
+      if (result.status === 'fulfilled') {
+        results[coinType] = result.value.info
+      } else {
+        console.error(`Failed to fetch info for ${coinType}:`, result.reason)
+        results[coinType] = null
+      }
+    })
+
+    return results
+  }
+
+  /**
+   * Search for tokens by symbol or name
+   */
+  async searchTokens(query: string, limit: number = 10): Promise<TokenInfo[]> {
+    this.checkInitialization()
+
+    const results: TokenInfo[] = []
+    const lowerQuery = query.toLowerCase()
+
+    // Search in cache first
+    for (const [coinType, tokenInfo] of this.tokenCache.entries()) {
+      if (
+        tokenInfo.symbol.toLowerCase().includes(lowerQuery) ||
+        tokenInfo.name.toLowerCase().includes(lowerQuery)
+      ) {
+        results.push(tokenInfo)
+        if (results.length >= limit) break
+      }
+    }
+
+    return results
+  }
+
+  /**
+   * Get popular tokens (commonly used tokens)
+   */
+  async getPopularTokens(limit: number = 5): Promise<TokenInfo[]> {
+    this.checkInitialization()
+
+    const popularCoinTypes = Object.keys(this.COMMON_TOKENS).slice(0, limit)
+    const results: TokenInfo[] = []
+
+    for (const coinType of popularCoinTypes) {
+      const tokenInfo = await this.getTokenInfo(coinType)
+      if (tokenInfo) {
+        results.push(tokenInfo)
+      }
+    }
+
+    return results
+  }
+
+  /**
+   * Validate token address and return validation result
+   */
+  async validateTokenAddress(coinType: string): Promise<{
     isValid: boolean
-    tokenInfo?: TokenInfo
     error?: string
+    tokenInfo?: TokenInfo
   }> {
+    this.checkInitialization()
+
     try {
-      this.checkInitialization()
-
-      if (!tokenAddress?.trim()) {
-        return {
-          isValid: false,
-          error: 'Token address is required'
-        }
-      }
-
-      const trimmedAddress = tokenAddress.trim()
-
       // Basic format validation
-      if (!this.validateCoinType(trimmedAddress)) {
+      if (!TokenService.isValidCoinType(coinType)) {
         return {
           isValid: false,
-          error: 'Invalid token format. Expected "0xPACKAGE::MODULE::STRUCT" or "0x..." format'
+          error: "Invalid coin type format. Expected format: 0x...::module::struct"
         }
       }
 
-      // Try to get token info using BlockVision v2 API
-      const tokenInfo = await this.getTokenInfo(trimmedAddress)
+      // Check if token exists on blockchain
+      const isValid = await this.isValidSuiToken(coinType)
+      if (!isValid) {
+        return {
+          isValid: false,
+          error: "Token not found on Sui blockchain"
+        }
+      }
 
+      // Get token info
+      const tokenInfo = await this.getTokenInfo(coinType)
       if (!tokenInfo) {
         return {
           isValid: false,
-          error: 'Token not found or metadata unavailable'
+          error: "Unable to fetch token metadata"
         }
       }
 
       return {
         isValid: true,
-        tokenInfo,
+        tokenInfo
       }
-
     } catch (error) {
-      console.error(`❌ Token validation failed for ${tokenAddress}:`, error)
       return {
         isValid: false,
-        error: `Validation error: ${error instanceof Error ? error.message : String(error)}`
+        error: error instanceof Error ? error.message : "Validation failed"
       }
     }
   }
 
   /**
-   * Clear cache
+   * Clear the token cache
    */
   clearCache(): void {
-    const commonTokensOnly = new Map<string, TokenInfo>()
-    const suiToken = this.COMMON_TOKENS["0x2::sui::SUI"]
-    if (suiToken.name && suiToken.symbol && suiToken.decimals !== undefined) {
-      commonTokensOnly.set("0x2::sui::SUI", {
-        id: "0x2::sui::SUI",
-        name: suiToken.name,
-        symbol: suiToken.symbol,
-        decimals: suiToken.decimals,
-        iconUrl: suiToken.iconUrl,
-        verified: suiToken.verified || false,
-      })
-    }
-    this.tokenCache = commonTokensOnly
-    console.log('🧹 Token cache cleared, kept SUI token')
+    this.tokenCache.clear()
+    console.log('🧹 Token cache cleared')
+    
+    // Re-populate with common tokens
+    Object.entries(this.COMMON_TOKENS).forEach(([coinType, { info }]) => {
+      if (info.name && info.symbol && info.decimals !== undefined) {
+        this.tokenCache.set(coinType, {
+          id: coinType,
+          name: info.name,
+          symbol: info.symbol,
+          decimals: info.decimals,
+          iconUrl: info.iconUrl,
+          verified: info.verified || false,
+        })
+      }
+    })
   }
 
   /**
-   * Get service status
+   * Get cache statistics
    */
-  getStatus(): {
-    initialized: boolean
-    rpcUrl: string
-    apiKey: string
-    cacheSize: number
-  } {
+  getCacheStats(): { size: number; tokens: string[] } {
     return {
-      initialized: this.isInitialized,
-      rpcUrl: this.blockVisionRpcUrl,
-      apiKey: this.blockVisionApiKey.substring(0, 8) + '...',
-      cacheSize: this.tokenCache.size,
+      size: this.tokenCache.size,
+      tokens: Array.from(this.tokenCache.keys())
     }
+  }
+
+  /**
+   * Add a custom token with CoinGecko ID for enhanced data
+   */
+  addCustomToken(coinType: string, coingeckoId: string, basicInfo?: Partial<TokenInfo>): void {
+    this.COMMON_TOKENS[coinType] = {
+      coingeckoId,
+      info: basicInfo || {}
+    }
+    
+    // Remove from cache to force refresh
+    this.tokenCache.delete(coinType)
+    console.log(`📝 Custom token added: ${coinType} -> ${coingeckoId}`)
+  }
+
+  /**
+   * Validate if a coin type string is properly formatted
+   */
+  static isValidCoinType(coinType: string): boolean {
+    // Basic validation for Sui coin type format
+    const coinTypeRegex = /^0x[a-fA-F0-9]+::[a-zA-Z_][a-zA-Z0-9_]*::[a-zA-Z_][a-zA-Z0-9_]*$/
+    return coinTypeRegex.test(coinType)
+  }
+
+  /**
+   * Get the native SUI token info
+   */
+  getSuiTokenInfo(): TokenInfo {
+    return this.tokenCache.get("0x2::sui::SUI")!
   }
 }
 
-// Export singleton instance using environment variables
-export const tokenService = new TokenService()
+// Export a default instance
+export const tokenService = new TokenService(SUI_CONFIG.NETWORK as 'mainnet' | 'testnet' | 'devnet')

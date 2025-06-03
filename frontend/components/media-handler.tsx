@@ -4,12 +4,12 @@ import React, {createContext, useCallback, useContext, useState} from "react"
 import {Transaction} from "@mysten/sui/transactions"
 import {useSuiVote} from "@/hooks/use-suivote"
 import {toast} from "sonner"
+import SUI_CONFIG from "@/config/sui-config"
 
-// Define the environment variables for Walrus service
-// In a real implementation, these would come from environment variables
-const WALRUS_PUBLISHER_URL = process.env.NEXT_PUBLIC_WALRUS_PUBLISHER_URL || "https://publisher.testnet.walrus.xyz"
-const WALRUS_AGGREGATOR_URL = process.env.NEXT_PUBLIC_WALRUS_AGGREGATOR_URL || "https://aggregator.testnet.walrus.xyz"
-const WALRUS_STORAGE_EPOCHS = process.env.NEXT_PUBLIC_WALRUS_STORAGE_EPOCHS || "10"
+// Walrus service configuration from centralized config
+const WALRUS_PUBLISHER_URL = SUI_CONFIG.WALRUS_PUBLISHER_URL
+const WALRUS_AGGREGATOR_URL = SUI_CONFIG.WALRUS_AGGREGATOR_URL
+const WALRUS_STORAGE_EPOCHS = SUI_CONFIG.WALRUS_STORAGE_EPOCHS
 
 // Media file type definition
 interface MediaFile {
@@ -258,7 +258,7 @@ export function VoteMediaHandler({ children }: { children: (handlers: MediaHandl
       console.log(pollData)
       // Create a transaction using the SuiVoteService
       
-      const transaction = createCompleteVoteTransaction(
+      const transaction = await createCompleteVoteTransaction(
         params.voteTitle,
         params.voteDescription,
         startTimestamp,

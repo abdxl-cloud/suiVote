@@ -43,7 +43,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert"
 import { motion, AnimatePresence } from "framer-motion"
 import Link from "next/link"
 import { useSuiVote } from "@/hooks/use-suivote"
-import { useWallet } from "@suiet/wallet-kit"
+import { useWallet } from "@/contexts/wallet-context"
 import { formatDistanceToNow, format, subDays, differenceInDays, addDays } from "date-fns"
 import { Progress } from "@/components/ui/progress"
 import { Separator } from "@/components/ui/separator"
@@ -84,8 +84,9 @@ export default function DashboardPage() {
   const [now, setNow] = useState(new Date())
 
   const wallet = useWallet()
-  const { getMyVotes, loading, error, subscribeToVoteUpdates } = useSuiVote()
-  const [votes, setVotes] = useState([])
+  const { getMyVotes, getVotesCreatedByAddress, loading, error, subscribeToVoteUpdates } = useSuiVote()
+  const [votes, setVotes] = useState<any[]>([])
+  const [createdVotes, setCreatedVotes] = useState<any[]>([])
 
   // Update the current time every minute to keep countdowns accurate
   useEffect(() => {
@@ -99,26 +100,117 @@ export default function DashboardPage() {
     if (wallet.connected && wallet.address) {
       const fetchVotes = async () => {
         try {
-          const { data } = await getMyVotes(wallet.address)
+          const { data } = await getMyVotes(wallet.address!)
           setVotes(data)
           
-          // Set up real-time updates for each vote
+          // Also fetch votes created by the user for the polls display
+          const { data: createdData } = await getVotesCreatedByAddress(wallet.address!)
+          setCreatedVotes(createdData)
+          
+          // Set up real-time updates for each vote (for analytics)
           const unsubscribers = data.map((vote) => {
-            // Only subscribe to active votes or votes with live stats enabled
-            if (vote.status === "active" || vote.showLiveStats) {
-              return subscribeToVoteUpdates(vote.id, (updatedVote) => {
-                // Update the specific vote in the votes array
-                setVotes(prevVotes => 
-                  prevVotes.map(v => v.id === updatedVote.id ? { ...v, ...updatedVote } : v)
-                )
-              })
-            }
-            return () => {}
+            return subscribeToVoteUpdates(vote.id, (updatedVoteDetails) => {
+              // Update the specific vote in the votes array
+              setVotes(prevVotes => 
+                prevVotes.map(v => {
+                  if (v.id === updatedVoteDetails.id) {
+                    // Determine the correct status based on the update
+                    let finalStatus = v.status;
+                    
+                    // Handle status transitions based on current state and updates
+                    if (updatedVoteDetails.status === "voted") {
+                      // If the service detected the user has voted, always use "voted"
+                      finalStatus = "voted";
+                    } else if (v.status === "voted") {
+                      // Once voted, status should never change back
+                      finalStatus = "voted";
+                    } else if (v.status === "pending") {
+                      // Pending votes can transition to closed when they end
+                      if (updatedVoteDetails.status === "closed") {
+                        finalStatus = "closed";
+                      } else {
+                        // Otherwise, keep pending status (don't let it become "active")
+                        finalStatus = "pending";
+                      }
+                    } else {
+                      // For other statuses (upcoming, active, closed), use the updated status
+                      finalStatus = updatedVoteDetails.status;
+                    }
+                    
+                    return {
+                      ...v,
+                      status: finalStatus,
+                      totalVotes: updatedVoteDetails.totalVotes,
+                      pollsCount: updatedVoteDetails.pollsCount,
+                      endTimestamp: updatedVoteDetails.endTimestamp,
+                      startTimestamp: updatedVoteDetails.startTimestamp,
+                      tokenRequirement: updatedVoteDetails.tokenRequirement,
+                      tokenAmount: updatedVoteDetails.tokenAmount,
+                      hasWhitelist: updatedVoteDetails.hasWhitelist,
+                      title: updatedVoteDetails.title,
+                      description: updatedVoteDetails.description
+                    }
+                  }
+                  return v
+                })
+              )
+            })
+          })
+          
+          // Set up real-time updates for created votes (for My Polls display)
+          const createdUnsubscribers = createdData.map((vote) => {
+            return subscribeToVoteUpdates(vote.id, (updatedVoteDetails) => {
+              // Update the specific vote in the createdVotes array
+              setCreatedVotes(prevVotes => 
+                prevVotes.map(v => {
+                  if (v.id === updatedVoteDetails.id) {
+                    // Determine the correct status based on the update
+                    let finalStatus = v.status;
+                    
+                    // Handle status transitions based on current state and updates
+                    if (updatedVoteDetails.status === "voted") {
+                      // If the service detected the user has voted, always use "voted"
+                      finalStatus = "voted";
+                    } else if (v.status === "voted") {
+                      // Once voted, status should never change back
+                      finalStatus = "voted";
+                    } else if (v.status === "pending") {
+                      // Pending votes can transition to closed when they end
+                      if (updatedVoteDetails.status === "closed") {
+                        finalStatus = "closed";
+                      } else {
+                        // Otherwise, keep pending status (don't let it become "active")
+                        finalStatus = "pending";
+                      }
+                    } else {
+                      // For other statuses (upcoming, active, closed), use the updated status
+                      finalStatus = updatedVoteDetails.status;
+                    }
+                    
+                    return {
+                      ...v,
+                      status: finalStatus,
+                      totalVotes: updatedVoteDetails.totalVotes,
+                      pollsCount: updatedVoteDetails.pollsCount,
+                      endTimestamp: updatedVoteDetails.endTimestamp,
+                      startTimestamp: updatedVoteDetails.startTimestamp,
+                      tokenRequirement: updatedVoteDetails.tokenRequirement,
+                      tokenAmount: updatedVoteDetails.tokenAmount,
+                      hasWhitelist: updatedVoteDetails.hasWhitelist,
+                      title: updatedVoteDetails.title,
+                      description: updatedVoteDetails.description
+                    }
+                  }
+                  return v
+                })
+              )
+            })
           })
           
           // Clean up subscriptions when component unmounts or when votes change
           return () => {
             unsubscribers.forEach(unsubscribe => unsubscribe())
+            createdUnsubscribers.forEach(unsubscribe => unsubscribe())
           }
         } catch (err) {
           console.error("Error fetching votes:", err)
@@ -126,7 +218,7 @@ export default function DashboardPage() {
       }
       fetchVotes()
     }
-  }, [wallet.connected, wallet.address, getMyVotes, subscribeToVoteUpdates])
+  }, [wallet.connected, wallet.address, getMyVotes, getVotesCreatedByAddress, subscribeToVoteUpdates])
 
   useEffect(() => {
     // Check if we're coming from a successful vote creation
@@ -160,10 +252,10 @@ export default function DashboardPage() {
     if (!votes.length) return null
 
     // Total votes
-    const totalVotes = votes.reduce((sum, vote) => sum + vote.votes, 0)
+    const totalVotes = votes.reduce((sum, vote) => sum + vote.totalVotes, 0)
     
-    // Total polls
-    const totalPolls = votes.reduce((sum, vote) => sum + vote.pollCount, 0)
+    // Total polls (from created votes, not participated votes)
+    const totalPolls = createdVotes.reduce((sum, vote) => sum + vote.pollsCount, 0)
     
     // Get whitelist stats
     const whitelistedVotes = votes.filter(vote => vote.hasWhitelist && vote.isWhitelisted).length
@@ -226,19 +318,16 @@ export default function DashboardPage() {
     ].filter(status => status.value > 0)
 
     // Poll count vs. participation data
-    const pollCountData = []
-    const pollCounts = [...new Set(votes.map(vote => vote.pollCount))].sort((a, b) => a - b)
-    
-    pollCounts.forEach(count => {
-      const votesWithCount = votes.filter(vote => vote.pollCount === count)
-      if (votesWithCount.length > 0) {
-        const avgParticipation = votesWithCount.reduce((sum, vote) => sum + vote.votes, 0) / votesWithCount.length
-        
-        pollCountData.push({
-          pollCount: count,
-          avgParticipation: Math.round(avgParticipation),
-          votes: votesWithCount.length
-        })
+    const pollCounts = [...new Set(votes.map(vote => vote.pollsCount))].sort((a, b) => a - b)
+    const pollCountData = pollCounts.map(count => {
+      const votesWithCount = votes.filter(vote => vote.pollsCount === count)
+      const totalParticipation = votesWithCount.reduce((sum, vote) => sum + vote.votes, 0)
+      const avgParticipation = votesWithCount.length > 0 ? totalParticipation / votesWithCount.length : 0
+      
+      return {
+        pollCount: count,
+        avgParticipation: Math.round(avgParticipation),
+        votes: votesWithCount.length
       }
     })
 
@@ -264,16 +353,16 @@ export default function DashboardPage() {
       voteTypes,
       statusDistribution,
       popularVotes,
-      // Calculate engagement rate (votes cast / potential audience)
-      engagementRate: totalVotes > 0 ? Math.round((totalVotes / (votes.length * 100)) * 100) : 0
+      // Calculate engagement rate (percentage of created votes that received participation)
+      engagementRate: createdVotes.length > 0 ? Math.round((createdVotes.filter(vote => vote.totalVotes > 0).length / createdVotes.length) * 100) : 0
     }
-  }, [votes, votesByStatus, now])
+  }, [votes, createdVotes, votesByStatus, now])
 
-  // Filter votes based on search and filters
+  // Filter votes based on search and filters (using createdVotes for polls display)
   const filteredVotes = useMemo(() => {
-    if (!votes.length) return []
+    if (!createdVotes.length) return []
     
-    return votes
+    return createdVotes
       .filter((vote) => vote.title?.toLowerCase().includes(searchQuery.toLowerCase()))
       .filter((vote) => (filterStatus === "all" ? true : vote.status === filterStatus))
       // Filter by date range if needed
@@ -286,10 +375,10 @@ export default function DashboardPage() {
         
         return nowTime - voteDate <= daysInMs
       })
-  }, [votes, searchQuery, filterStatus, filterDate, now])
+  }, [createdVotes, searchQuery, filterStatus, filterDate, now])
 
   // Helper function to render status badge
-  const renderStatusBadge = (status) => {
+  const renderStatusBadge = (status: string) => {
     switch (status) {
       case "active":
         return (
@@ -332,7 +421,7 @@ export default function DashboardPage() {
   }
 
   // Render helper for feature badges
-  const renderFeatureBadges = (vote) => (
+  const renderFeatureBadges = (vote: any) => (
     <div className="flex flex-wrap gap-1.5 mt-2">
       {vote.hasWhitelist && (
         <TooltipProvider>
@@ -371,7 +460,7 @@ export default function DashboardPage() {
   )
 
   // Format time remaining
-  const formatTimeRemaining = (endTimestamp) => {
+  const formatTimeRemaining = (endTimestamp: number) => {
     try {
       const end = new Date(endTimestamp)
       const timeRemaining = end.getTime() - now.getTime()
@@ -414,11 +503,11 @@ export default function DashboardPage() {
           className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4"
         >
           <div>
-            <h1 className="text-3xl font-bold tracking-tight">Dashboard</h1>
-            <p className="text-muted-foreground mt-1">Your voting analytics and insights</p>
+            <h1 className="text-4xl md:text-5xl font-bold tracking-tight bg-gradient-to-r from-foreground via-primary to-foreground bg-clip-text text-transparent">Dashboard</h1>
+            <p className="text-lg md:text-xl text-muted-foreground mt-2 leading-relaxed max-w-2xl">Your voting analytics and insights with transparency and security</p>
           </div>
           <Link href="/create">
-            <Button size="lg" className="gap-2 w-full sm:w-auto">
+            <Button size="lg" className="gap-2 w-full sm:w-auto shadow-lg hover:shadow-xl transition-all duration-300">
               <Plus className="h-4 w-4" />
               Create New Vote
             </Button>
@@ -460,19 +549,19 @@ export default function DashboardPage() {
         {wallet.connected && (
           <div className="space-y-8">
             {/* Quick Stats */}
-            <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              <Card>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm font-medium">Total Votes</CardTitle>
+            <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 lg:gap-8">
+              <Card className="border-0 bg-gradient-to-br from-background/80 to-primary/5 backdrop-blur-sm hover:shadow-xl hover:shadow-primary/10 transition-all duration-500 hover:-translate-y-1 group">
+                <CardHeader className="pb-4">
+                  <CardTitle className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Total Votes</CardTitle>
                 </CardHeader>
                 <CardContent className="pb-3">
                   <div className="flex items-center">
-                    <div className="mr-2 rounded-full bg-blue-500/10 p-1.5">
-                      <Vote className="h-5 w-5 text-blue-500" />
+                    <div className="mr-3 p-3 rounded-xl bg-gradient-to-br from-primary/20 to-blue-500/10 group-hover:scale-110 transition-transform duration-300">
+                      <Vote className="h-6 w-6 text-primary" />
                     </div>
-                    <div className="text-2xl font-bold">{votes.length}</div>
+                    <div className="text-3xl font-bold bg-gradient-to-r from-foreground to-foreground/80 bg-clip-text text-transparent">{votes.length}</div>
                   </div>
-                  <div className="mt-1 flex flex-wrap gap-2">
+                  <div className="mt-3 flex flex-wrap gap-2">
                     <Badge variant="outline" className="bg-green-100/50 dark:bg-green-900/20 text-green-700 dark:text-green-400">
                       {analytics?.activeCount || 0} Active
                     </Badge>
@@ -489,18 +578,18 @@ export default function DashboardPage() {
                 </CardContent>
               </Card>
               
-              <Card>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm font-medium">Votes Received</CardTitle>
+              <Card className="border-0 bg-gradient-to-br from-background/80 to-green-500/5 backdrop-blur-sm hover:shadow-xl hover:shadow-green-500/10 transition-all duration-500 hover:-translate-y-1 group">
+                <CardHeader className="pb-4">
+                  <CardTitle className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Votes Received</CardTitle>
                 </CardHeader>
                 <CardContent className="pb-3">
                   <div className="flex items-center">
-                    <div className="mr-2 rounded-full bg-green-500/10 p-1.5">
-                      <Users className="h-5 w-5 text-green-500" />
+                    <div className="mr-3 p-3 rounded-xl bg-gradient-to-br from-green-500/20 to-emerald-500/10 group-hover:scale-110 transition-transform duration-300">
+                      <Users className="h-6 w-6 text-green-600" />
                     </div>
-                    <div className="text-2xl font-bold">{analytics?.totalVotes || 0}</div>
+                    <div className="text-3xl font-bold bg-gradient-to-r from-foreground to-foreground/80 bg-clip-text text-transparent">{analytics?.totalVotes || 0}</div>
                   </div>
-                  <div className="mt-1 text-sm text-muted-foreground">
+                  <div className="mt-2 text-sm text-muted-foreground font-medium">
                     {votes.length > 0 ? (
                       <div className="flex items-center gap-1">
                         <Target className="h-3 w-3" />
@@ -513,22 +602,22 @@ export default function DashboardPage() {
                 </CardContent>
               </Card>
               
-              <Card>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm font-medium">Polls Created</CardTitle>
+              <Card className="border-0 bg-gradient-to-br from-background/80 to-purple-500/5 backdrop-blur-sm hover:shadow-xl hover:shadow-purple-500/10 transition-all duration-500 hover:-translate-y-1 group">
+                <CardHeader className="pb-4">
+                  <CardTitle className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Polls Created</CardTitle>
                 </CardHeader>
                 <CardContent className="pb-3">
                   <div className="flex items-center">
-                    <div className="mr-2 rounded-full bg-purple-500/10 p-1.5">
-                      <ListChecks className="h-5 w-5 text-purple-500" />
+                    <div className="mr-3 p-3 rounded-xl bg-gradient-to-br from-purple-500/20 to-violet-500/10 group-hover:scale-110 transition-transform duration-300">
+                      <ListChecks className="h-6 w-6 text-purple-600" />
                     </div>
-                    <div className="text-2xl font-bold">{analytics?.totalPolls || 0}</div>
+                    <div className="text-3xl font-bold bg-gradient-to-r from-foreground to-foreground/80 bg-clip-text text-transparent">{analytics?.totalPolls || 0}</div>
                   </div>
-                  <div className="mt-1 text-sm text-muted-foreground">
-                    {votes.length > 0 ? (
+                  <div className="mt-2 text-sm text-muted-foreground font-medium">
+                    {createdVotes.length > 0 ? (
                       <div className="flex items-center gap-1">
                         <TrendingUp className="h-3 w-3" />
-                        <span>Avg {((analytics?.totalPolls || 0) / votes.length).toFixed(1)} polls per vote</span>
+                        <span>Avg {((analytics?.totalPolls || 0) / createdVotes.length).toFixed(1)} polls per vote</span>
                       </div>
                     ) : (
                       <span>No polls created yet</span>
@@ -537,23 +626,23 @@ export default function DashboardPage() {
                 </CardContent>
               </Card>
               
-              <Card>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm font-medium">Engagement Rate</CardTitle>
+              <Card className="border-0 bg-gradient-to-br from-background/80 to-amber-500/5 backdrop-blur-sm hover:shadow-xl hover:shadow-amber-500/10 transition-all duration-500 hover:-translate-y-1 group">
+                <CardHeader className="pb-4">
+                  <CardTitle className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Engagement Rate</CardTitle>
                 </CardHeader>
                 <CardContent className="pb-3">
                   <div className="flex items-center">
-                    <div className="mr-2 rounded-full bg-amber-500/10 p-1.5">
-                      <Award className="h-5 w-5 text-amber-500" />
+                    <div className="mr-3 p-3 rounded-xl bg-gradient-to-br from-amber-500/20 to-orange-500/10 group-hover:scale-110 transition-transform duration-300">
+                      <Award className="h-6 w-6 text-amber-600" />
                     </div>
-                    <div className="text-2xl font-bold">
+                    <div className="text-3xl font-bold bg-gradient-to-r from-foreground to-foreground/80 bg-clip-text text-transparent">
                       {analytics?.engagementRate || 0}%
                     </div>
                   </div>
-                  <div className="mt-1 flex items-center">
+                  <div className="mt-2 flex items-center">
                     <Progress 
                       value={analytics?.engagementRate || 0} 
-                      className="h-1.5 flex-grow" 
+                      className="h-2 flex-grow" 
                     />
                   </div>
                 </CardContent>
@@ -659,12 +748,12 @@ export default function DashboardPage() {
                                 <div className="flex items-center space-x-2 text-xs text-muted-foreground">
                                   <span className="flex items-center">
                                     <Users className="h-3 w-3 mr-1" />
-                                    {vote.votes} votes
+                                    {vote.totalVotes} votes
                                   </span>
                                   <span>•</span>
                                   <span className="flex items-center">
                                     <ListChecks className="h-3 w-3 mr-1" />
-                                    {vote.pollCount} polls
+                                    {vote.pollsCount} polls
                                   </span>
                                 </div>
                               </div>
@@ -821,8 +910,132 @@ export default function DashboardPage() {
                 </Card>
               </div>
             </div>
+            {/* Enhanced Polls Section */}
+            <div className="space-y-8">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                <div>
+                  <h2 className="text-3xl font-bold bg-gradient-to-r from-foreground to-foreground/80 bg-clip-text text-transparent">
+                    Your Polls
+                  </h2>
+                  <p className="text-muted-foreground mt-2">
+                    Manage and monitor your active voting campaigns
+                  </p>
+                </div>
+                <div className="flex gap-3">
+                  <Button variant="outline" size="lg" className="gap-2">
+                    <Filter className="h-4 w-4" />
+                    Filter
+                  </Button>
+                  <Link href="/create">
+                    <Button size="lg" className="gap-2 shadow-lg hover:shadow-xl transition-all duration-300">
+                      <Plus className="h-4 w-4" />
+                      Create Poll
+                    </Button>
+                  </Link>
+                </div>
+              </div>
+
+              {loading ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 lg:gap-8">
+                  {[...Array(6)].map((_, i) => (
+                    <Card key={i} className="animate-pulse border-0 bg-gradient-to-br from-background/80 to-muted/20 backdrop-blur-sm">
+                      <CardHeader className="pb-4">
+                        <div className="h-5 bg-muted/50 rounded-lg w-3/4"></div>
+                        <div className="h-4 bg-muted/30 rounded-lg w-1/2 mt-2"></div>
+                      </CardHeader>
+                      <CardContent>
+                        <div className="space-y-3">
+                          <div className="h-4 bg-muted/40 rounded-lg"></div>
+                          <div className="h-4 bg-muted/40 rounded-lg w-5/6"></div>
+                          <div className="h-10 bg-muted/30 rounded-lg mt-4"></div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              ) : filteredVotes.length === 0 ? (
+                <Card className="border-0 bg-gradient-to-br from-background/80 to-muted/10 backdrop-blur-sm text-center py-16">
+                  <CardContent>
+                    <div className="max-w-md mx-auto">
+                      <div className="p-6 rounded-2xl bg-gradient-to-br from-primary/10 to-blue-500/5 mb-6 inline-block">
+                        <Vote className="h-16 w-16 text-primary mx-auto" />
+                      </div>
+                      <h3 className="text-2xl font-bold mb-3 bg-gradient-to-r from-foreground to-foreground/80 bg-clip-text text-transparent">
+                        No polls yet
+                      </h3>
+                      <p className="text-muted-foreground mb-8 text-lg leading-relaxed">
+                        Create your first poll to start collecting votes and engaging with your community
+                      </p>
+                      <Link href="/create">
+                        <Button size="lg" className="gap-2 shadow-lg hover:shadow-xl transition-all duration-300">
+                          <Plus className="h-5 w-5" />
+                          Create Your First Poll
+                        </Button>
+                      </Link>
+                    </div>
+                  </CardContent>
+                </Card>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 lg:gap-8">
+                  {filteredVotes.map((vote) => (
+                    <Card key={vote.id} className="border-0 bg-gradient-to-br from-background/80 to-muted/5 backdrop-blur-sm hover:shadow-xl hover:shadow-primary/5 transition-all duration-500 hover:-translate-y-1 group">
+                      <CardHeader className="pb-4">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex-1">
+                            <CardTitle className="text-xl mb-3 group-hover:text-primary transition-colors duration-300 line-clamp-2">
+                              {vote.title || "Untitled Vote"}
+                            </CardTitle>
+                            <CardDescription className="line-clamp-3 text-base leading-relaxed">
+                              {vote.description || "No description provided"}
+                            </CardDescription>
+                          </div>
+                          {renderStatusBadge(vote.status)}
+                        </div>
+                        {renderFeatureBadges(vote)}
+                      </CardHeader>
+                      <CardContent>
+                        <div className="space-y-6">
+                          <div className="grid grid-cols-2 gap-4">
+                            <div className="text-center p-3 rounded-xl bg-gradient-to-br from-primary/5 to-blue-500/5">
+                              <div className="text-2xl font-bold text-primary mb-1">{vote.totalVotes || 0}</div>
+                              <div className="text-xs text-muted-foreground font-medium uppercase tracking-wide">Total Votes</div>
+                            </div>
+                            <div className="text-center p-3 rounded-xl bg-gradient-to-br from-green-500/5 to-emerald-500/5">
+                              <div className="text-2xl font-bold text-green-600 mb-1">
+                                {vote.pollsCount || 0}
+                              </div>
+                              <div className="text-xs text-muted-foreground font-medium uppercase tracking-wide">Polls</div>
+                            </div>
+                          </div>
+                          {vote.status === "active" || vote.status === "pending" ? (
+                            <div className="text-center p-3 rounded-xl bg-gradient-to-br from-amber-500/5 to-orange-500/5">
+                              <div className="text-sm font-medium text-amber-600 mb-1">
+                                {formatTimeRemaining(vote.endTimestamp)}
+                              </div>
+                              <div className="text-xs text-muted-foreground font-medium uppercase tracking-wide">Time Remaining</div>
+                            </div>
+                          ) : null}
+                          <div className="flex gap-2">
+                            <Link href={`/vote/${vote.id}`} className="flex-1">
+                              <Button variant="outline" size="sm" className="w-full hover:bg-primary/5 hover:border-primary/20 transition-all duration-300">
+                                <BarChart2 className="h-4 w-4 mr-2" />
+                                View Details
+                              </Button>
+                            </Link>
+                            <Button variant="outline" size="sm" className="hover:bg-primary/5 hover:border-primary/20 transition-all duration-300">
+                              <ExternalLink className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              )}
+            </div>
+
             {/* Help Section */}
-            {votes.length > 0 && (
+            {createdVotes.length > 0 && (
               <section className="mt-8">
                 <Card className="bg-muted/50">
                   <CardHeader>

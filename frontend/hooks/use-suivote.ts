@@ -1,8 +1,10 @@
 "use client"
 
 import { useState, useCallback } from "react"
-import { useWallet } from "@suiet/wallet-kit"
+import { useWallet } from "@/contexts/wallet-context"
+import { useSignAndExecuteTransaction } from "@mysten/dapp-kit"
 import type { Transaction } from "@mysten/sui/transactions"
+import { SuiClient, getFullnodeUrl } from "@mysten/sui/client"
 import {
   SuiVoteService,
   type PollData,
@@ -16,8 +18,12 @@ import { SUI_CONFIG } from "@/config/sui-config"
 // Initialize the service
 const suiVoteService = new SuiVoteService(SUI_CONFIG.NETWORK)
 
+// Initialize the SuiClient
+const suiClient = new SuiClient({ url: getFullnodeUrl(SUI_CONFIG.NETWORK) })
+
 export function useSuiVote() {
   const wallet = useWallet()
+  const { mutateAsync: signAndExecuteTransaction } = useSignAndExecuteTransaction()
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   
@@ -34,15 +40,17 @@ export function useSuiVote() {
           throw new Error("Vote ID is required")
         }
         
-        return suiVoteService.subscribeToVoteUpdates(voteId, onUpdate)
+        // Pass the user's wallet address to enable voting status checking
+        return suiVoteService.subscribeToVoteUpdates(voteId, onUpdate, wallet.address)
       } catch (err) {
         const errorMessage = err instanceof Error ? err.message : String(err)
-        console.error("Error subscribing to vote updates:", errorMessage)
+        console.error("Failed to subscribe to vote updates:", errorMessage)
+        setError(errorMessage)
         // Return a no-op function in case of error
         return () => {}
       }
     },
-    []
+    [wallet.address]
   )
 
   /**
@@ -205,7 +213,7 @@ export function useSuiVote() {
    * Create a transaction to create a complete vote with polls and options
    */
   const createCompleteVoteTransaction = useCallback(
-    (
+    async (
       title: string,
       description: string,
       startTimestamp: number,
@@ -219,13 +227,13 @@ export function useSuiVote() {
       isTokenWeighted = false,
       tokenWeight = "1",
       whitelistAddresses: string[] = [] 
-    ): Transaction => {
+    ): Promise<Transaction> => {
       try {
         setLoading(true)
         setError(null)
 
         // Call the service method to create the transaction
-        const transaction = suiVoteService.createCompleteVoteTransaction(
+        const transaction = await suiVoteService.createCompleteVoteTransaction(
           title,
           description,
           startTimestamp,
@@ -323,12 +331,12 @@ export function useSuiVote() {
    * Create a transaction to cast a vote
    */
   const castVoteTransaction = useCallback(
-    (voteId: string, pollIndex: number, optionIndices: number[], tokenBalance: number = 0, payment = 0): Transaction => {
+    async (voteId: string, pollIndex: number, optionIndices: number[], tokenBalance: number = 0, payment = 0): Promise<Transaction> => {
       try {
         setLoading(true)
         setError(null)
 
-        const transaction = suiVoteService.castVoteTransaction(voteId, pollIndex, optionIndices, tokenBalance, payment)
+        const transaction = await suiVoteService.castVoteTransaction(voteId, pollIndex, optionIndices, tokenBalance, payment)
         return transaction
       } catch (err) {
         const errorMessage = err instanceof Error ? err.message : String(err)
@@ -345,12 +353,12 @@ export function useSuiVote() {
    * Create a transaction to cast multiple votes at once
    */
   const castMultipleVotesTransaction = useCallback(
-    (voteId: string, pollIndices: number[], optionIndicesPerPoll: number[][],  tokenBalance: number = 0, payment = 0): Transaction => {
+    async (voteId: string, pollIndices: number[], optionIndicesPerPoll: number[][],  tokenBalance: number = 0, payment = 0): Promise<Transaction> => {
       try {
         setLoading(true)
         setError(null)
 
-        const transaction = suiVoteService.castMultipleVotesTransaction(
+        const transaction = await suiVoteService.castMultipleVotesTransaction(
           voteId,
           pollIndices,
           optionIndicesPerPoll,
@@ -479,22 +487,21 @@ export function useSuiVote() {
           throw new Error("Wallet not connected")
         }
 
-        const response = await wallet.signAndExecuteTransaction({
-          transaction,
-          chain: SUI_CONFIG.NETWORK,
+        const result = await signAndExecuteTransaction({ 
+          transaction: transaction 
         })
-
-        return response
+        
+        return result
       } catch (err) {
         const errorMessage = err instanceof Error ? err.message : String(err)
         setError(errorMessage)
-        console.error("Error executing transaction:", errorMessage)
+        console.error("Transaction execution error:", errorMessage)
         throw err
       } finally {
         setLoading(false)
       }
     },
-    [wallet],
+    [signAndExecuteTransaction, wallet.connected]
   )
 
   /**

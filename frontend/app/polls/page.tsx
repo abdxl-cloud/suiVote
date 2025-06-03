@@ -7,7 +7,6 @@ import {
   Plus,
   Search,
   Filter,
-  MoreHorizontal,
   Calendar,
   Users,
   CheckCircle,
@@ -28,6 +27,7 @@ import { Card, CardContent, CardFooter, CardHeader, CardTitle, CardDescription }
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Progress } from "@/components/ui/progress"
+import { Skeleton } from "@/components/ui/skeleton"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -40,7 +40,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { motion, AnimatePresence } from "framer-motion"
 import Link from "next/link"
 import { useSuiVote } from "@/hooks/use-suivote"
-import { useWallet } from "@suiet/wallet-kit"
+import { useWallet } from "@/contexts/wallet-context"
 import { format, formatDistance } from "date-fns"
 import { ShareDialog } from "@/components/share-dialog"
 
@@ -78,7 +78,21 @@ const safeFormatDistanceToNow = (date: Date | number | string) => {
 }
 
 // Sortable Poll Card component
-const SortablePollCard = ({ vote, index, handleShare, wallet, isClient, now, formatTimeRemaining, calculatePercentage, renderStatusBadge, renderFeatureBadges, safeFormatDistanceToNow }) => {
+interface SortablePollCardProps {
+  vote: any;
+  index: number;
+  handleShare: (vote: any) => void;
+  wallet: any;
+  isClient: boolean;
+  now: Date;
+  formatTimeRemaining: (endTime: any) => string;
+  calculatePercentage: (responses: number, total: number) => number;
+  renderStatusBadge: (status: string) => React.ReactNode;
+  renderFeatureBadges: (vote: any) => React.ReactNode;
+  safeFormatDistanceToNow: (date: any) => string;
+}
+
+const SortablePollCard: React.FC<SortablePollCardProps> = ({ vote, index, handleShare, wallet, isClient, now, formatTimeRemaining, calculatePercentage, renderStatusBadge, renderFeatureBadges, safeFormatDistanceToNow }) => {
   const {
     attributes,
     listeners,
@@ -99,10 +113,9 @@ const SortablePollCard = ({ vote, index, handleShare, wallet, isClient, now, for
     <div
       ref={setNodeRef}
       style={style}
-      {...attributes}
       className="touch-manipulation"
     >
-      <Card className="overflow-hidden transition-all hover:shadow-md flex flex-col h-full relative">
+      <Card className="overflow-hidden transition-all hover:shadow-md flex flex-col h-full relative min-h-[280px]">
         <div
           className={`h-2 w-full ${
             vote.status === "active" ? "bg-green-500" : 
@@ -114,6 +127,7 @@ const SortablePollCard = ({ vote, index, handleShare, wallet, isClient, now, for
         <div 
           className="absolute top-3 right-3 cursor-grab active:cursor-grabbing p-1 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800"
           {...listeners}
+          {...attributes}
         >
           <GripVertical className="h-4 w-4 text-muted-foreground" />
         </div>
@@ -154,15 +168,21 @@ const SortablePollCard = ({ vote, index, handleShare, wallet, isClient, now, for
                   value={(() => {
                     try {
                       const endTime = vote.endTimestamp || 0;
-                      const startTime = new Date(vote.created || vote.startTimestamp || Date.now()).getTime();
-                      const remaining = endTime - now.getTime();
-                      const total = endTime - startTime;
+                      const startTime = vote.startTimestamp || 0;
+                      const currentTime = now.getTime();
                       
-                      if (isNaN(remaining) || isNaN(total) || total <= 0) {
+                      if (!endTime || !startTime || endTime <= startTime) {
                         return 0;
                       }
                       
-                      return 100 - calculatePercentage(remaining, total);
+                      // Calculate progress from start to end
+                      const totalDuration = endTime - startTime;
+                      const elapsed = currentTime - startTime;
+                      
+                      // Ensure we don't go below 0 or above 100
+                      const progress = Math.max(0, Math.min(100, (elapsed / totalDuration) * 100));
+                      
+                      return progress;
                     } catch (e) {
                       return 0;
                     }
@@ -197,7 +217,7 @@ const SortablePollCard = ({ vote, index, handleShare, wallet, isClient, now, for
           </div>
         </CardContent>
         <CardFooter className="flex justify-between p-4 mt-auto">
-          <Link href={`/vote/${vote.id}`} className="w-1/2">
+          <Link href={`/vote/${vote.id}`} className="flex-1 mr-2">
             <Button 
               variant={"ghost"} 
               size="sm" 
@@ -211,53 +231,9 @@ const SortablePollCard = ({ vote, index, handleShare, wallet, isClient, now, for
                 : "View"}
             </Button>
           </Link>
-          <div className="flex gap-1">
-            <Button variant="ghost" size="sm" className="px-2.5" onClick={() => handleShare(vote)}>
-              <Share2 className="h-4 w-4" />
-            </Button>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="sm" className="px-2.5">
-                  <MoreHorizontal className="h-4 w-4" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <Link href={`/vote/${vote.id}`}>
-                  <DropdownMenuItem className="cursor-pointer">
-                    <Eye className="h-4 w-4 mr-2" />
-                    View Details
-                  </DropdownMenuItem>
-                </Link>
-                {vote.creator === wallet.address && (
-                  <>
-                    <Link href={`/edit/${vote.id}`}>
-                      <DropdownMenuItem className="cursor-pointer">Edit</DropdownMenuItem>
-                    </Link>
-                    <DropdownMenuItem className="cursor-pointer">Duplicate</DropdownMenuItem>
-                    {vote.status !== "closed" && (
-                      <DropdownMenuItem className="cursor-pointer text-amber-600 dark:text-amber-400">
-                        {vote.status === "upcoming" ? "Cancel Vote" : "Close Early"}
-                      </DropdownMenuItem>
-                    )}
-                    <DropdownMenuSeparator />
-                  </>
-                )}
-                <DropdownMenuItem className="cursor-pointer" onClick={() => handleShare(vote)}>
-                  <Share2 className="h-4 w-4 mr-2" />
-                  Share
-                </DropdownMenuItem>
-                <Link href={`https://explorer.sui.io/object/${vote.id}`} target="_blank" rel="noopener noreferrer">
-                  <DropdownMenuItem className="cursor-pointer">
-                    <ExternalLink className="h-4 w-4 mr-2" />
-                    View on Explorer
-                  </DropdownMenuItem>
-                </Link>
-                {vote.creator === wallet.address && (
-                  <DropdownMenuItem className="cursor-pointer text-destructive">Delete</DropdownMenuItem>
-                )}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
+          <Button variant="ghost" size="sm" className="px-2.5" onClick={() => handleShare(vote)}>
+            <Share2 className="h-4 w-4" />
+          </Button>
         </CardFooter>
       </Card>
     </div>
@@ -313,16 +289,54 @@ export default function PollsPage() {
           
           // Set up real-time updates for each vote
           const unsubscribers = data.map((vote: any) => {
-            // Only subscribe to active votes or votes with live stats enabled
-            if (vote.status === "active" || vote.showLiveStats) {
-              return subscribeToVoteUpdates(vote.id, (updatedVote) => {
-                // Update the specific vote in the votes array
-                setVotes(prevVotes => 
-                  prevVotes.map(v => v.id === updatedVote.id ? { ...v, ...updatedVote } : v)
-                )
-              })
-            }
-            return () => {}
+            // Subscribe to all votes to catch status changes (e.g., upcoming -> active)
+            return subscribeToVoteUpdates(vote.id, async (updatedVoteDetails) => {
+              // Update the specific vote in the votes array
+              setVotes(prevVotes => 
+                prevVotes.map(v => {
+                  if (v.id === updatedVoteDetails.id) {
+                    // Determine the correct status based on the update
+                    let finalStatus = v.status;
+                    
+                    // Handle status transitions based on current state and updates
+                    if (updatedVoteDetails.status === "voted") {
+                      // If the service detected the user has voted, always use "voted"
+                      finalStatus = "voted";
+                    } else if (v.status === "voted") {
+                      // Once voted, status should never change back
+                      finalStatus = "voted";
+                    } else if (v.status === "pending") {
+                      // Pending votes can transition to closed when they end
+                      if (updatedVoteDetails.status === "closed") {
+                        finalStatus = "closed";
+                      } else {
+                        // Otherwise, keep pending status (don't let it become "active")
+                        finalStatus = "pending";
+                      }
+                    } else {
+                      // For other statuses (upcoming, active, closed), use the updated status
+                      finalStatus = updatedVoteDetails.status;
+                    }
+                    
+                    // Merge the updated vote details with the existing vote list item
+                    return {
+                      ...v,
+                      status: finalStatus,
+                      votes: updatedVoteDetails.totalVotes,
+                      pollCount: updatedVoteDetails.pollsCount,
+                      endTimestamp: updatedVoteDetails.endTimestamp,
+                      startTimestamp: updatedVoteDetails.startTimestamp,
+                      tokenRequirement: updatedVoteDetails.tokenRequirement,
+                      tokenAmount: updatedVoteDetails.tokenAmount,
+                      hasWhitelist: updatedVoteDetails.hasWhitelist,
+                      title: updatedVoteDetails.title,
+                      description: updatedVoteDetails.description
+                    }
+                  }
+                  return v
+                })
+              )
+            })
           })
           
           // Clean up subscriptions when component unmounts or when votes change
@@ -334,6 +348,9 @@ export default function PollsPage() {
         }
       }
       fetchVotes()
+    } else {
+      // Clear votes when wallet is disconnected
+      setVotes([])
     }
   }, [wallet.connected, wallet.address, getMyVotes, subscribeToVoteUpdates])
 
@@ -468,7 +485,7 @@ export default function PollsPage() {
     })
 
   // Handle drag end event
-  const handleDragEnd = (event) => {
+  const handleDragEnd = (event: any) => {
     const { active, over } = event;
     
     if (active.id !== over?.id) {
@@ -484,7 +501,7 @@ export default function PollsPage() {
   };
 
   // Handle drag start event
-  const handleDragStart = (event) => {
+  const handleDragStart = (event: any) => {
     setActiveId(event.active.id);
   };
 
@@ -627,83 +644,160 @@ export default function PollsPage() {
           </div>
         </motion.div>
 
-        {loading ? (
-          <div className="flex justify-center items-center py-12">
-            <Loader2 className="h-8 w-8 animate-spin text-primary" />
-          </div>
-        ) : filteredVotes.length > 0 ? (
-          <DndContext
-            sensors={sensors}
-            collisionDetection={closestCenter}
-            onDragStart={handleDragStart}
-            onDragEnd={handleDragEnd}
-          >
-            <SortableContext 
-              items={filteredVotes.map(vote => vote.id)}
-              strategy={rectSortingStrategy}
+        <AnimatePresence mode="wait">
+          {loading ? (
+            <motion.div 
+              key="loading"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.3 }}
+              className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 py-6"
             >
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {filteredVotes.map((vote, index) => (
-                  <SortablePollCard
-                    key={vote.id}
-                    vote={vote}
-                    index={index}
-                    handleShare={handleShare}
-                    wallet={wallet}
-                    isClient={isClient}
-                    now={now}
-                    formatTimeRemaining={formatTimeRemaining}
-                    calculatePercentage={calculatePercentage}
-                    renderStatusBadge={renderStatusBadge}
-                    renderFeatureBadges={renderFeatureBadges}
-                    safeFormatDistanceToNow={safeFormatDistanceToNow}
-                  />
-                ))}
-              </div>
-            </SortableContext>
-            <DragOverlay>
-              {activeId ? (
-                <div className="opacity-80 w-full md:w-[calc(50%-12px)] lg:w-[calc(33.333%-16px)]">
-                  <Card className="overflow-hidden transition-all shadow-lg flex flex-col h-full">
-                    <div
-                      className={`h-2 w-full ${
-                        filteredVotes.find(vote => vote.id === activeId)?.status === "active" ? "bg-green-500" : 
-                        filteredVotes.find(vote => vote.id === activeId)?.status === "pending" ? "bg-amber-500" : 
-                        filteredVotes.find(vote => vote.id === activeId)?.status === "upcoming" ? "bg-blue-500" : 
-                        filteredVotes.find(vote => vote.id === activeId)?.status === "voted" ? "bg-purple-500" : "bg-gray-300"
-                      }`}
-                    />
-                    <CardHeader className="pb-2">
-                      <div className="flex justify-between items-start gap-2">
-                        <CardTitle className="text-xl line-clamp-1">
-                          {filteredVotes.find(vote => vote.id === activeId)?.title || "Untitled Vote"}
-                        </CardTitle>
+              {Array(6).fill(0).map((_, index) => (
+                <motion.div
+                  key={index}
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.4, delay: index * 0.1 }}
+                >
+                  <Card className="overflow-hidden">
+                    <div className="h-2 w-full bg-muted" />
+                    <CardHeader>
+                      <div className="flex justify-between items-start">
+                        <Skeleton className="h-6 w-3/4" />
+                        <Skeleton className="h-5 w-16 rounded-full" />
                       </div>
+                      <Skeleton className="h-4 w-full mt-2" />
+                      <Skeleton className="h-4 w-2/3 mt-1" />
                     </CardHeader>
+                    <CardContent>
+                      <div className="flex justify-between text-sm">
+                        <Skeleton className="h-4 w-24" />
+                        <Skeleton className="h-4 w-20" />
+                      </div>
+                      <Skeleton className="h-4 w-32 mt-2" />
+                    </CardContent>
+                    <CardFooter className="flex justify-between border-t p-4">
+                      <Skeleton className="h-9 w-24" />
+                      <Skeleton className="h-9 w-24" />
+                    </CardFooter>
                   </Card>
-                </div>
-              ) : null}
-            </DragOverlay>
-          </DndContext>
-        ) : wallet.connected ? (
-          <div className="flex flex-col items-center justify-center py-12 text-center">
-            <div className="bg-muted rounded-full p-3 mb-4">
-              <ListChecks className="h-6 w-6 text-muted-foreground" />
-            </div>
-            <h3 className="text-lg font-medium">No votes found</h3>
-            <p className="text-muted-foreground mt-1 mb-4 max-w-md">
-              {searchQuery || filterStatus !== "all"
-                ? "No votes match your search criteria."
-                : "You haven't created or participated in any votes yet."}
-            </p>
-            <Link href="/create">
-              <Button className="gap-2">
-                <Plus className="h-4 w-4" />
-                Create Your First Vote
-              </Button>
-            </Link>
-          </div>
-        ) : null}
+                </motion.div>
+              ))}
+            </motion.div>
+          ) : filteredVotes.length > 0 ? (
+            <motion.div
+              key="content"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              transition={{ duration: 0.5, ease: "easeOut" }}
+            >
+              <DndContext
+                sensors={sensors}
+                collisionDetection={closestCenter}
+                onDragStart={handleDragStart}
+                onDragEnd={handleDragEnd}
+              >
+                <SortableContext 
+                  items={filteredVotes.map(vote => vote.id)}
+                  strategy={rectSortingStrategy}
+                >
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    {filteredVotes.map((vote, index) => (
+                      <SortablePollCard
+                        key={vote.id}
+                        vote={vote}
+                        index={index}
+                        handleShare={handleShare}
+                        wallet={wallet}
+                        isClient={isClient}
+                        now={now}
+                        formatTimeRemaining={formatTimeRemaining}
+                        calculatePercentage={calculatePercentage}
+                        renderStatusBadge={renderStatusBadge}
+                        renderFeatureBadges={renderFeatureBadges}
+                        safeFormatDistanceToNow={safeFormatDistanceToNow}
+                      />
+                    ))}
+                  </div>
+                </SortableContext>
+                 <DragOverlay>
+                   {activeId ? (
+                     <div className="opacity-80 w-full md:w-[calc(50%-12px)] lg:w-[calc(33.333%-16px)]">
+                       <Card className="overflow-hidden transition-all shadow-lg flex flex-col h-full">
+                         <div
+                           className={`h-2 w-full ${
+                             filteredVotes.find(vote => vote.id === activeId)?.status === "active" ? "bg-green-500" : 
+                             filteredVotes.find(vote => vote.id === activeId)?.status === "pending" ? "bg-amber-500" : 
+                             filteredVotes.find(vote => vote.id === activeId)?.status === "upcoming" ? "bg-blue-500" : 
+                             filteredVotes.find(vote => vote.id === activeId)?.status === "voted" ? "bg-purple-500" : "bg-gray-300"
+                           }`}
+                         />
+                         <CardHeader className="pb-2">
+                           <div className="flex justify-between items-start gap-2">
+                             <CardTitle className="text-xl line-clamp-1">
+                               {filteredVotes.find(vote => vote.id === activeId)?.title || "Untitled Vote"}
+                             </CardTitle>
+                           </div>
+                         </CardHeader>
+                       </Card>
+                     </div>
+                   ) : null}
+                 </DragOverlay>
+               </DndContext>
+             </motion.div>
+          ) : wallet.connected ? (
+            <motion.div
+              key="empty"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              transition={{ duration: 0.4, ease: "easeOut" }}
+              className="flex flex-col items-center justify-center py-12 text-center"
+            >
+              <motion.div 
+                initial={{ scale: 0.8, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                transition={{ duration: 0.3, delay: 0.1 }}
+                className="bg-muted rounded-full p-3 mb-4"
+              >
+                <ListChecks className="h-6 w-6 text-muted-foreground" />
+              </motion.div>
+              <motion.h3 
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.3, delay: 0.2 }}
+                className="text-lg font-medium"
+              >
+                No votes found
+              </motion.h3>
+              <motion.p 
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.3, delay: 0.3 }}
+                className="text-muted-foreground mt-1 mb-4 max-w-md"
+              >
+                {searchQuery || filterStatus !== "all"
+                  ? "No votes match your search criteria."
+                  : "You haven't created or participated in any votes yet."}
+              </motion.p>
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.3, delay: 0.4 }}
+              >
+                <Link href="/create">
+                  <Button className="gap-2">
+                    <Plus className="h-4 w-4" />
+                    Create Your First Vote
+                  </Button>
+                </Link>
+              </motion.div>
+            </motion.div>
+           ) : null}
+        </AnimatePresence>
       </motion.div>
 
       {selectedVote && isClient && (

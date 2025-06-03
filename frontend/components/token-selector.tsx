@@ -5,13 +5,13 @@ import {
   Wallet,
   Search,
   X,
-  Loader2,
   Check,
   AlertCircle,
   Info,
   Copy,
   ExternalLink,
 } from "lucide-react"
+import { Skeleton } from "@/components/ui/skeleton"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -25,13 +25,13 @@ import {
 } from "@/components/ui/dialog"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Separator } from "@/components/ui/separator"
-import { Skeleton } from "@/components/ui/skeleton"
 import { Badge } from "@/components/ui/badge"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Switch } from "@/components/ui/switch"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { cn } from "@/lib/utils"
 import { tokenService, type TokenInfo } from "@/services/token-service"
+import { getMaxVoteAmount, validateMaxAmount, formatTokenAmount, toDecimalUnits } from "@/utils/token-utils"
 
 // Simplified token interface focused on coin type
 interface CoinType {
@@ -358,7 +358,9 @@ export function TokenSelector({
 
     return (
       <div className="flex items-center gap-2 text-muted-foreground">
-        <Loader2 className="w-4 h-4 animate-spin" />
+        <div className="relative w-4 h-4">
+          <Skeleton className="absolute inset-0 rounded-full animate-pulse" />
+        </div>
         <span>Loading token...</span>
       </div>
     )
@@ -541,20 +543,52 @@ export function TokenSelector({
                 id="token-amount"
                 type="number"
                 min="0"
+                max={selectedToken.decimals !== undefined ? getMaxVoteAmount(selectedToken.decimals) : undefined}
                 step="any"
                 placeholder="Enter amount"
                 value={amount || ""}
-                onChange={(e) => onAmountChange(e.target.value)}
+                onChange={(e) => {
+                  const value = e.target.value
+                  // Validate max amount if decimals are available
+                  if (value && selectedToken.decimals !== undefined) {
+                    try {
+                      const maxAmount = getMaxVoteAmount(selectedToken.decimals)
+                      validateMaxAmount(value, maxAmount, selectedToken.symbol)
+                    } catch (error) {
+                      // Show error but still allow the input for user feedback
+                      console.warn(error instanceof Error ? error.message : 'Invalid amount')
+                    }
+                  }
+                  onAmountChange(value)
+                }}
                 className="flex-1"
               />
               <div className="flex-shrink-0 text-sm font-medium text-muted-foreground w-16 text-center">
                 {selectedToken.symbol}
               </div>
             </div>
-            <p className="text-xs text-muted-foreground">
-              {selectedToken.decimals !== undefined && `${selectedToken.decimals} decimals • `}
-              Voters need at least this amount to participate
-            </p>
+            <div className="space-y-1">
+              <p className="text-xs text-muted-foreground">
+                {selectedToken.decimals !== undefined && `${selectedToken.decimals} decimals • `}
+                Voters need at least this amount to participate
+              </p>
+              {selectedToken.decimals !== undefined && amount && (
+                <p className="text-xs text-blue-600">
+                  Decimal value: {(() => {
+                    try {
+                      return toDecimalUnits(amount, selectedToken.decimals)
+                    } catch {
+                      return 'Invalid amount'
+                    }
+                  })()} smallest units
+                </p>
+              )}
+              {selectedToken.decimals !== undefined && (
+                <p className="text-xs text-muted-foreground">
+                  Max allowed: {formatTokenAmount(getMaxVoteAmount(selectedToken.decimals), selectedToken.symbol)}
+                </p>
+              )}
+            </div>
           </div>
           
           {/* Token-weighted voting section */}

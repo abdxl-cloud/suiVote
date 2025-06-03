@@ -9,8 +9,8 @@ export const SUI_CONFIG = {
   NETWORK: process.env.NEXT_PUBLIC_SUI_NETWORK || "testnet",
 
   // Contract configuration
-  PACKAGE_ID: process.env.NEXT_PUBLIC_SUIVOTE_PACKAGE_ID || "YOUR_PACKAGE_ID_HERE",
-  ADMIN_ID: process.env.NEXT_PUBLIC_SUIVOTE_ADMIN_ID || "ADMIN_OBJECT_ID_FROM_PUBLISH_OUTPUT",
+  PACKAGE_ID: process.env.NEXT_PUBLIC_SUIVOTE_PACKAGE_ID || "0xbdac727e5cc414447972208250748eeb28290ade37aea7ca6f824e3e98723ba9",
+  ADMIN_ID: process.env.NEXT_PUBLIC_SUIVOTE_ADMIN_ID || "0x0c043dbfbc21ecb4426af4853d51264695a1c42c80c388c11d1ca703ab75c879",
 
   // Feature flags
   ENABLE_LIVE_RESULTS: process.env.NEXT_PUBLIC_ENABLE_LIVE_RESULTS === "true",
@@ -33,6 +33,11 @@ export const SUI_CONFIG = {
 
   // Logging
   VERBOSE_LOGGING: process.env.NEXT_PUBLIC_VERBOSE_LOGGING === "true",
+
+  // Walrus Storage Configuration
+  WALRUS_PUBLISHER_URL: process.env.NEXT_PUBLIC_WALRUS_PUBLISHER_URL || "https://publisher.testnet.walrus.xyz",
+  WALRUS_AGGREGATOR_URL: process.env.NEXT_PUBLIC_WALRUS_AGGREGATOR_URL || "https://aggregator.testnet.walrus.xyz",
+  WALRUS_STORAGE_EPOCHS: process.env.NEXT_PUBLIC_WALRUS_STORAGE_EPOCHS || "10",
 }
 
 export default SUI_CONFIG

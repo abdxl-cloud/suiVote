@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, ReactNode } from "react"
 import { useParams, useRouter } from "next/navigation"
-import { useWallet } from "@suiet/wallet-kit"
+import { useWallet } from "@/contexts/wallet-context"
 import { useSuiVote } from "@/hooks/use-suivote"
 import { SUI_CONFIG } from "@/config/sui-config"
 import { motion, AnimatePresence } from "framer-motion"
@@ -10,6 +10,8 @@ import { toast } from "sonner"
 import { format, formatDistanceToNow } from "date-fns"
 import Link from "next/link"
 import { TransactionStatusDialog, TransactionStatus } from "@/components/transaction-status-dialog"
+import { formatTokenAmount } from "@/utils/token-utils"
+import { VoteDetails, PollDetails, PollOptionDetails } from "@/services/suivote-service"
 
 // UI Components
 import {
@@ -20,7 +22,6 @@ import {
   ArrowLeft,
   Share2,
   Wallet,
-  Loader2,
   ExternalLink,
   Info,
   CheckCircle2,
@@ -54,8 +55,11 @@ import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { Progress } from "@/components/ui/progress"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { Skeleton } from "@/components/ui/skeleton"
+import { VoteDetailSkeleton } from "@/components/skeletons"
 import { ShareDialog } from "@/components/share-dialog"
 import { WalletConnectButton } from "@/components/wallet-connect-button"
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { cn } from "@/lib/utils"
 
@@ -71,8 +75,8 @@ export default function VotePage() {
   const suivote = useSuiVote()
 
   // State
-  const [vote, setVote] = useState(null)
-  const [polls, setPolls] = useState([])
+  const [vote, setVote] = useState<VoteDetails | null>(null)
+  const [polls, setPolls] = useState<(PollDetails & { options: (PollOptionDetails & { percentage: number })[] })[]>([])
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [submitted, setSubmitted] = useState(false)
@@ -81,12 +85,25 @@ export default function VotePage() {
   const [activeTab, setActiveTab] = useState("vote")
   const [activePollIndex, setActivePollIndex] = useState(0)
   const [shareDialogOpen, setShareDialogOpen] = useState(false)
-  const [validationErrors, setValidationErrors] = useState({})
+  const [validationErrors, setValidationErrors] = useState<{[key: string]: string}>({})
   const [userCanVote, setUserCanVote] = useState(false)
   const [userHasRequiredTokens, setUserHasRequiredTokens] = useState(true)
   const [tokenBalance, setTokenBalance] = useState(0)
   const [hasUserInteracted, setHasUserInteracted] = useState(false) // Track if user has made any selections
-  const [loadingError, setLoadingError] = useState(null) // Separate loading errors from validation errors
+  const [loadingError, setLoadingError] = useState<string | null>(null) // Separate loading errors from validation errors
+  const [expandedBadges, setExpandedBadges] = useState<{[key: string]: boolean}>({}) // Track which badge info is expanded
+  
+  // Smart validation states
+  const [touchedPolls, setTouchedPolls] = useState<{[key: string]: boolean}>({})
+  const [attemptedSubmit, setAttemptedSubmit] = useState(false)
+
+  // Helper function to toggle badge expansion
+  const toggleBadgeExpansion = (badgeKey: string) => {
+    setExpandedBadges(prev => ({
+      ...prev,
+      [badgeKey]: !prev[badgeKey]
+    }))
+  }
 
   const [timeRemaining, setTimeRemaining] = useState({
     days: 0,
@@ -135,11 +152,12 @@ export default function VotePage() {
   
   // Transaction state
   const [txStatus, setTxStatus] = useState(TransactionStatus.IDLE)
-  const [txDigest, setTxDigest] = useState(null)
+  const [txDigest, setTxDigest] = useState<string | null>(null)
   const [txProgress, setTxProgress] = useState(0)
+  const [failedStep, setFailedStep] = useState<TransactionStatus | undefined>(undefined)
 
   // State to track selections for each poll
-  const [selections, setSelections] = useState({})
+  const [selections, setSelections] = useState<{[key: string]: string[]}>({})
 
   // Transaction dialog state
   const [txStatusDialogOpen, setTxStatusDialogOpen] = useState(false)
@@ -407,14 +425,26 @@ export default function VotePage() {
       setTxProgress(20)
 
       // Create the transaction
-      const transaction = suivote.startVoteTransaction(params.id as string)
+      let transaction;
+      try {
+        transaction = suivote.startVoteTransaction(params.id as string)
+      } catch (buildError) {
+        setFailedStep(TransactionStatus.BUILDING);
+        throw buildError;
+      }
 
       // Update progress
       setTxStatus(TransactionStatus.SIGNING)
       setTxProgress(40)
 
       // Execute the transaction
-      const response = await suivote.executeTransaction(transaction)
+      let response;
+      try {
+        response = await suivote.executeTransaction(transaction)
+      } catch (signingError) {
+        setFailedStep(TransactionStatus.SIGNING);
+        throw signingError;
+      }
 
       // Update progress
       setTxStatus(TransactionStatus.EXECUTING)
@@ -424,6 +454,14 @@ export default function VotePage() {
       // Wait for confirmation
       setTxStatus(TransactionStatus.CONFIRMING)
       setTxProgress(80)
+      
+      try {
+        // Simulate confirmation wait
+        await new Promise((resolve) => setTimeout(resolve, 1000))
+      } catch (confirmError) {
+        setFailedStep(TransactionStatus.CONFIRMING);
+        throw confirmError;
+      }
 
       // Transaction successful
       setTxStatus(TransactionStatus.SUCCESS)
@@ -474,11 +512,13 @@ export default function VotePage() {
     }
   }, [txStatus])
 
-  // Validate selections and update validation errors in real-time
-  const validateSelections = (selections) => {
-    const validationErrors = {};
+  // Enhanced validation with detailed error messages and better UX
+  const validateSelections = (selections: {[key: string]: string[]}, forceValidation = false) => {
+    const validationErrors: {[key: string]: string} = {};
     let hasValidSelections = false;
     let hasRequiredSelections = true;
+    let requiredPollsCount = 0;
+    let completedRequiredPolls = 0;
 
     // Don't validate if user hasn't interacted yet or if we're still loading
     if (!hasUserInteracted || loading || polls.length === 0) {
@@ -488,20 +528,31 @@ export default function VotePage() {
     // Check each poll for validation issues
     polls.forEach(poll => {
       const selectedOptions = selections[poll.id] || [];
-
-      // Check if required poll has selections
-      if (poll.isRequired && selectedOptions.length === 0) {
-        validationErrors[poll.id] = "This poll requires a response";
-        hasRequiredSelections = false;
+      const shouldShowError = forceValidation || attemptedSubmit || touchedPolls[poll.id];
+      
+      // Count required polls
+      if (poll.isRequired) {
+        requiredPollsCount++;
       }
 
-      // Validate selection count based on poll type
-      if (selectedOptions.length > 0) {
+      // Check if required poll has selections (only show error if poll was touched or submit attempted)
+      if (poll.isRequired && selectedOptions.length === 0 && shouldShowError) {
+        validationErrors[poll.id] = `${poll.title} requires a response`;
+        hasRequiredSelections = false;
+      } else if (poll.isRequired && selectedOptions.length > 0) {
+        completedRequiredPolls++;
+      }
+
+      // Validate selection count based on poll type (only show error if poll was touched or submit attempted)
+      if (selectedOptions.length > 0 && shouldShowError) {
         if (!poll.isMultiSelect && selectedOptions.length > 1) {
-          validationErrors[poll.id] = "This poll allows only one selection";
+          validationErrors[poll.id] = `${poll.title} allows only one selection`;
         } else if (poll.isMultiSelect && poll.maxSelections &&
           selectedOptions.length > poll.maxSelections) {
-          validationErrors[poll.id] = `Maximum ${poll.maxSelections} selections allowed`;
+          validationErrors[poll.id] = `${poll.title}: Maximum ${poll.maxSelections} selections allowed`;
+        } else if (poll.isMultiSelect && poll.minSelections &&
+          selectedOptions.length < poll.minSelections) {
+          validationErrors[poll.id] = `${poll.title}: Minimum ${poll.minSelections} selections required`;
         }
       }
 
@@ -511,15 +562,21 @@ export default function VotePage() {
       }
     });
 
-    // Only show "make at least one selection" if user has interacted but made no selections
-    if (hasUserInteracted && !hasValidSelections) {
-      validationErrors.general = "Please make at least one selection";
+    // Provide more specific error messages (only show if submit was attempted or user has interacted significantly)
+    const shouldShowGeneralError = forceValidation || attemptedSubmit || Object.keys(touchedPolls).length > 0;
+    
+    if (hasUserInteracted && !hasValidSelections && shouldShowGeneralError) {
+      if (requiredPollsCount > 0) {
+        validationErrors.general = `Please complete ${requiredPollsCount} required poll${requiredPollsCount > 1 ? 's' : ''}`;
+      } else {
+        validationErrors.general = "Please make at least one selection to submit your vote";
+      }
     }
 
-    // All required polls must have selections (only if user has interacted)
-    if (hasUserInteracted && !hasRequiredSelections) {
+    // Show progress for required polls (only if submit was attempted or multiple polls touched)
+    if (hasUserInteracted && requiredPollsCount > 0 && completedRequiredPolls < requiredPollsCount && shouldShowGeneralError) {
       if (!validationErrors.general) {
-        validationErrors.general = "Please complete all required polls";
+        validationErrors.general = `Complete ${requiredPollsCount - completedRequiredPolls} more required poll${(requiredPollsCount - completedRequiredPolls) > 1 ? 's' : ''} (${completedRequiredPolls}/${requiredPollsCount})`;
       }
     }
 
@@ -534,8 +591,8 @@ export default function VotePage() {
     if (!userCanVote) return false;
     if (!hasUserInteracted) return false; // Must have interacted with the form
     
-    // Check validation errors
-    const currentErrors = validateSelections(selections);
+    // Check validation errors with force validation
+    const currentErrors = validateSelections(selections, true);
     return Object.keys(currentErrors).length === 0;
   };
 
@@ -545,14 +602,20 @@ export default function VotePage() {
       const errors = validateSelections(selections);
       setValidationErrors(errors);
     }
-  }, [selections, polls, hasUserInteracted, loading]);
+  }, [selections, polls, hasUserInteracted, loading, touchedPolls, attemptedSubmit]);
 
   // Handle option selection
-  const handleOptionSelect = (pollId, optionId, isMultiSelect) => {
+  const handleOptionSelect = (pollId: string, optionId: string, isMultiSelect: boolean) => {
     // Mark that user has interacted with the form
     if (!hasUserInteracted) {
       setHasUserInteracted(true);
     }
+
+    // Mark this poll as touched
+    setTouchedPolls(prev => ({
+      ...prev,
+      [pollId]: true
+    }));
 
     setSelections(prev => {
       const newSelections = { ...prev }
@@ -567,16 +630,16 @@ export default function VotePage() {
         } else {
           // If not selected, add it (respecting maxSelections)
           const poll = polls.find(p => p.id === pollId)
-          if (poll && currentSelections.length < poll.maxSelections) {
-            newSelections[pollId] = [...currentSelections, optionId]
-          } else {
-            // Show a toast to inform user they've reached max selections
-            toast.info(`You can select up to ${poll.maxSelections} options for this poll`, {
-              description: "Please deselect an option before selecting a new one"
-            });
-            // Return unchanged selections
-            return prev;
-          }
+        if (poll && currentSelections.length < poll.maxSelections) {
+          newSelections[pollId] = [...currentSelections, optionId]
+        } else {
+          // Show a toast to inform user they've reached max selections
+          toast.info(`You can select up to ${poll?.maxSelections} options for this poll`, {
+            description: "Please deselect an option before selecting a new one"
+          });
+          // Return unchanged selections
+          return prev;
+        }
         }
       } else {
         // For single-select polls - always just one option
@@ -586,18 +649,28 @@ export default function VotePage() {
       return newSelections
     })
 
-    // Clear any existing validation error for this poll
-    if (validationErrors[pollId]) {
+    // Smart error clearing - trigger validation with delay to allow state updates
+    setTimeout(() => {
       setValidationErrors(prev => {
-        const newErrors = { ...prev }
-        delete newErrors[pollId]
-        // Also clear general error if it exists and we now have selections
-        if (newErrors.general) {
-          delete newErrors.general
+        // Get current selections and validate
+        const currentSelections = { ...selections };
+        if (isMultiSelect) {
+          const currentOptions = currentSelections[pollId] || [];
+          if (currentOptions.includes(optionId)) {
+            currentSelections[pollId] = currentOptions.filter(id => id !== optionId);
+          } else {
+            const poll = polls.find(p => p.id === pollId);
+            if (poll && currentOptions.length < poll.maxSelections) {
+              currentSelections[pollId] = [...currentOptions, optionId];
+            }
+          }
+        } else {
+          currentSelections[pollId] = [optionId];
         }
-        return newErrors
-      })
-    }
+        
+        return validateSelections(currentSelections);
+      });
+    }, 300);
   }
 
   // Validate vote submission
@@ -659,9 +732,8 @@ export default function VotePage() {
   }
 
   /**
- * Handles the submission of all vote selections in a single transaction
- * with precise option mapping to ensure correct display of results
- */
+   * Enhanced vote submission with comprehensive validation and error handling
+   */
   const handleSubmitVote = async () => {
     try {
       // Set UI state to submitting
@@ -669,115 +741,113 @@ export default function VotePage() {
       setTxStatusDialogOpen(true);
       setTransactionError(null);
       setTxStatus(TransactionStatus.BUILDING);
-      setTxProgress(20);
+      setTxProgress(10);
 
-      
-      // STEP 1: Validate wallet is connected
+      // STEP 1: Pre-flight checks
       if (!wallet || !wallet.address) {
-        console.error("[Vote Debug] Wallet not connected");
-        setTransactionError("Please connect your wallet to vote");
-        setTxStatus(TransactionStatus.ERROR);
-        setSubmitting(false);
-        return;
+        throw new Error("Please connect your wallet to vote");
       }
 
-      // STEP 2: Validate all poll selections using our validation function
+      if (!vote) {
+        throw new Error("Vote data not loaded. Please refresh the page.");
+      }
+
+      if (vote.status !== "active") {
+        throw new Error(vote.status === "upcoming" ? "This vote has not started yet" : "This vote has ended");
+      }
+
+      if (hasVoted) {
+        throw new Error("You have already voted in this poll");
+      }
+
+      if (!userCanVote) {
+        throw new Error("You are not eligible to vote in this poll");
+      }
+
+      // STEP 2: Comprehensive validation
+      setTxProgress(20);
       const validationErrors = validateSelections(selections);
       
-      // If there are validation errors, stop submission
       if (Object.keys(validationErrors).length > 0) {
         console.error("[Vote Debug] Validation errors:", validationErrors);
         setValidationErrors(validationErrors);
-        setTxStatus(TransactionStatus.ERROR);
-        setSubmitting(false);
-        return;
+        
+        // Show the first validation error in a toast
+        const firstError = validationErrors.general || Object.values(validationErrors)[0];
+        toast.error("Validation Error", {
+          description: firstError,
+          duration: 5000,
+        });
+        
+        throw new Error("Please fix the validation errors before submitting");
       }
-      
-      let hasValidSelections = true; // We've already validated
 
-      // We've already validated with validateSelections, so we can skip the redundant validation
-
-      // We've already validated and confirmed there are no errors, so we can proceed
-
-      // STEP 2.5: ISSUE 2 SOLUTION - Verify option mappings before proceeding
-      
-      verifyOptionMappings(polls, selections);
-
-      // STEP 3: Prepare data for transaction
-      // Arrays to store poll indices (1-based) and options
+      // STEP 3: Token balance verification for weighted voting
+      setTxProgress(30);
+      if (vote.tokenRequirement && !userHasRequiredTokens) {
+        throw new Error(`You need at least ${vote.tokenAmount} ${vote.tokenRequirement.split("::").pop()} to vote`);
+      }
+      // STEP 4: Prepare transaction data
+      setTxProgress(40);
       const pollIndices = [];
       const optionIndicesPerPoll = [];
+      let processedPolls = 0;
 
-      
-      // For each poll in this vote
+      // Process each poll with selections
       polls.forEach((poll, pollIdx) => {
-        // Get the user's selections for this poll (if any)
         const selectedOptionIds = selections[poll.id] || [];
 
         // Skip polls with no selections
         if (selectedOptionIds.length === 0) {
-           return; // Skip this poll
+          return;
         }
 
-        // ISSUE 2 SOLUTION: Use utility function for precise option mapping
-        const optionIndices = mapOptionIdsToIndices(poll, selectedOptionIds);
+        // Map option IDs to indices for the smart contract
+        const optionIndices = [];
+        selectedOptionIds.forEach(optionId => {
+          const optionIndex = poll.options.findIndex(option => option.id === optionId);
+          if (optionIndex !== -1) {
+            optionIndices.push(optionIndex + 1); // 1-based indexing for smart contract
+          }
+        });
 
-        // Verify mapping was successful
-        if (optionIndices.length === 0) {
-          console.error(`[Vote Debug] Failed to map options for poll: ${poll.title}`);
-          return; // Skip this poll due to mapping failure
+        if (optionIndices.length === selectedOptionIds.length) {
+          pollIndices.push(pollIdx + 1); // 1-based poll index
+          optionIndicesPerPoll.push(optionIndices);
+          processedPolls++;
+        } else {
+          console.warn(`[Vote Debug] Option mapping failed for poll: ${poll.title}`);
         }
+      });
 
-        // Verify we got the same number of mapped indices as selected IDs
-        if (optionIndices.length !== selectedOptionIds.length) {
-          console.error(`[Vote Debug] Mapping count mismatch for poll: ${poll.title}`, {
-            selectedCount: selectedOptionIds.length,
-            mappedCount: optionIndices.length
-          });
-          return; // Skip this poll due to mapping inconsistency
-        }
-
-        // Store valid poll data for transaction
-        pollIndices.push(pollIdx + 1); // 1-based poll index
-        optionIndicesPerPoll.push(optionIndices);
-});
-
-      // Verify we have something to submit after mapping
       if (pollIndices.length === 0) {
-        console.error("[Vote Debug] No valid poll mappings to submit");
-        setValidationErrors({ general: "Error processing your selections. Please try again." });
-        setTxStatus(TransactionStatus.ERROR);
-        setTransactionError("Error processing your selections. Please try again.");
-        setSubmitting(false);
-        return;
+        throw new Error("Error processing your selections. Please try again.");
       }
 
-      // STEP 4: Get token balance for token-weighted voting
+      // STEP 5: Get token balance for weighted voting
+      setTxProgress(50);
       let tokenBalance = 0;
-      try {
-        const tokenResult = await suivote.checkTokenBalance(
-          wallet.address,
-          vote.tokenRequirement,
-          vote.tokenAmount
-        );
-        tokenBalance =  Math.floor(Number(tokenResult.tokenBalance));
-       } catch (tokenError) {
-        console.error("[Vote Debug] Error checking token balance:", tokenError);
-        // Default to 0 balance on error
+      if (vote.tokenRequirement) {
+        try {
+          const tokenResult = await suivote.checkTokenBalance(
+            wallet.address,
+            vote.tokenRequirement,
+            vote.tokenAmount
+          );
+          tokenBalance = Math.floor(Number(tokenResult.tokenBalance));
+        } catch (tokenError) {
+          console.warn("[Vote Debug] Error checking token balance:", tokenError);
+          // Continue with 0 balance for non-weighted voting
+        }
       }
-      
 
-      // STEP 5: Create the transaction
+      // STEP 6: Create and execute transaction
       setTxStatus(TransactionStatus.BUILDING);
+      setTxProgress(60);
 
-      // ISSUE 1 SOLUTION: Create a single batched transaction
       let transaction;
-
-      
-      
-      // If only one poll, use simple vote transaction
       if (pollIndices.length === 1) {
-         transaction = suivote.castVoteTransaction(
+        transaction = await suivote.castVoteTransaction(
           params.id,
           pollIndices[0],
           optionIndicesPerPoll[0],
@@ -785,8 +855,7 @@ export default function VotePage() {
           vote.paymentAmount || 0
         );
       } else {
-        // If multiple polls, use batched transaction
-        transaction = suivote.castMultipleVotesTransaction(
+        transaction = await suivote.castMultipleVotesTransaction(
           params.id,
           pollIndices,
           optionIndicesPerPoll,
@@ -795,124 +864,127 @@ export default function VotePage() {
         );
       }
 
-      // STEP 6: Execute the transaction
+      // STEP 7: Sign and execute transaction
       setTxStatus(TransactionStatus.SIGNING);
-      setTxProgress(40);
+      setTxProgress(70);
 
-      // Send single transaction to wallet (no multiple signatures needed)
-      const response = await suivote.executeTransaction(transaction);
+      toast.info("Please sign the transaction in your wallet", {
+        description: `Submitting votes for ${processedPolls} poll${processedPolls > 1 ? 's' : ''}`,
+        duration: 3000,
+      });
 
-      // Update progress
+      let response;
+      try {
+        response = await suivote.executeTransaction(transaction);
+      } catch (signingError) {
+        setFailedStep(TransactionStatus.SIGNING);
+        throw signingError;
+      }
+
+      // STEP 8: Transaction execution
       setTxStatus(TransactionStatus.EXECUTING);
-      setTxProgress(60);
+      setTxProgress(80);
       setTxDigest(response.digest);
 
-      // Wait for confirmation
-      setTxStatus(TransactionStatus.CONFIRMING);
-      setTxProgress(80);
+      toast.success("Transaction submitted!", {
+        description: "Waiting for blockchain confirmation...",
+        duration: 3000,
+      });
 
-      // Transaction successful
+      // STEP 9: Wait for confirmation
+      setTxStatus(TransactionStatus.CONFIRMING);
+      setTxProgress(90);
+      
+      try {
+        // Simulate confirmation wait
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      } catch (confirmError) {
+        setFailedStep(TransactionStatus.CONFIRMING);
+        throw confirmError;
+      }
+
+      // STEP 10: Success handling
       setTxStatus(TransactionStatus.SUCCESS);
       setTxProgress(100);
 
-      // Update UI on success
-      toast.success("Vote submitted successfully!");
-
-      // Update local state
+      // Update local state immediately
       setSubmitted(true);
       setHasVoted(true);
 
-      // Store transaction digest in localStorage for the success page
-      if (response && response.digest) {
+      // Store transaction data
+      if (response?.digest) {
         setTxDigest(response.digest);
         localStorage.setItem(`vote_${params.id}_txDigest`, response.digest);
+        localStorage.setItem(`vote_${params.id}_timestamp`, Date.now().toString());
       }
 
-      // Redirect to success page or show results based on vote settings
+      // Success notification with details
+      toast.success("Vote submitted successfully!", {
+        description: `Your vote${processedPolls > 1 ? 's' : ''} ${processedPolls > 1 ? 'have' : 'has'} been recorded on the blockchain.`,
+        duration: 5000,
+      });
+
+      // Handle post-submission flow
       setTimeout(() => {
-        // Reset transaction status to prevent reopening
         setTxStatus(TransactionStatus.IDLE);
-        // Explicitly close the dialog
         setTxStatusDialogOpen(false);
+        
         if (vote?.showLiveStats) {
-          // If live stats are enabled, just show results on this page
+          // Show live results on the same page
           setShowingResults(true);
-          // Explicitly fetch vote data to update the UI with the latest results
-          fetchVoteData();
-          // The subscription will continue to update the UI with subsequent changes
+          fetchVoteData(); // Refresh to show updated results
         } else {
-          // Otherwise redirect to success page
+          // Redirect to success page
           router.push(`/vote/${params.id}/success?digest=${response.digest}`);
         }
-      }, 1500);
+      }, 2000);
 
     } catch (error) {
-      // Detailed error logging
-      console.error("[Vote Debug] Transaction failed:", error);
-      console.error("[Vote Debug] Error details:", {
-        message: error.message,
-        code: error.code,
-        name: error.name,
-        stack: error.stack
-      });
-
+      console.error("[Vote Debug] Transaction failed:", error instanceof Error ? error.message : String(error));
+      
       // Update UI state
       setTxStatus(TransactionStatus.ERROR);
-      setTxProgress(100); // Complete the progress bar even for errors
-
-      // Format user-friendly error message
-      let userErrorMessage = "Failed to submit vote";
-      let errorType = "unknown";
-
+      setTxProgress(100);
+      
+      // Determine error type and provide appropriate feedback
+      let errorMessage = "An unexpected error occurred";
+      let errorDescription = "Please try again or contact support if the issue persists";
+      
       if (error.message) {
-        // Check for common wallet interaction errors
-        if (error.message.includes("insufficient gas") || error.message.includes("insufficient balance")) {
-          userErrorMessage = "Insufficient SUI to complete transaction. Please add more SUI to your wallet and try again.";
-          errorType = "insufficient_funds";
-        } else if (error.message.includes("rejected") || error.message.includes("user reject") ||
-          error.message.includes("user denied") || error.message.includes("user cancelled")) {
-          userErrorMessage = "Transaction rejected by wallet. You can try again when ready.";
-          errorType = "user_rejected";
-        } else if (error.message.includes("user abort") || error.message.includes("cancelled") ||
-          error.message.includes("canceled")) {
-          userErrorMessage = "Transaction cancelled. You can try again when ready.";
-          errorType = "user_cancelled";
-        } else if (error.message.includes("timeout") || error.message.includes("timed out")) {
-          userErrorMessage = "Transaction timed out. Please check your network connection and try again.";
-          errorType = "timeout";
+        errorMessage = error.message;
+        
+        // Provide specific guidance for common errors
+        if (error.message.includes("User rejected") || error.message.includes("rejected")) {
+          errorMessage = "Transaction cancelled";
+          errorDescription = "You cancelled the transaction in your wallet";
+        } else if (error.message.includes("insufficient")) {
+          errorMessage = "Insufficient funds";
+          errorDescription = "You don't have enough SUI to pay for transaction fees";
         } else if (error.message.includes("network") || error.message.includes("connection")) {
-          userErrorMessage = "Network error. Please check your internet connection and try again.";
-          errorType = "network";
-        } else if (error.message.includes("wallet not connected") || error.message.includes("wallet disconnected")) {
-          userErrorMessage = "Wallet disconnected. Please reconnect your wallet and try again.";
-          errorType = "wallet_disconnected";
-        } else {
-          // Clean up technical details for user display
-          userErrorMessage = error.message
-            .replace(/Error invoking RPC method '[^']+': /g, '')
-            .replace(/\([^)]+\)/g, '')
-            .trim();
-
-          // If the message is too technical or long, provide a more generic message
-          if (userErrorMessage.length > 100) {
-            userErrorMessage = "An unexpected error occurred with the blockchain transaction. Please try again later.";
-          }
+          errorMessage = "Network error";
+          errorDescription = "Please check your internet connection and try again";
+        } else if (error.message.includes("already voted")) {
+          errorMessage = "Already voted";
+          errorDescription = "You have already submitted your vote for this poll";
+        } else if (error.message.includes("not eligible")) {
+          errorMessage = "Not eligible to vote";
+          errorDescription = "You don't meet the requirements to vote in this poll";
         }
       }
+      
+      setTransactionError(errorMessage);
+      
+      // Show error toast with actionable information
+      toast.error(errorMessage, {
+        description: errorDescription,
+        duration: 7000,
+      });
 
       // Store error information for display
-      setTransactionError(userErrorMessage);
       setSubmitting(false);
-
-      // Show error toast with appropriate action guidance
-      toast.error("Vote submission failed", {
-        description: userErrorMessage,
-        action: errorType === "user_rejected" || errorType === "user_cancelled" ? {
-          label: "Try Again",
-          onClick: () => handleSubmitVote()
-        } : undefined,
-        duration: 5000 // Show longer for errors so user can read the message
-      });
+      
+      // Keep dialog open for user to see error details or retry
+      // User can manually close it or try again
     }
   }
 
@@ -1091,22 +1163,7 @@ export default function VotePage() {
 
   // Loading state
   if (loading) {
-    return (
-      <div className="container max-w-4xl py-6 md:py-10 px-4 md:px-6 mx-auto">
-        <div className="flex flex-col items-center justify-center min-h-[70vh] gap-6">
-          <div className="flex items-center justify-center">
-            <div className="relative">
-              <div className="h-16 w-16 rounded-full border-4 border-muted animate-pulse"></div>
-              <div className="absolute inset-0 h-16 w-16 rounded-full border-t-4 border-primary animate-spin"></div>
-            </div>
-          </div>
-          <div className="text-center space-y-3">
-            <h3 className="text-xl font-medium">Loading Vote</h3>
-            <p className="text-muted-foreground text-sm">Please wait while we retrieve the vote data...</p>
-          </div>
-        </div>
-      </div>
-    )
+    return <VoteDetailSkeleton />
   }
 
   // Error state
@@ -1330,7 +1387,7 @@ export default function VotePage() {
                     </div>
                     <div>
                       <p className="text-sm font-medium">Payment Required</p>
-                      <p className="text-xs text-muted-foreground">{vote.paymentAmount / 1000000000} SUI to vote</p>
+                      <p className="text-xs text-muted-foreground">{formatTokenAmount(vote.paymentAmount, 9)} SUI to vote</p>
                     </div>
                   </div>
                 )}
@@ -1628,82 +1685,144 @@ export default function VotePage() {
                           
                           {/* Token Requirement */}
                           {vote.tokenRequirement && (
-                            <Badge 
-                              variant="outline" 
-                              className={cn(
-                                "text-xs gap-1 cursor-help transition-all hover:scale-105",
-                                userHasRequiredTokens 
-                                  ? "bg-green-50 text-green-700 border-green-200 dark:bg-green-900/20 dark:text-green-400" 
-                                  : "bg-red-50 text-red-700 border-red-200 dark:bg-red-900/20 dark:text-red-400"
-                              )}
-                              title={
-                                userHasRequiredTokens && wallet.connected
-                                  ? `✅ You have enough ${vote.tokenRequirement.split("::").pop()} tokens to vote`
-                                  : wallet.connected
-                                  ? `❌ You need at least ${vote.tokenAmount} ${vote.tokenRequirement.split("::").pop()} tokens in your wallet to participate`
-                                  : `You must hold at least ${vote.tokenAmount} ${vote.tokenRequirement.split("::").pop()} tokens to vote. Connect your wallet to check your balance.`
-                              }
-                            >
-                              <Wallet className="h-3 w-3" />
-                              {vote.tokenAmount} {vote.tokenRequirement.split("::").pop()}
-                              {wallet.connected && (
-                                userHasRequiredTokens ? 
-                                  <CheckCircle2 className="h-3 w-3" /> : 
-                                  <X className="h-3 w-3" />
-                              )}
-                            </Badge>
+                            <div className="space-y-2">
+                              <Badge 
+                                variant="outline" 
+                                className={cn(
+                                  "text-xs gap-1 cursor-pointer transition-all hover:scale-105",
+                                  userHasRequiredTokens 
+                                    ? "bg-green-50 text-green-700 border-green-200 dark:bg-green-900/20 dark:text-green-400" 
+                                    : "bg-red-50 text-red-700 border-red-200 dark:bg-red-900/20 dark:text-red-400"
+                                )}
+                                onClick={() => toggleBadgeExpansion('tokenRequirement')}
+                              >
+                                <Wallet className="h-3 w-3" />
+                                {vote.tokenAmount} {vote.tokenRequirement.split("::").pop()}
+                                {wallet.connected && (
+                                  userHasRequiredTokens ? 
+                                    <CheckCircle2 className="h-3 w-3" /> : 
+                                    <X className="h-3 w-3" />
+                                )}
+                                <Info className="h-3 w-3" />
+                              </Badge>
+                              <AnimatePresence>
+                                {expandedBadges.tokenRequirement && (
+                                  <motion.div
+                                    initial={{ opacity: 0, height: 0 }}
+                                    animate={{ opacity: 1, height: "auto" }}
+                                    exit={{ opacity: 0, height: 0 }}
+                                    transition={{ duration: 0.2 }}
+                                    className="text-xs text-muted-foreground bg-muted/50 p-2 rounded border"
+                                  >
+                                    {userHasRequiredTokens && wallet.connected
+                                      ? `✅ You have enough ${vote.tokenRequirement.split("::").pop()} tokens to vote`
+                                      : wallet.connected
+                                      ? `❌ You need at least ${vote.tokenAmount} ${vote.tokenRequirement.split("::").pop()} tokens in your wallet to participate`
+                                      : `You must hold at least ${vote.tokenAmount} ${vote.tokenRequirement.split("::").pop()} tokens to vote. Connect your wallet to check your balance.`
+                                    }
+                                  </motion.div>
+                                )}
+                              </AnimatePresence>
+                            </div>
                           )}
 
                           {/* Payment Requirement */}
                           {vote.paymentAmount > 0 && (
-                            <Badge 
-                              variant="outline" 
-                              className="text-xs gap-1 bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/20 dark:text-amber-400 cursor-help transition-all hover:scale-105"
-                              title={`💰 A payment of ${vote.paymentAmount / 1000000000} SUI is required to submit your vote. This fee helps prevent spam and supports the voting system.`}
-                            >
-                              <Wallet className="h-3 w-3" />
-                              {vote.paymentAmount / 1000000000} SUI
-                            </Badge>
+                            <div className="space-y-2">
+                              <Badge 
+                                variant="outline" 
+                                className="text-xs gap-1 bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/20 dark:text-amber-400 cursor-pointer transition-all hover:scale-105"
+                                onClick={() => toggleBadgeExpansion('paymentRequirement')}
+                              >
+                                <Wallet className="h-3 w-3" />
+                                {formatTokenAmount(vote.paymentAmount, 9)} SUI
+                                <Info className="h-3 w-3" />
+                              </Badge>
+                              <AnimatePresence>
+                                {expandedBadges.paymentRequirement && (
+                                  <motion.div
+                                    initial={{ opacity: 0, height: 0 }}
+                                    animate={{ opacity: 1, height: "auto" }}
+                                    exit={{ opacity: 0, height: 0 }}
+                                    transition={{ duration: 0.2 }}
+                                    className="text-xs text-muted-foreground bg-muted/50 p-2 rounded border"
+                                  >
+                                    💰 A payment of {formatTokenAmount(vote.paymentAmount, 9)} SUI is required to submit your vote. This fee helps prevent spam and supports the voting system.
+                                  </motion.div>
+                                )}
+                              </AnimatePresence>
+                            </div>
                           )}
 
                           {/* Whitelist Requirement */}
                           {vote.hasWhitelist && (
-                            <Badge 
-                              variant="outline" 
-                              className={cn(
-                                "text-xs gap-1 cursor-help transition-all hover:scale-105",
-                                wallet.connected && userCanVote
-                                  ? "bg-green-50 text-green-700 border-green-200 dark:bg-green-900/20 dark:text-green-400"
-                                  : "bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-900/20 dark:text-blue-400"
-                              )}
-                              title={
-                                wallet.connected && userCanVote
-                                  ? "✅ Your wallet address is approved to participate in this vote"
-                                  : wallet.connected
-                                  ? "❌ Only pre-approved wallet addresses can vote. Your address is not on the whitelist."
-                                  : "🛡️ This vote is restricted to pre-approved wallet addresses only. Connect your wallet to check if you're eligible."
-                              }
-                            >
-                              <Shield className="h-3 w-3" />
-                              Whitelist
-                              {wallet.connected && (
-                                userCanVote ? 
-                                  <CheckCircle2 className="h-3 w-3" /> : 
-                                  <AlertCircle className="h-3 w-3" />
-                              )}
-                            </Badge>
+                            <div className="space-y-2">
+                              <Badge 
+                                variant="outline" 
+                                className={cn(
+                                  "text-xs gap-1 cursor-pointer transition-all hover:scale-105",
+                                  wallet.connected && userCanVote
+                                    ? "bg-green-50 text-green-700 border-green-200 dark:bg-green-900/20 dark:text-green-400"
+                                    : "bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-900/20 dark:text-blue-400"
+                                )}
+                                onClick={() => toggleBadgeExpansion('whitelistRequirement')}
+                              >
+                                <Shield className="h-3 w-3" />
+                                Whitelist
+                                {wallet.connected && (
+                                  userCanVote ? 
+                                    <CheckCircle2 className="h-3 w-3" /> : 
+                                    <AlertCircle className="h-3 w-3" />
+                                )}
+                                <Info className="h-3 w-3" />
+                              </Badge>
+                              <AnimatePresence>
+                                {expandedBadges.whitelistRequirement && (
+                                  <motion.div
+                                    initial={{ opacity: 0, height: 0 }}
+                                    animate={{ opacity: 1, height: "auto" }}
+                                    exit={{ opacity: 0, height: 0 }}
+                                    transition={{ duration: 0.2 }}
+                                    className="text-xs text-muted-foreground bg-muted/50 p-2 rounded border"
+                                  >
+                                    {wallet.connected && userCanVote
+                                      ? "✅ Your wallet address is approved to participate in this vote"
+                                      : wallet.connected
+                                      ? "❌ Only pre-approved wallet addresses can vote. Your address is not on the whitelist."
+                                      : "🛡️ This vote is restricted to pre-approved wallet addresses only. Connect your wallet to check if you're eligible."
+                                    }
+                                  </motion.div>
+                                )}
+                              </AnimatePresence>
+                            </div>
                           )}
 
                           {/* Token Weighting Indicator */}
                           {vote.useTokenWeighting && (
-                            <Badge 
-                              variant="outline" 
-                              className="text-xs gap-1 bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-900/20 dark:text-purple-400 cursor-help transition-all hover:scale-105"
-                              title="📊 Your voting power is weighted by your token balance. More tokens = more influence on the final results."
-                            >
-                              <BarChart2 className="h-3 w-3" />
-                              Weighted
-                            </Badge>
+                            <div className="space-y-2">
+                              <Badge 
+                                variant="outline" 
+                                className="text-xs gap-1 bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-900/20 dark:text-purple-400 cursor-pointer transition-all hover:scale-105"
+                                onClick={() => toggleBadgeExpansion('tokenWeighting')}
+                              >
+                                <BarChart2 className="h-3 w-3" />
+                                Weighted
+                                <Info className="h-3 w-3" />
+                              </Badge>
+                              <AnimatePresence>
+                                {expandedBadges.tokenWeighting && (
+                                  <motion.div
+                                    initial={{ opacity: 0, height: 0 }}
+                                    animate={{ opacity: 1, height: "auto" }}
+                                    exit={{ opacity: 0, height: 0 }}
+                                    transition={{ duration: 0.2 }}
+                                    className="text-xs text-muted-foreground bg-muted/50 p-2 rounded border"
+                                  >
+                                    📊 Your voting power is weighted by your token balance. More tokens = more influence on the final results.
+                                  </motion.div>
+                                )}
+                              </AnimatePresence>
+                            </div>
                           )}
                         </div>
                       </div>
@@ -2028,22 +2147,24 @@ export default function VotePage() {
                                 )}
 
                                 <div className="relative z-10 flex items-start space-x-3">
-                                  <RadioGroupItem
-                                    value={option.id}
-                                    id={option.id}
-                                    disabled={isDisabled}
-                                    className="mt-1 h-5 w-5"
-                                  />
-                                  <div className="grid gap-1.5 leading-none w-full">
+                                  <div className="flex-shrink-0 pt-0.5">
+                                    <RadioGroupItem
+                                      value={option.id}
+                                      id={option.id}
+                                      disabled={isDisabled}
+                                      className="h-5 w-5"
+                                    />
+                                  </div>
+                                  <div className="grid gap-1.5 leading-none w-full min-w-0">
                                     <Label
                                       htmlFor={option.id}
-                                      className={cn("text-base font-normal", isDisabled && "opacity-70")}
+                                      className={cn("text-base font-normal cursor-pointer", isDisabled && "opacity-70")}
                                     >
-                                      <span className="flex items-center gap-2">
-                                        <span className="flex-1">
+                                      <span className="flex items-start gap-2">
+                                        <span className="flex-1 break-words word-wrap overflow-wrap-anywhere">
                                           {formatTextWithLinks(option.text)}
                                         </span>
-                                        <span className="text-xs text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
+                                        <span className="text-xs text-muted-foreground bg-muted px-1.5 py-0.5 rounded flex-shrink-0">
                                           #{optionIndex + 1}
                                         </span>
                                       </span>
@@ -2394,11 +2515,14 @@ export default function VotePage() {
                 </div>
               )}
 
-              <LoadingButton
+              <Button
                 onClick={() => {
-                  // Double-check validation before submission
+                  // Mark that user attempted to submit
+                  setAttemptedSubmit(true);
+                  
+                  // Double-check validation before submission with force validation
                   if (!canSubmitVote()) {
-                    const currentErrors = validateSelections(selections);
+                    const currentErrors = validateSelections(selections, true);
                     setValidationErrors(currentErrors);
                     
                     // Navigate to first error if in "polls" view
@@ -2422,14 +2546,23 @@ export default function VotePage() {
                   handleSubmitVote();
                 }}
                 disabled={!canSubmitVote()}
-                isLoading={submitting}
-                loadingText="Submitting..."
                 className="gap-2 bg-primary hover:bg-primary/90 transition-all duration-200 hover:shadow-md w-full sm:w-auto"
                 size="lg"
               >
-                <CheckCircle2 className="h-4 w-4" />
-                Submit Vote
-              </LoadingButton>
+                {submitting ? (
+                  <>
+                    <div className="flex items-center gap-2">
+                      <RefreshCw className="h-4 w-4 animate-spin" />
+                      Submitting...
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle2 className="h-4 w-4" />
+                    Submit Vote
+                  </>
+                )}
+              </Button>
             </div>
           </motion.div>
         )}
@@ -2494,7 +2627,11 @@ export default function VotePage() {
         txStatus={txStatus}
         transactionError={transactionError}
         txDigest={txDigest}
-        onRetry={handleTryAgain}
+        failedStep={failedStep}
+        onRetry={() => {
+          setFailedStep(undefined);
+          handleTryAgain();
+        }}
         explorerUrl={SUI_CONFIG.explorerUrl}
       />
     </div>

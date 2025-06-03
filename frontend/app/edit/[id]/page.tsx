@@ -45,7 +45,7 @@ import { format, isAfter, addDays } from "date-fns"
 import { motion, AnimatePresence } from "framer-motion"
 import { cn } from "@/lib/utils"
 import Link from "next/link"
-import { useWallet } from "@suiet/wallet-kit"
+import { useWallet } from "@/contexts/wallet-context"
 import { useSuiVote } from "@/hooks/use-suivote"
 import { useToast } from "@/components/ui/use-toast"
 import { SUI_CONFIG } from "@/config/sui-config"
@@ -148,6 +148,7 @@ export default function EditVotePage() {
   const [txDigest, setTxDigest] = useState<string | null>(null)
   const [txStatusDialogOpen, setTxStatusDialogOpen] = useState(false)
   const [txProgress, setTxProgress] = useState(0)
+  const [failedStep, setFailedStep] = useState<TransactionStatus | undefined>(undefined)
   const [transactionError, setTransactionError] = useState<string | null>(null)
 
   // New state for environment variable checks
@@ -659,15 +660,29 @@ export default function EditVotePage() {
             // Only extend the voting period if the new end date is later than the original
             if (newEndTimestamp > oldEndTimestamp) {
               console.log("Building transaction to extend voting period...")
-              const transaction = extendVotingPeriodTransaction(voteId, newEndTimestamp)
+              setTxStatus(TransactionStatus.BUILDING)
+              
+              let transaction;
+              try {
+                transaction = extendVotingPeriodTransaction(voteId, newEndTimestamp)
+              } catch (buildError) {
+                setFailedStep(TransactionStatus.BUILDING);
+                throw buildError;
+              }
               
               console.log("Transaction built successfully, signing transaction...")
               setTxStatus(TransactionStatus.SIGNING)
               
-              const response = await executeTransaction(transaction)
-              
-              if (!response) {
-                throw new Error("Failed to extend voting period")
+              let response;
+              try {
+                response = await executeTransaction(transaction)
+                
+                if (!response) {
+                  throw new Error("Failed to extend voting period")
+                }
+              } catch (signingError) {
+                setFailedStep(TransactionStatus.SIGNING);
+                throw signingError;
               }
               
               console.log("Transaction executed successfully:", response)
@@ -679,7 +694,12 @@ export default function EditVotePage() {
               
               // Wait for confirmation (simulate with timeout in this example)
               setTxStatus(TransactionStatus.CONFIRMING)
-              await new Promise((resolve) => setTimeout(resolve, 2000))
+              try {
+                await new Promise((resolve) => setTimeout(resolve, 2000))
+              } catch (confirmError) {
+                setFailedStep(TransactionStatus.CONFIRMING);
+                throw confirmError;
+              }
               
               // Transaction confirmed
               setTxStatus(TransactionStatus.SUCCESS)
@@ -1645,9 +1665,11 @@ export default function EditVotePage() {
         txStatus={txStatus}
         txDigest={txDigest}
         transactionError={transactionError}
+        failedStep={failedStep}
         onRetry={() => {
           setTxStatusDialogOpen(false)
           setTxStatus(TransactionStatus.IDLE)
+          setFailedStep(undefined)
         }}
         onSuccess={() => router.push("/Polls")}
         onClose={() => setTxStatusDialogOpen(false)}
