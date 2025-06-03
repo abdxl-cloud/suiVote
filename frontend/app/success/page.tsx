@@ -254,7 +254,7 @@ export default function SuccessPage() {
     return () => {
       isMounted = false;
     };
-  }, [fetchState.voteId, fetchState.attemptCount, searchParams, suivote]);
+  }, [fetchState.voteId, fetchState.attemptCount, searchParams]);
 
   // Format date
   const formatDate = (timestamp: number) => {
@@ -425,50 +425,117 @@ export default function SuccessPage() {
     },
   ];
 
-  // Loading state with skeleton
+  // Loading state with enhanced animation
   if (loading) {
     return (
-      <div className="container max-w-4xl py-10 px-4 md:px-6">
-        <div className="mb-6">
-          <Skeleton className="h-9 w-32" />
-        </div>
+      <div className="container max-w-4xl py-8 px-4 md:py-10 md:px-6">
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.3 }}
+          className="flex flex-col items-center justify-center min-h-[60vh] space-y-8"
+        >
+          {/* Animated Logo/Icon */}
+          <motion.div
+            initial={{ scale: 0.8, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            transition={{ duration: 0.5, delay: 0.1 }}
+            className="relative"
+          >
+            <motion.div
+              animate={{ rotate: 360 }}
+              transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
+              className="w-16 h-16 border-4 border-primary/20 border-t-primary rounded-full"
+            />
+            <motion.div
+              initial={{ scale: 0 }}
+              animate={{ scale: 1 }}
+              transition={{ duration: 0.3, delay: 0.3 }}
+              className="absolute inset-0 flex items-center justify-center"
+            >
+              <CheckCircle2 className="w-8 h-8 text-primary" />
+            </motion.div>
+          </motion.div>
 
-        <div className="space-y-8">
-          <Card>
-            <CardHeader className="pb-2">
-              <div className="flex justify-center mb-4">
-                <Skeleton className="h-20 w-20 rounded-full" />
-              </div>
-              <Skeleton className="h-8 w-56 mx-auto" />
-              <Skeleton className="h-4 w-full max-w-md mx-auto mt-3" />
-            </CardHeader>
-            <CardContent className="pt-4 space-y-6">
-              <Skeleton className="h-16 w-full" />
-              <Skeleton className="h-10 w-full" />
-              <Skeleton className="h-16 w-full" />
-              <div className="flex gap-4">
-                <Skeleton className="h-10 flex-1" />
-                <Skeleton className="h-10 flex-1" />
-                <Skeleton className="h-10 flex-1" />
-              </div>
-            </CardContent>
-          </Card>
+          {/* Animated Text */}
+          <motion.div
+            initial={{ y: 20, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            transition={{ duration: 0.5, delay: 0.3 }}
+            className="text-center space-y-3"
+          >
+            <motion.h2
+              className="text-2xl font-semibold text-foreground font-poppins"
+              animate={{ opacity: [0.7, 1, 0.7] }}
+              transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
+            >
+              Processing Your Vote
+            </motion.h2>
+            <motion.p
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ duration: 0.5, delay: 0.5 }}
+              className="text-muted-foreground max-w-md font-inter"
+            >
+              We're fetching your vote details and preparing everything for you...
+            </motion.p>
+          </motion.div>
 
-          <Card>
-            <CardHeader>
-              <Skeleton className="h-6 w-40" />
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <Skeleton className="h-4 w-full" />
-              <Skeleton className="h-4 w-3/4" />
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <Skeleton className="h-16 w-full" />
-                <Skeleton className="h-16 w-full" />
-              </div>
-              <Skeleton className="h-4 w-1/2" />
-            </CardContent>
-          </Card>
-        </div>
+          {/* Progress Dots */}
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 0.5, delay: 0.7 }}
+            className="flex space-x-2"
+          >
+            {[0, 1, 2].map((i) => (
+              <motion.div
+                key={i}
+                className="w-2 h-2 bg-primary rounded-full"
+                animate={{ scale: [1, 1.5, 1], opacity: [0.5, 1, 0.5] }}
+                transition={{
+                  duration: 1.5,
+                  repeat: Infinity,
+                  delay: i * 0.2,
+                  ease: "easeInOut"
+                }}
+              />
+            ))}
+          </motion.div>
+
+          {/* Loading Steps */}
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5, delay: 0.9 }}
+            className="text-center space-y-2 text-sm text-muted-foreground font-inter"
+          >
+            <motion.div
+              className="flex items-center justify-center space-x-2"
+              animate={{ opacity: [0.5, 1, 0.5] }}
+              transition={{ duration: 1.5, repeat: Infinity, delay: 0 }}
+            >
+              <div className="w-1.5 h-1.5 bg-primary rounded-full" />
+              <span>Verifying transaction</span>
+            </motion.div>
+            <motion.div
+              className="flex items-center justify-center space-x-2"
+              animate={{ opacity: [0.5, 1, 0.5] }}
+              transition={{ duration: 1.5, repeat: Infinity, delay: 0.5 }}
+            >
+              <div className="w-1.5 h-1.5 bg-primary rounded-full" />
+              <span>Loading vote details</span>
+            </motion.div>
+            <motion.div
+              className="flex items-center justify-center space-x-2"
+              animate={{ opacity: [0.5, 1, 0.5] }}
+              transition={{ duration: 1.5, repeat: Infinity, delay: 1 }}
+            >
+              <div className="w-1.5 h-1.5 bg-primary rounded-full" />
+              <span>Preparing success page</span>
+            </motion.div>
+          </motion.div>
+        </motion.div>
       </div>
     )
   }
@@ -582,14 +649,14 @@ export default function SuccessPage() {
         transition={{ duration: 0.5 }}
         className="mb-8"
       >
-        <Card className="border-2 overflow-hidden shadow-lg relative">
+        <Card className="border border-border overflow-hidden shadow-sm relative bg-card">
           {/* Achievement badge */}
-          <div className="absolute -right-12 -top-3 rotate-45 bg-primary/90 dark:bg-primary/80 text-primary-foreground text-xs font-bold py-1 w-36 text-center shadow-md">
+          <div className="absolute -right-12 -top-3 rotate-45 bg-primary text-primary-foreground text-xs font-medium py-1 w-36 text-center shadow-sm">
             CREATED
           </div>
 
           <CardHeader className="pb-6 pt-8 text-center">
-            <div className="flex justify-center mb-4">
+            <div className="flex justify-center mb-6">
               <motion.div
                 initial={{ scale: 0.8, opacity: 0 }}
                 animate={{ scale: 1, opacity: 1 }}
@@ -599,15 +666,25 @@ export default function SuccessPage() {
                   damping: 15,
                   delay: 0.2
                 }}
-                className="bg-green-100 dark:bg-green-900/30 rounded-full p-4"
+                className="relative"
               >
-                <CheckCircle2 className="h-10 w-10 text-green-600 dark:text-green-400" />
+                <div className="w-20 h-20 bg-primary/10 rounded-full flex items-center justify-center border-2 border-primary/20">
+                  <CheckCircle2 className="w-10 h-10 text-primary" />
+                </div>
+                <motion.div
+                  initial={{ scale: 0 }}
+                  animate={{ scale: 1 }}
+                  transition={{ delay: 0.5, type: "spring", stiffness: 300 }}
+                  className="absolute -top-1 -right-1 w-6 h-6 bg-primary rounded-full flex items-center justify-center"
+                >
+                  <Sparkles className="w-3 h-3 text-primary-foreground" />
+                </motion.div>
               </motion.div>
             </div>
-            <CardTitle className="text-3xl sm:text-4xl background-animate bg-gradient-to-r from-green-600 to-green-400 dark:from-green-400 dark:to-green-300 text-transparent bg-clip-text">
-              Success!
+            <CardTitle className="text-3xl font-semibold text-center mb-3 text-foreground font-poppins">
+              Vote Created Successfully!
             </CardTitle>
-            <CardDescription className="text-lg mt-2 max-w-2xl mx-auto">
+            <CardDescription className="text-lg text-center max-w-2xl mx-auto text-muted-foreground font-inter">
               {voteDetails ? (
                 <span>
                   Your vote "<span className="font-medium">{voteDetails.title}</span>" has been published to the blockchain.
@@ -640,7 +717,7 @@ export default function SuccessPage() {
                   <span className="sm:hidden">Details</span>
                 </TabsTrigger>
                 <TabsTrigger value="tx" className="text-sm">
-                  <FileText className="h-4 w-4 mr-2" />
+                  <ExternalLink className="h-4 w-4 mr-2" />
                   <span className="hidden sm:inline">Transaction</span>
                   <span className="sm:hidden">Tx</span>
                 </TabsTrigger>
@@ -737,7 +814,7 @@ export default function SuccessPage() {
 
                 {/* Action buttons */}
                 <div className="hidden md:flex flex-col sm:flex-row gap-4 pt-2">
-                  <Button asChild className="gap-2 flex-1">
+                  <Button asChild className="gap-2 flex-1 bg-primary hover:bg-primary/90 text-primary-foreground shadow-sm hover:shadow-md transition-all duration-200 font-medium">
                     <Link href={`/vote/${voteId}`}>
                       <BarChart2 className="h-4 w-4" />
                       View Vote
@@ -747,7 +824,7 @@ export default function SuccessPage() {
                   <Button
                     onClick={handleShare}
                     variant="outline"
-                    className="gap-2 flex-1"
+                    className="gap-2 flex-1 border border-border hover:bg-muted/50 transition-all duration-200 font-medium"
                   >
                     <Share2 className="h-4 w-4" />
                     Share More Options
@@ -961,46 +1038,46 @@ export default function SuccessPage() {
         transition={{ duration: 0.5, delay: 0.3 }}
         className="mb-12 md:mb-6"
       >
-        <Card className="bg-gradient-to-br from-background to-muted/50">
+        <Card className="bg-card border border-border">
           <CardHeader>
-            <CardTitle className="text-xl flex items-center gap-2">
+            <CardTitle className="text-xl flex items-center gap-2 font-semibold font-poppins">
               <Sparkles className="h-5 w-5 text-primary" />
               Next Steps
             </CardTitle>
           </CardHeader>
           <CardContent>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <div className="bg-muted/50 p-4 rounded-lg border border-border hover:border-primary/50 transition-colors">
+              <div className="bg-muted/30 p-4 rounded-lg border border-border hover:border-primary/50 transition-colors">
                 <div className="flex justify-between items-start mb-3">
                   <div className="bg-primary/10 rounded-full h-8 w-8 flex items-center justify-center">
                     <Share2 className="h-4 w-4 text-primary" />
                   </div>
-                  <Badge variant="outline" className="text-xs">Step 1</Badge>
+                  <Badge variant="outline" className="text-xs font-inter">Step 1</Badge>
                 </div>
-                <h3 className="font-medium mb-1">Share the Vote</h3>
-                <p className="text-sm text-muted-foreground">Share the vote link with your intended participants</p>
+                <h3 className="font-medium mb-1 font-poppins">Share the Vote</h3>
+                <p className="text-sm text-muted-foreground font-inter">Share the vote link with your intended participants</p>
               </div>
 
-              <div className="bg-muted/50 p-4 rounded-lg border border-border hover:border-primary/50 transition-colors">
+              <div className="bg-muted/30 p-4 rounded-lg border border-border hover:border-primary/50 transition-colors">
                 <div className="flex justify-between items-start mb-3">
                   <div className="bg-primary/10 rounded-full h-8 w-8 flex items-center justify-center">
                     <Users className="h-4 w-4 text-primary" />
                   </div>
-                  <Badge variant="outline" className="text-xs">Step 2</Badge>
+                  <Badge variant="outline" className="text-xs font-inter">Step 2</Badge>
                 </div>
-                <h3 className="font-medium mb-1">Collect Responses</h3>
-                <p className="text-sm text-muted-foreground">Wait for participants to submit their votes</p>
+                <h3 className="font-medium mb-1 font-poppins">Collect Responses</h3>
+                <p className="text-sm text-muted-foreground font-inter">Wait for participants to submit their votes</p>
               </div>
 
-              <div className="bg-muted/50 p-4 rounded-lg border border-border hover:border-primary/50 transition-colors">
+              <div className="bg-muted/30 p-4 rounded-lg border border-border hover:border-primary/50 transition-colors">
                 <div className="flex justify-between items-start mb-3">
                   <div className="bg-primary/10 rounded-full h-8 w-8 flex items-center justify-center">
                     <BarChart2 className="h-4 w-4 text-primary" />
                   </div>
-                  <Badge variant="outline" className="text-xs">Step 3</Badge>
+                  <Badge variant="outline" className="text-xs font-inter">Step 3</Badge>
                 </div>
-                <h3 className="font-medium mb-1">View Results</h3>
-                <p className="text-sm text-muted-foreground">Check vote results in real-time or after closing</p>
+                <h3 className="font-medium mb-1 font-poppins">View Results</h3>
+                <p className="text-sm text-muted-foreground font-inter">Check vote results in real-time or after closing</p>
               </div>
             </div>
           </CardContent>
@@ -1017,6 +1094,3 @@ export default function SuccessPage() {
     </div>
   )
 }
-
-// Additional imports for FileText icon
-import { FileText } from "lucide-react"

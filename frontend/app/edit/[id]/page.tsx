@@ -213,14 +213,6 @@ export default function EditVotePage() {
       try {
         // Fetch vote details
         const details = await getVoteDetails(voteId)
-        if (!details) {
-          console.error("Vote not found")
-          toast.error("Vote not found", {
-            description: "The vote you're trying to edit doesn't exist or has been deleted."
-          })
-          router.push('/Polls')
-          return
-        }
         
         // Check if current user is the creator
         if (details.creator !== wallet.address) {

@@ -194,7 +194,7 @@ export default function ClosedVotePage() {
         unsubscribe()
       }
     }
-  }, [params.id, suivote, router])
+  }, [params.id, router])
   
   const handleShare = () => {
     setShareDialogOpen(true)

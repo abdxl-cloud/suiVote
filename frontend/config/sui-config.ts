@@ -28,8 +28,8 @@ export const SUI_CONFIG = {
   REQUEST_TIMEOUT_MS: 30000, // 30 seconds
 
   // Retry configuration
-  MAX_RETRIES: 3,
-  RETRY_DELAY_MS: 1000, // 1 second
+  MAX_RETRIES: 5,
+  RETRY_DELAY_MS: 1000, // 1 seconds
 
   // Logging
   VERBOSE_LOGGING: process.env.NEXT_PUBLIC_VERBOSE_LOGGING === "true",

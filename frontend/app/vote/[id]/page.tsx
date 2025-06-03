@@ -144,7 +144,7 @@ export default function VotePage() {
       } else {
         setTimeRemaining(newTime);
       }
-    }, 1000);
+    }, 5000); // Update every 5 seconds instead of 1 second to reduce load
 
     return () => clearInterval(timer);
   }, [vote?.status, vote?.startTimestamp]);
@@ -520,8 +520,8 @@ export default function VotePage() {
     let requiredPollsCount = 0;
     let completedRequiredPolls = 0;
 
-    // Don't validate if user hasn't interacted yet or if we're still loading
-    if (!hasUserInteracted || loading || polls.length === 0) {
+    // Don't validate if user hasn't interacted yet, if we're still loading, or if user has already voted
+    if (!hasUserInteracted || loading || polls.length === 0 || hasVoted) {
       return {};
     }
 
@@ -598,11 +598,17 @@ export default function VotePage() {
 
   // Validate whenever selections change (but only after user interaction)
   useEffect(() => {
+    // Skip validation if user has already voted
+    if (hasVoted) {
+      setValidationErrors({});
+      return;
+    }
+    
     if (polls.length > 0 && hasUserInteracted && !loading) {
       const errors = validateSelections(selections);
       setValidationErrors(errors);
     }
-  }, [selections, polls, hasUserInteracted, loading, touchedPolls, attemptedSubmit]);
+  }, [selections, polls, hasUserInteracted, loading, touchedPolls, attemptedSubmit, hasVoted]);
 
   // Handle option selection
   const handleOptionSelect = (pollId: string, optionId: string, isMultiSelect: boolean) => {

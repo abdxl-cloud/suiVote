@@ -352,7 +352,7 @@ export default function PollsPage() {
       // Clear votes when wallet is disconnected
       setVotes([])
     }
-  }, [wallet.connected, wallet.address, getMyVotes, subscribeToVoteUpdates])
+  }, [wallet.connected, wallet.address])
 
   const handleShare = (vote: any) => {
     setSelectedVote(vote)
