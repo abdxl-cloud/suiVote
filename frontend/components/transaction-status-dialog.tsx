@@ -119,9 +119,9 @@ export function TransactionStatusDialog({
                 <Loader2 className="h-4 w-4 sm:h-5 sm:w-5 text-blue-600 dark:text-blue-400 animate-spin" />
               </div>
             )}
-            <span className="text-sm sm:text-base lg:text-lg font-semibold leading-tight break-words">{dialogTitle}</span>
+            <span className="text-sm sm:text-base lg:text-lg font-semibold leading-tight break-words word-wrap overflow-wrap-anywhere">{dialogTitle}</span>
           </DialogTitle>
-          <DialogDescription className="text-xs sm:text-sm text-muted-foreground leading-relaxed break-words">
+          <DialogDescription className="text-xs sm:text-sm text-muted-foreground leading-relaxed break-words word-wrap overflow-wrap-anywhere">
             {dialogDescription}
           </DialogDescription>
         </DialogHeader>
@@ -239,7 +239,7 @@ export function TransactionStatusDialog({
               <Alert variant="destructive">
                 <AlertCircle className="h-4 w-4 flex-shrink-0" />
                 <AlertTitle>Transaction Failed</AlertTitle>
-                <AlertDescription className="text-xs break-words max-h-32 overflow-y-auto whitespace-pre-wrap">{transactionError}</AlertDescription>
+                <AlertDescription className="text-xs break-words word-wrap overflow-wrap-anywhere max-h-32 overflow-y-auto whitespace-pre-wrap">{transactionError}</AlertDescription>
               </Alert>
 
               {/* Error-specific guidance */}

@@ -2065,22 +2065,24 @@ export default function VotePage() {
                                 )}
 
                                 <div className="relative z-10 flex items-start space-x-3">
-                                  <RadioGroupItem
-                                    value={option.id}
-                                    id={option.id}
-                                    disabled={isDisabled}
-                                    className="mt-1 h-5 w-5"
-                                  />
-                                  <div className="grid gap-1.5 leading-none w-full">
+                                  <div className="flex-shrink-0 pt-0.5">
+                                    <RadioGroupItem
+                                      value={option.id}
+                                      id={option.id}
+                                      disabled={isDisabled}
+                                      className="h-5 w-5"
+                                    />
+                                  </div>
+                                  <div className="grid gap-1.5 leading-none w-full min-w-0">
                                     <Label
                                       htmlFor={option.id}
-                                      className={cn("text-base font-normal", isDisabled && "opacity-70")}
+                                      className={cn("text-base font-normal cursor-pointer", isDisabled && "opacity-70")}
                                     >
-                                      <span className="flex items-center gap-2">
-                                        <span className="flex-1">
+                                      <span className="flex items-start gap-2">
+                                        <span className="flex-1 break-words word-wrap overflow-wrap-anywhere">
                                           {formatTextWithLinks(option.text)}
                                         </span>
-                                        <span className="text-xs text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
+                                        <span className="text-xs text-muted-foreground bg-muted px-1.5 py-0.5 rounded flex-shrink-0">
                                           #{optionIndex + 1}
                                         </span>
                                       </span>
