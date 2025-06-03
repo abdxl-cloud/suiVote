@@ -11,6 +11,7 @@ import { format, formatDistanceToNow } from "date-fns"
 import Link from "next/link"
 import { TransactionStatusDialog, TransactionStatus } from "@/components/transaction-status-dialog"
 import { formatTokenAmount } from "@/utils/token-utils"
+import { VoteDetails, PollDetails, PollOptionDetails } from "@/services/suivote-service"
 
 // UI Components
 import {
@@ -21,7 +22,6 @@ import {
   ArrowLeft,
   Share2,
   Wallet,
-  Loader2,
   ExternalLink,
   Info,
   CheckCircle2,
@@ -55,8 +55,11 @@ import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { Progress } from "@/components/ui/progress"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { Skeleton } from "@/components/ui/skeleton"
+import { VoteDetailSkeleton } from "@/components/skeletons"
 import { ShareDialog } from "@/components/share-dialog"
 import { WalletConnectButton } from "@/components/wallet-connect-button"
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { cn } from "@/lib/utils"
 
@@ -72,8 +75,8 @@ export default function VotePage() {
   const suivote = useSuiVote()
 
   // State
-  const [vote, setVote] = useState(null)
-  const [polls, setPolls] = useState([])
+  const [vote, setVote] = useState<VoteDetails | null>(null)
+  const [polls, setPolls] = useState<(PollDetails & { options: (PollOptionDetails & { percentage: number })[] })[]>([])
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [submitted, setSubmitted] = useState(false)
@@ -82,12 +85,25 @@ export default function VotePage() {
   const [activeTab, setActiveTab] = useState("vote")
   const [activePollIndex, setActivePollIndex] = useState(0)
   const [shareDialogOpen, setShareDialogOpen] = useState(false)
-  const [validationErrors, setValidationErrors] = useState({})
+  const [validationErrors, setValidationErrors] = useState<{[key: string]: string}>({})
   const [userCanVote, setUserCanVote] = useState(false)
   const [userHasRequiredTokens, setUserHasRequiredTokens] = useState(true)
   const [tokenBalance, setTokenBalance] = useState(0)
   const [hasUserInteracted, setHasUserInteracted] = useState(false) // Track if user has made any selections
-  const [loadingError, setLoadingError] = useState(null) // Separate loading errors from validation errors
+  const [loadingError, setLoadingError] = useState<string | null>(null) // Separate loading errors from validation errors
+  const [expandedBadges, setExpandedBadges] = useState<{[key: string]: boolean}>({}) // Track which badge info is expanded
+  
+  // Smart validation states
+  const [touchedPolls, setTouchedPolls] = useState<{[key: string]: boolean}>({})
+  const [attemptedSubmit, setAttemptedSubmit] = useState(false)
+
+  // Helper function to toggle badge expansion
+  const toggleBadgeExpansion = (badgeKey: string) => {
+    setExpandedBadges(prev => ({
+      ...prev,
+      [badgeKey]: !prev[badgeKey]
+    }))
+  }
 
   const [timeRemaining, setTimeRemaining] = useState({
     days: 0,
@@ -136,12 +152,12 @@ export default function VotePage() {
   
   // Transaction state
   const [txStatus, setTxStatus] = useState(TransactionStatus.IDLE)
-  const [txDigest, setTxDigest] = useState(null)
+  const [txDigest, setTxDigest] = useState<string | null>(null)
   const [txProgress, setTxProgress] = useState(0)
   const [failedStep, setFailedStep] = useState<TransactionStatus | undefined>(undefined)
 
   // State to track selections for each poll
-  const [selections, setSelections] = useState({})
+  const [selections, setSelections] = useState<{[key: string]: string[]}>({})
 
   // Transaction dialog state
   const [txStatusDialogOpen, setTxStatusDialogOpen] = useState(false)
@@ -497,8 +513,8 @@ export default function VotePage() {
   }, [txStatus])
 
   // Enhanced validation with detailed error messages and better UX
-  const validateSelections = (selections) => {
-    const validationErrors = {};
+  const validateSelections = (selections: {[key: string]: string[]}, forceValidation = false) => {
+    const validationErrors: {[key: string]: string} = {};
     let hasValidSelections = false;
     let hasRequiredSelections = true;
     let requiredPollsCount = 0;
@@ -512,22 +528,23 @@ export default function VotePage() {
     // Check each poll for validation issues
     polls.forEach(poll => {
       const selectedOptions = selections[poll.id] || [];
+      const shouldShowError = forceValidation || attemptedSubmit || touchedPolls[poll.id];
       
       // Count required polls
       if (poll.isRequired) {
         requiredPollsCount++;
       }
 
-      // Check if required poll has selections
-      if (poll.isRequired && selectedOptions.length === 0) {
+      // Check if required poll has selections (only show error if poll was touched or submit attempted)
+      if (poll.isRequired && selectedOptions.length === 0 && shouldShowError) {
         validationErrors[poll.id] = `${poll.title} requires a response`;
         hasRequiredSelections = false;
       } else if (poll.isRequired && selectedOptions.length > 0) {
         completedRequiredPolls++;
       }
 
-      // Validate selection count based on poll type
-      if (selectedOptions.length > 0) {
+      // Validate selection count based on poll type (only show error if poll was touched or submit attempted)
+      if (selectedOptions.length > 0 && shouldShowError) {
         if (!poll.isMultiSelect && selectedOptions.length > 1) {
           validationErrors[poll.id] = `${poll.title} allows only one selection`;
         } else if (poll.isMultiSelect && poll.maxSelections &&
@@ -545,8 +562,10 @@ export default function VotePage() {
       }
     });
 
-    // Provide more specific error messages
-    if (hasUserInteracted && !hasValidSelections) {
+    // Provide more specific error messages (only show if submit was attempted or user has interacted significantly)
+    const shouldShowGeneralError = forceValidation || attemptedSubmit || Object.keys(touchedPolls).length > 0;
+    
+    if (hasUserInteracted && !hasValidSelections && shouldShowGeneralError) {
       if (requiredPollsCount > 0) {
         validationErrors.general = `Please complete ${requiredPollsCount} required poll${requiredPollsCount > 1 ? 's' : ''}`;
       } else {
@@ -554,8 +573,8 @@ export default function VotePage() {
       }
     }
 
-    // Show progress for required polls
-    if (hasUserInteracted && requiredPollsCount > 0 && completedRequiredPolls < requiredPollsCount) {
+    // Show progress for required polls (only if submit was attempted or multiple polls touched)
+    if (hasUserInteracted && requiredPollsCount > 0 && completedRequiredPolls < requiredPollsCount && shouldShowGeneralError) {
       if (!validationErrors.general) {
         validationErrors.general = `Complete ${requiredPollsCount - completedRequiredPolls} more required poll${(requiredPollsCount - completedRequiredPolls) > 1 ? 's' : ''} (${completedRequiredPolls}/${requiredPollsCount})`;
       }
@@ -572,8 +591,8 @@ export default function VotePage() {
     if (!userCanVote) return false;
     if (!hasUserInteracted) return false; // Must have interacted with the form
     
-    // Check validation errors
-    const currentErrors = validateSelections(selections);
+    // Check validation errors with force validation
+    const currentErrors = validateSelections(selections, true);
     return Object.keys(currentErrors).length === 0;
   };
 
@@ -583,14 +602,20 @@ export default function VotePage() {
       const errors = validateSelections(selections);
       setValidationErrors(errors);
     }
-  }, [selections, polls, hasUserInteracted, loading]);
+  }, [selections, polls, hasUserInteracted, loading, touchedPolls, attemptedSubmit]);
 
   // Handle option selection
-  const handleOptionSelect = (pollId, optionId, isMultiSelect) => {
+  const handleOptionSelect = (pollId: string, optionId: string, isMultiSelect: boolean) => {
     // Mark that user has interacted with the form
     if (!hasUserInteracted) {
       setHasUserInteracted(true);
     }
+
+    // Mark this poll as touched
+    setTouchedPolls(prev => ({
+      ...prev,
+      [pollId]: true
+    }));
 
     setSelections(prev => {
       const newSelections = { ...prev }
@@ -605,16 +630,16 @@ export default function VotePage() {
         } else {
           // If not selected, add it (respecting maxSelections)
           const poll = polls.find(p => p.id === pollId)
-          if (poll && currentSelections.length < poll.maxSelections) {
-            newSelections[pollId] = [...currentSelections, optionId]
-          } else {
-            // Show a toast to inform user they've reached max selections
-            toast.info(`You can select up to ${poll.maxSelections} options for this poll`, {
-              description: "Please deselect an option before selecting a new one"
-            });
-            // Return unchanged selections
-            return prev;
-          }
+        if (poll && currentSelections.length < poll.maxSelections) {
+          newSelections[pollId] = [...currentSelections, optionId]
+        } else {
+          // Show a toast to inform user they've reached max selections
+          toast.info(`You can select up to ${poll?.maxSelections} options for this poll`, {
+            description: "Please deselect an option before selecting a new one"
+          });
+          // Return unchanged selections
+          return prev;
+        }
         }
       } else {
         // For single-select polls - always just one option
@@ -624,18 +649,28 @@ export default function VotePage() {
       return newSelections
     })
 
-    // Clear any existing validation error for this poll
-    if (validationErrors[pollId]) {
+    // Smart error clearing - trigger validation with delay to allow state updates
+    setTimeout(() => {
       setValidationErrors(prev => {
-        const newErrors = { ...prev }
-        delete newErrors[pollId]
-        // Also clear general error if it exists and we now have selections
-        if (newErrors.general) {
-          delete newErrors.general
+        // Get current selections and validate
+        const currentSelections = { ...selections };
+        if (isMultiSelect) {
+          const currentOptions = currentSelections[pollId] || [];
+          if (currentOptions.includes(optionId)) {
+            currentSelections[pollId] = currentOptions.filter(id => id !== optionId);
+          } else {
+            const poll = polls.find(p => p.id === pollId);
+            if (poll && currentOptions.length < poll.maxSelections) {
+              currentSelections[pollId] = [...currentOptions, optionId];
+            }
+          }
+        } else {
+          currentSelections[pollId] = [optionId];
         }
-        return newErrors
-      })
-    }
+        
+        return validateSelections(currentSelections);
+      });
+    }, 300);
   }
 
   // Validate vote submission
@@ -1128,22 +1163,7 @@ export default function VotePage() {
 
   // Loading state
   if (loading) {
-    return (
-      <div className="container max-w-4xl py-6 md:py-10 px-4 md:px-6 mx-auto">
-        <div className="flex flex-col items-center justify-center min-h-[70vh] gap-6">
-          <div className="flex items-center justify-center">
-            <div className="relative">
-              <div className="h-16 w-16 rounded-full border-4 border-muted animate-pulse"></div>
-              <div className="absolute inset-0 h-16 w-16 rounded-full border-t-4 border-primary animate-spin"></div>
-            </div>
-          </div>
-          <div className="text-center space-y-3">
-            <h3 className="text-xl font-medium">Loading Vote</h3>
-            <p className="text-muted-foreground text-sm">Please wait while we retrieve the vote data...</p>
-          </div>
-        </div>
-      </div>
-    )
+    return <VoteDetailSkeleton />
   }
 
   // Error state
@@ -1665,82 +1685,144 @@ export default function VotePage() {
                           
                           {/* Token Requirement */}
                           {vote.tokenRequirement && (
-                            <Badge 
-                              variant="outline" 
-                              className={cn(
-                                "text-xs gap-1 cursor-help transition-all hover:scale-105",
-                                userHasRequiredTokens 
-                                  ? "bg-green-50 text-green-700 border-green-200 dark:bg-green-900/20 dark:text-green-400" 
-                                  : "bg-red-50 text-red-700 border-red-200 dark:bg-red-900/20 dark:text-red-400"
-                              )}
-                              title={
-                                userHasRequiredTokens && wallet.connected
-                                  ? `✅ You have enough ${vote.tokenRequirement.split("::").pop()} tokens to vote`
-                                  : wallet.connected
-                                  ? `❌ You need at least ${vote.tokenAmount} ${vote.tokenRequirement.split("::").pop()} tokens in your wallet to participate`
-                                  : `You must hold at least ${vote.tokenAmount} ${vote.tokenRequirement.split("::").pop()} tokens to vote. Connect your wallet to check your balance.`
-                              }
-                            >
-                              <Wallet className="h-3 w-3" />
-                              {vote.tokenAmount} {vote.tokenRequirement.split("::").pop()}
-                              {wallet.connected && (
-                                userHasRequiredTokens ? 
-                                  <CheckCircle2 className="h-3 w-3" /> : 
-                                  <X className="h-3 w-3" />
-                              )}
-                            </Badge>
+                            <div className="space-y-2">
+                              <Badge 
+                                variant="outline" 
+                                className={cn(
+                                  "text-xs gap-1 cursor-pointer transition-all hover:scale-105",
+                                  userHasRequiredTokens 
+                                    ? "bg-green-50 text-green-700 border-green-200 dark:bg-green-900/20 dark:text-green-400" 
+                                    : "bg-red-50 text-red-700 border-red-200 dark:bg-red-900/20 dark:text-red-400"
+                                )}
+                                onClick={() => toggleBadgeExpansion('tokenRequirement')}
+                              >
+                                <Wallet className="h-3 w-3" />
+                                {vote.tokenAmount} {vote.tokenRequirement.split("::").pop()}
+                                {wallet.connected && (
+                                  userHasRequiredTokens ? 
+                                    <CheckCircle2 className="h-3 w-3" /> : 
+                                    <X className="h-3 w-3" />
+                                )}
+                                <Info className="h-3 w-3" />
+                              </Badge>
+                              <AnimatePresence>
+                                {expandedBadges.tokenRequirement && (
+                                  <motion.div
+                                    initial={{ opacity: 0, height: 0 }}
+                                    animate={{ opacity: 1, height: "auto" }}
+                                    exit={{ opacity: 0, height: 0 }}
+                                    transition={{ duration: 0.2 }}
+                                    className="text-xs text-muted-foreground bg-muted/50 p-2 rounded border"
+                                  >
+                                    {userHasRequiredTokens && wallet.connected
+                                      ? `✅ You have enough ${vote.tokenRequirement.split("::").pop()} tokens to vote`
+                                      : wallet.connected
+                                      ? `❌ You need at least ${vote.tokenAmount} ${vote.tokenRequirement.split("::").pop()} tokens in your wallet to participate`
+                                      : `You must hold at least ${vote.tokenAmount} ${vote.tokenRequirement.split("::").pop()} tokens to vote. Connect your wallet to check your balance.`
+                                    }
+                                  </motion.div>
+                                )}
+                              </AnimatePresence>
+                            </div>
                           )}
 
                           {/* Payment Requirement */}
                           {vote.paymentAmount > 0 && (
-                            <Badge 
-                              variant="outline" 
-                              className="text-xs gap-1 bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/20 dark:text-amber-400 cursor-help transition-all hover:scale-105"
-                              title={`💰 A payment of ${formatTokenAmount(vote.paymentAmount, 9)} SUI is required to submit your vote. This fee helps prevent spam and supports the voting system.`}
-                            >
-                              <Wallet className="h-3 w-3" />
-                              {formatTokenAmount(vote.paymentAmount, 9)} SUI
-                            </Badge>
+                            <div className="space-y-2">
+                              <Badge 
+                                variant="outline" 
+                                className="text-xs gap-1 bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/20 dark:text-amber-400 cursor-pointer transition-all hover:scale-105"
+                                onClick={() => toggleBadgeExpansion('paymentRequirement')}
+                              >
+                                <Wallet className="h-3 w-3" />
+                                {formatTokenAmount(vote.paymentAmount, 9)} SUI
+                                <Info className="h-3 w-3" />
+                              </Badge>
+                              <AnimatePresence>
+                                {expandedBadges.paymentRequirement && (
+                                  <motion.div
+                                    initial={{ opacity: 0, height: 0 }}
+                                    animate={{ opacity: 1, height: "auto" }}
+                                    exit={{ opacity: 0, height: 0 }}
+                                    transition={{ duration: 0.2 }}
+                                    className="text-xs text-muted-foreground bg-muted/50 p-2 rounded border"
+                                  >
+                                    💰 A payment of {formatTokenAmount(vote.paymentAmount, 9)} SUI is required to submit your vote. This fee helps prevent spam and supports the voting system.
+                                  </motion.div>
+                                )}
+                              </AnimatePresence>
+                            </div>
                           )}
 
                           {/* Whitelist Requirement */}
                           {vote.hasWhitelist && (
-                            <Badge 
-                              variant="outline" 
-                              className={cn(
-                                "text-xs gap-1 cursor-help transition-all hover:scale-105",
-                                wallet.connected && userCanVote
-                                  ? "bg-green-50 text-green-700 border-green-200 dark:bg-green-900/20 dark:text-green-400"
-                                  : "bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-900/20 dark:text-blue-400"
-                              )}
-                              title={
-                                wallet.connected && userCanVote
-                                  ? "✅ Your wallet address is approved to participate in this vote"
-                                  : wallet.connected
-                                  ? "❌ Only pre-approved wallet addresses can vote. Your address is not on the whitelist."
-                                  : "🛡️ This vote is restricted to pre-approved wallet addresses only. Connect your wallet to check if you're eligible."
-                              }
-                            >
-                              <Shield className="h-3 w-3" />
-                              Whitelist
-                              {wallet.connected && (
-                                userCanVote ? 
-                                  <CheckCircle2 className="h-3 w-3" /> : 
-                                  <AlertCircle className="h-3 w-3" />
-                              )}
-                            </Badge>
+                            <div className="space-y-2">
+                              <Badge 
+                                variant="outline" 
+                                className={cn(
+                                  "text-xs gap-1 cursor-pointer transition-all hover:scale-105",
+                                  wallet.connected && userCanVote
+                                    ? "bg-green-50 text-green-700 border-green-200 dark:bg-green-900/20 dark:text-green-400"
+                                    : "bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-900/20 dark:text-blue-400"
+                                )}
+                                onClick={() => toggleBadgeExpansion('whitelistRequirement')}
+                              >
+                                <Shield className="h-3 w-3" />
+                                Whitelist
+                                {wallet.connected && (
+                                  userCanVote ? 
+                                    <CheckCircle2 className="h-3 w-3" /> : 
+                                    <AlertCircle className="h-3 w-3" />
+                                )}
+                                <Info className="h-3 w-3" />
+                              </Badge>
+                              <AnimatePresence>
+                                {expandedBadges.whitelistRequirement && (
+                                  <motion.div
+                                    initial={{ opacity: 0, height: 0 }}
+                                    animate={{ opacity: 1, height: "auto" }}
+                                    exit={{ opacity: 0, height: 0 }}
+                                    transition={{ duration: 0.2 }}
+                                    className="text-xs text-muted-foreground bg-muted/50 p-2 rounded border"
+                                  >
+                                    {wallet.connected && userCanVote
+                                      ? "✅ Your wallet address is approved to participate in this vote"
+                                      : wallet.connected
+                                      ? "❌ Only pre-approved wallet addresses can vote. Your address is not on the whitelist."
+                                      : "🛡️ This vote is restricted to pre-approved wallet addresses only. Connect your wallet to check if you're eligible."
+                                    }
+                                  </motion.div>
+                                )}
+                              </AnimatePresence>
+                            </div>
                           )}
 
                           {/* Token Weighting Indicator */}
                           {vote.useTokenWeighting && (
-                            <Badge 
-                              variant="outline" 
-                              className="text-xs gap-1 bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-900/20 dark:text-purple-400 cursor-help transition-all hover:scale-105"
-                              title="📊 Your voting power is weighted by your token balance. More tokens = more influence on the final results."
-                            >
-                              <BarChart2 className="h-3 w-3" />
-                              Weighted
-                            </Badge>
+                            <div className="space-y-2">
+                              <Badge 
+                                variant="outline" 
+                                className="text-xs gap-1 bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-900/20 dark:text-purple-400 cursor-pointer transition-all hover:scale-105"
+                                onClick={() => toggleBadgeExpansion('tokenWeighting')}
+                              >
+                                <BarChart2 className="h-3 w-3" />
+                                Weighted
+                                <Info className="h-3 w-3" />
+                              </Badge>
+                              <AnimatePresence>
+                                {expandedBadges.tokenWeighting && (
+                                  <motion.div
+                                    initial={{ opacity: 0, height: 0 }}
+                                    animate={{ opacity: 1, height: "auto" }}
+                                    exit={{ opacity: 0, height: 0 }}
+                                    transition={{ duration: 0.2 }}
+                                    className="text-xs text-muted-foreground bg-muted/50 p-2 rounded border"
+                                  >
+                                    📊 Your voting power is weighted by your token balance. More tokens = more influence on the final results.
+                                  </motion.div>
+                                )}
+                              </AnimatePresence>
+                            </div>
                           )}
                         </div>
                       </div>
@@ -2433,11 +2515,14 @@ export default function VotePage() {
                 </div>
               )}
 
-              <LoadingButton
+              <Button
                 onClick={() => {
-                  // Double-check validation before submission
+                  // Mark that user attempted to submit
+                  setAttemptedSubmit(true);
+                  
+                  // Double-check validation before submission with force validation
                   if (!canSubmitVote()) {
-                    const currentErrors = validateSelections(selections);
+                    const currentErrors = validateSelections(selections, true);
                     setValidationErrors(currentErrors);
                     
                     // Navigate to first error if in "polls" view
@@ -2461,14 +2546,23 @@ export default function VotePage() {
                   handleSubmitVote();
                 }}
                 disabled={!canSubmitVote()}
-                isLoading={submitting}
-                loadingText="Submitting..."
                 className="gap-2 bg-primary hover:bg-primary/90 transition-all duration-200 hover:shadow-md w-full sm:w-auto"
                 size="lg"
               >
-                <CheckCircle2 className="h-4 w-4" />
-                Submit Vote
-              </LoadingButton>
+                {submitting ? (
+                  <>
+                    <div className="flex items-center gap-2">
+                      <RefreshCw className="h-4 w-4 animate-spin" />
+                      Submitting...
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle2 className="h-4 w-4" />
+                    Submit Vote
+                  </>
+                )}
+              </Button>
             </div>
           </motion.div>
         )}

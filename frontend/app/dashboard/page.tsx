@@ -140,8 +140,8 @@ export default function DashboardPage() {
                     return {
                       ...v,
                       status: finalStatus,
-                      votes: updatedVoteDetails.totalVotes,
-                      pollCount: updatedVoteDetails.pollsCount,
+                      totalVotes: updatedVoteDetails.totalVotes,
+                      pollsCount: updatedVoteDetails.pollsCount,
                       endTimestamp: updatedVoteDetails.endTimestamp,
                       startTimestamp: updatedVoteDetails.startTimestamp,
                       tokenRequirement: updatedVoteDetails.tokenRequirement,
@@ -190,8 +190,8 @@ export default function DashboardPage() {
                     return {
                       ...v,
                       status: finalStatus,
-                      votes: updatedVoteDetails.totalVotes,
-                      pollCount: updatedVoteDetails.pollsCount,
+                      totalVotes: updatedVoteDetails.totalVotes,
+                      pollsCount: updatedVoteDetails.pollsCount,
                       endTimestamp: updatedVoteDetails.endTimestamp,
                       startTimestamp: updatedVoteDetails.startTimestamp,
                       tokenRequirement: updatedVoteDetails.tokenRequirement,
@@ -317,11 +317,11 @@ export default function DashboardPage() {
       { name: "Closed", value: votesByStatus.closed.length, color: "#6B7280" }
     ].filter(status => status.value > 0)
 
-    // Poll count vs. participation data (for created votes)
-    const pollCounts = [...new Set(createdVotes.map(vote => vote.pollsCount))].sort((a, b) => a - b)
+    // Poll count vs. participation data
+    const pollCounts = [...new Set(votes.map(vote => vote.pollsCount))].sort((a, b) => a - b)
     const pollCountData = pollCounts.map(count => {
-      const votesWithCount = createdVotes.filter(vote => vote.pollsCount === count)
-      const totalParticipation = votesWithCount.reduce((sum, vote) => sum + vote.totalVotes, 0)
+      const votesWithCount = votes.filter(vote => vote.pollsCount === count)
+      const totalParticipation = votesWithCount.reduce((sum, vote) => sum + vote.votes, 0)
       const avgParticipation = votesWithCount.length > 0 ? totalParticipation / votesWithCount.length : 0
       
       return {
@@ -333,8 +333,8 @@ export default function DashboardPage() {
 
     // Most popular votes
     const popularVotes = [...votes]
-      .filter(vote => vote.totalVotes > 0)
-      .sort((a, b) => b.totalVotes - a.totalVotes)
+      .filter(vote => vote.votes > 0)
+      .sort((a, b) => b.votes - a.votes)
       .slice(0, 5)
 
     return {

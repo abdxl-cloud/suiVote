@@ -5,6 +5,7 @@ import { Check, AlertCircle, Loader2, ExternalLink, Copy, Circle, X, RefreshCw, 
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert"
+import { Skeleton } from "@/components/ui/skeleton"
 import Link from "next/link"
 import { toast } from "sonner" // or your toast library
 import { cn } from "@/lib/utils"
@@ -116,7 +117,9 @@ export function TransactionStatusDialog({
             )}
             {txStatus !== TransactionStatus.SUCCESS && txStatus !== TransactionStatus.ERROR && (
               <div className="bg-blue-100 dark:bg-blue-900/30 p-2 sm:p-3 rounded-full flex-shrink-0">
-                <Loader2 className="h-4 w-4 sm:h-5 sm:w-5 text-blue-600 dark:text-blue-400 animate-spin" />
+                <div className="relative h-4 w-4 sm:h-5 sm:w-5">
+                  <Skeleton className="absolute inset-0 rounded-full animate-pulse" />
+                </div>
               </div>
             )}
             <span className="text-sm sm:text-base lg:text-lg font-semibold leading-tight break-words word-wrap overflow-wrap-anywhere">{dialogTitle}</span>
@@ -158,7 +161,9 @@ export function TransactionStatusDialog({
                     {isCompleted || wasCompletedBeforeError ? (
                       <Check className="h-3 w-3 sm:h-4 sm:w-4 text-green-600 dark:text-green-400" />
                     ) : isActive ? (
-                      <Loader2 className="h-3 w-3 sm:h-4 sm:w-4 text-blue-600 dark:text-blue-400 animate-spin" />
+                      <div className="relative h-3 w-3 sm:h-4 sm:w-4">
+                        <Skeleton className="absolute inset-0 rounded-full animate-pulse" />
+                      </div>
                     ) : hasError ? (
                       <AlertCircle className="h-3 w-3 sm:h-4 sm:w-4 text-red-600 dark:text-red-400" />
                     ) : (

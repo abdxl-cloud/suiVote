@@ -10,9 +10,9 @@ import {
   ExternalLink,
   Share2,
   Home,
-  BarChart2,
-  Loader2
+  BarChart2
 } from "lucide-react"
+import { Skeleton } from "@/components/ui/skeleton"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -171,7 +171,10 @@ export default function VoteSuccessPage() {
     return (
       <div className="container max-w-3xl py-10 px-4 md:px-6">
         <div className="flex flex-col items-center justify-center h-64 gap-4">
-          <Loader2 className="h-12 w-12 animate-spin text-primary" />
+          <div className="flex flex-col items-center gap-4">
+            <Skeleton className="h-12 w-12 rounded-full" />
+            <Skeleton className="h-4 w-48" />
+          </div>
           <p className="text-muted-foreground">Loading vote details...</p>
         </div>
       </div>

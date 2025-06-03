@@ -17,6 +17,7 @@ export function AppHeader() {
   const [isScrolled, setIsScrolled] = useState(false)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const isMobile = useMediaQuery("(max-width: 768px)")
+  const isTablet = useMediaQuery("(max-width: 1024px)")
   const pathname = usePathname()
   const [isLandingPage, setIsLandingPage] = useState(pathname === "/")
 
@@ -121,19 +122,20 @@ export function AppHeader() {
                       <Link
                         href={item.href}
                         className={cn(
-                          "flex items-center space-x-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 hover:bg-accent hover:text-accent-foreground group relative",
+                          "flex items-center py-2.5 rounded-lg text-sm font-medium transition-all duration-200 hover:bg-accent hover:text-accent-foreground group relative",
+                          isTablet ? "px-3" : "px-4 space-x-2",
                           isActive
-                            ? "bg-primary/10 text-primary shadow-sm border border-primary/20"
+                            ? "bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20"
                             : "text-muted-foreground hover:text-foreground"
                         )}
                       >
                         <item.icon className={cn(
                           "h-4 w-4 transition-all duration-200",
-                          isActive ? "text-primary" : "group-hover:scale-110"
+                          isActive ? "text-blue-600 dark:text-blue-400" : "group-hover:scale-110"
                         )} />
-                        <span>{item.name}</span>
+                        {!isTablet && <span>{item.name}</span>}
                         {isActive && (
-                          <div className="absolute inset-0 rounded-lg bg-primary/5 -z-10" />
+                          <div className="absolute inset-0 rounded-lg bg-blue-500/5 -z-10" />
                         )}
                       </Link>
                     </TooltipTrigger>

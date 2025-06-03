@@ -2,7 +2,7 @@
 
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
-import { Loader2, ChevronDown, Copy, ExternalLink, LogOut, AlertCircle, Wallet } from "lucide-react"
+import { ChevronDown, Copy, ExternalLink, LogOut, AlertCircle, Wallet } from "lucide-react"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -10,6 +10,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { Skeleton } from "@/components/ui/skeleton"
 import { toast } from "@/components/ui/use-toast"
 import {
   Dialog,
@@ -243,7 +244,9 @@ export function WalletConnectButton({ variant = "default", size = "default", cla
                     )}
                   </span>
                   {connectingWallet === wallet.name && (
-                    <Loader2 className="h-4 w-4 animate-spin" />
+                    <div className="relative h-4 w-4">
+                  <Skeleton className="absolute inset-0 rounded-full animate-pulse" />
+                </div>
                   )}
                 </Button>
               ))}
@@ -356,7 +359,9 @@ export function WalletConnectButton({ variant = "default", size = "default", cla
           <img src="/images/sui-logo.png" alt="Sui" className="h-4 w-4 mr-2" />
           {connecting || isLoading ? (
             <>
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              <div className="relative mr-2 h-4 w-4">
+                <Skeleton className="absolute inset-0 rounded-full animate-pulse" />
+              </div>
               Connecting
             </>
           ) : (

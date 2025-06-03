@@ -5,13 +5,13 @@ import {
   Wallet,
   Search,
   X,
-  Loader2,
   Check,
   AlertCircle,
   Info,
   Copy,
   ExternalLink,
 } from "lucide-react"
+import { Skeleton } from "@/components/ui/skeleton"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -25,7 +25,6 @@ import {
 } from "@/components/ui/dialog"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Separator } from "@/components/ui/separator"
-import { Skeleton } from "@/components/ui/skeleton"
 import { Badge } from "@/components/ui/badge"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Switch } from "@/components/ui/switch"
@@ -359,7 +358,9 @@ export function TokenSelector({
 
     return (
       <div className="flex items-center gap-2 text-muted-foreground">
-        <Loader2 className="w-4 h-4 animate-spin" />
+        <div className="relative w-4 h-4">
+          <Skeleton className="absolute inset-0 rounded-full animate-pulse" />
+        </div>
         <span>Loading token...</span>
       </div>
     )

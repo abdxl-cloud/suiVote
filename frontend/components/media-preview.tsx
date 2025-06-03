@@ -1,7 +1,8 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { X, Image as ImageIcon, Loader2 } from "lucide-react"
+import { X, Image as ImageIcon } from "lucide-react"
+import { Skeleton } from "@/components/ui/skeleton"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 
@@ -48,7 +49,9 @@ export function MediaPreview({
     >
       {loading && (
         <div className="absolute inset-0 flex items-center justify-center bg-background/80">
-          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+          <div className="relative h-5 w-5">
+            <Skeleton className="absolute inset-0 rounded-full animate-pulse" />
+          </div>
         </div>
       )}
 

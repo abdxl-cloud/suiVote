@@ -57,6 +57,7 @@ import { Slider } from "@/components/ui/slider"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { Badge } from "@/components/ui/badge"
+import { Skeleton } from "@/components/ui/skeleton"
 import { DateTimePicker } from "@/components/date-time-picker"
 import { isAfter, addDays } from "date-fns"
 import { motion, AnimatePresence } from "framer-motion"
@@ -229,6 +230,22 @@ export default function CreateVotePage() {
   });
 
   const [errors, setErrors] = useState<ValidationErrors>({})
+  const [touchedFields, setTouchedFields] = useState<{
+    title?: boolean
+    description?: boolean
+    polls?: { [key: string]: {
+      title?: boolean
+      options?: boolean
+      optionTexts?: boolean[]
+      maxSelections?: boolean
+    }}
+    votingSettings?: {
+      dates?: boolean
+      token?: boolean
+      amount?: boolean
+    }
+  }>({})
+  const [attemptedSubmit, setAttemptedSubmit] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [activeTab, setActiveTab] = useState("details")
   const [activePollIndex, setActivePollIndex] = useState(0)
@@ -709,16 +726,26 @@ const addPoll = () => {
     const newPolls = [...polls]
     newPolls[pollIndex].title = title
     setPolls(newPolls)
-    // Validate form without navigation to update errors in real-time
-    setTimeout(() => validateForm(false), 0);
+    // Mark poll title as touched
+    setTouchedFields(prev => ({
+      ...prev,
+      polls: {
+        ...prev.polls,
+        [newPolls[pollIndex].id]: {
+          ...prev.polls?.[newPolls[pollIndex].id],
+          title: true
+        }
+      }
+    }))
+    // Validate with smart validation
+    setTimeout(() => validateForm(false), 100);
   }
 
   const updatePollDescription = (pollIndex: number, description: string) => {
     const newPolls = [...polls]
     newPolls[pollIndex].description = description
     setPolls(newPolls)
-    // Validate form without navigation to update errors in real-time
-    setTimeout(() => validateForm(false), 0);
+    // No validation needed for optional description
   }
 
   const updatePollType = (pollIndex: number, isMultiSelect: boolean) => {
@@ -774,8 +801,18 @@ const addPoll = () => {
     
     console.log(`Added option ${optionNumber} to poll ${pollIndex + 1}:`, newOption)
     setPolls(newPolls)
-    // Validate form without navigation to update errors in real-time
-    setTimeout(() => validateForm(false), 0);
+    
+    // Clear any existing errors for this poll when adding options (better UX)
+    if (errors.polls?.[newPolls[pollIndex].id]) {
+      const newErrors = { ...errors }
+      if (newErrors.polls) {
+        delete newErrors.polls[newPolls[pollIndex].id]
+        if (Object.keys(newErrors.polls).length === 0) {
+          delete newErrors.polls
+        }
+      }
+      setErrors(newErrors)
+    }
   }
 
   const removeOption = (pollIndex: number, optionIndex: number) => {
@@ -799,8 +836,20 @@ const addPoll = () => {
       setPolls(newPolls)
       
       console.log(`Poll ${pollIndex + 1} now has ${newPolls[pollIndex].options.length} options`)
-      // Validate form without navigation to update errors in real-time
-      setTimeout(() => validateForm(false), 0);
+      
+      // Update touched fields to remove the deleted option
+      setTouchedFields(prev => {
+        if (prev.polls?.[newPolls[pollIndex].id]?.optionTexts) {
+          const newTouched = { ...prev }
+          const pollTouched = { ...newTouched.polls![newPolls[pollIndex].id] }
+          if (pollTouched.optionTexts) {
+            pollTouched.optionTexts.splice(optionIndex, 1)
+          }
+          newTouched.polls![newPolls[pollIndex].id] = pollTouched
+          return newTouched
+        }
+        return prev
+      })
     }
   }
 
@@ -814,8 +863,23 @@ const addPoll = () => {
       newPolls[pollIndex].options[optionIndex].text = text
       console.log(`Updated poll ${pollIndex + 1}, option ${optionIndex + 1}: "${text}"`)
       setPolls(newPolls)
-      // Validate form without navigation to update errors in real-time
-      setTimeout(() => validateForm(false), 0);
+      
+      // Mark this option as touched
+      setTouchedFields(prev => {
+        const newTouched = { ...prev }
+        if (!newTouched.polls) newTouched.polls = {}
+        if (!newTouched.polls[newPolls[pollIndex].id]) {
+          newTouched.polls[newPolls[pollIndex].id] = {}
+        }
+        if (!newTouched.polls[newPolls[pollIndex].id].optionTexts) {
+          newTouched.polls[newPolls[pollIndex].id].optionTexts = []
+        }
+        newTouched.polls[newPolls[pollIndex].id].optionTexts![optionIndex] = true
+        return newTouched
+      })
+      
+      // Validate only this specific field
+      setTimeout(() => validateForm(false), 100);
     } else {
       console.error(`Invalid indices: poll ${pollIndex}, option ${optionIndex}`)
     }
@@ -941,7 +1005,7 @@ const preparePollDataForSubmission = () => {
 }
 
 
-  const validateForm = (navigateToErrors: boolean = true): boolean => {
+  const validateForm = (navigateToErrors: boolean = true, forceValidation: boolean = false): boolean => {
     const newErrors: ValidationErrors = {}
     let errorTab: string | null = null
 
@@ -956,8 +1020,8 @@ const preparePollDataForSubmission = () => {
       return false
     }
 
-    // Validate vote title
-    if (!voteTitle.trim()) {
+    // Validate vote title (only show error if touched or force validation)
+    if (!voteTitle.trim() && (touchedFields.title || forceValidation || attemptedSubmit)) {
       newErrors.title = "Vote title is required"
       errorTab = "details"
     }
@@ -973,27 +1037,33 @@ const preparePollDataForSubmission = () => {
         maxSelections?: string
       } = {}
 
-      if (!poll.title.trim()) {
+      const pollTouched = touchedFields.polls?.[poll.id]
+      const shouldValidatePoll = forceValidation || attemptedSubmit || pollTouched?.title || pollTouched?.options
+
+      if (!poll.title.trim() && (pollTouched?.title || forceValidation || attemptedSubmit)) {
         pollError.title = "Poll title is required"
         errorTab = "polls"
       }
 
-      // Check for empty options
+      // Check for empty options (only show if options were touched or force validation)
       const emptyOptions = poll.options.filter((option) => !option.text.trim())
-      if (emptyOptions.length > 0) {
+      if (emptyOptions.length > 0 && shouldValidatePoll) {
         pollError.options = "All options must have text"
-        pollError.optionTexts = poll.options.map((option) => (option.text.trim() ? "" : "Option text is required"))
+        pollError.optionTexts = poll.options.map((option, optIndex) => {
+          const optionTouched = pollTouched?.optionTexts?.[optIndex]
+          return (!option.text.trim() && (optionTouched || forceValidation || attemptedSubmit)) ? "Option text is required" : ""
+        })
         errorTab = "polls"
       }
 
-      // Check minimum number of options
-      if (poll.options.length < 2) {
+      // Check minimum number of options (only show if poll structure was modified)
+      if (poll.options.length < 2 && shouldValidatePoll) {
         pollError.options = "Each poll must have at least 2 options"
         errorTab = "polls"
       }
 
       // Validate maxSelections for multi-select polls
-      if (poll.isMultiSelect) {
+      if (poll.isMultiSelect && (pollTouched?.maxSelections || forceValidation || attemptedSubmit)) {
         if (poll.maxSelections < 1) {
           pollError.maxSelections = "Maximum selections must be at least 1";
           errorTab = "polls";
@@ -1029,27 +1099,30 @@ const preparePollDataForSubmission = () => {
       newErrors.polls = pollErrors
     }
 
-    // Validate voting settings
+    // Validate voting settings (only show errors if touched or force validation)
     const settingsErrors: { dates?: string; token?: string; amount?: string } = {}
+    const settingsTouched = touchedFields.votingSettings
 
     // Validate dates
-    if (votingSettings.startDate && votingSettings.endDate) {
-      const now = new Date();
+    if (settingsTouched?.dates || forceValidation || attemptedSubmit) {
+      if (votingSettings.startDate && votingSettings.endDate) {
+        const now = new Date();
 
-      if (votingSettings.startDate < now) {
-        settingsErrors.dates = "Start date must be in the future";
-        errorTab = "settings";
-      } else if (!isAfter(votingSettings.endDate, votingSettings.startDate)) {
-        settingsErrors.dates = "End date must be after start date";
+        if (votingSettings.startDate < now) {
+          settingsErrors.dates = "Start date must be in the future";
+          errorTab = "settings";
+        } else if (!isAfter(votingSettings.endDate, votingSettings.startDate)) {
+          settingsErrors.dates = "End date must be after start date";
+          errorTab = "settings";
+        }
+      } else if (!votingSettings.startDate || !votingSettings.endDate) {
+        settingsErrors.dates = "Both start and end dates are required";
         errorTab = "settings";
       }
-    } else if (!votingSettings.startDate || !votingSettings.endDate) {
-      settingsErrors.dates = "Both start and end dates are required";
-      errorTab = "settings";
     }
 
     // Validate token requirements
-    if (votingSettings.requiredToken && votingSettings.requiredToken !== "none") {
+    if ((settingsTouched?.token || forceValidation || attemptedSubmit) && votingSettings.requiredToken && votingSettings.requiredToken !== "none") {
       if (!votingSettings.requiredAmount) {
         settingsErrors.token = "Token amount is required when a token is selected"
         errorTab = "settings"
@@ -1060,7 +1133,7 @@ const preparePollDataForSubmission = () => {
     }
 
     // Validate payment amount
-    if (votingSettings.paymentAmount && Number.parseFloat(votingSettings.paymentAmount) < 0) {
+    if ((settingsTouched?.amount || forceValidation || attemptedSubmit) && votingSettings.paymentAmount && Number.parseFloat(votingSettings.paymentAmount) < 0) {
       settingsErrors.amount = "Payment amount cannot be negative"
       errorTab = "settings"
     }
@@ -1300,9 +1373,10 @@ const preparePollDataForSubmission = () => {
       
       // STEP 1: Pre-flight validation checks
       setSubmitting(true);
+      setAttemptedSubmit(true);
       
-      // Validate form completeness
-      if (!validateForm(true)) {
+      // Validate form completeness with force validation
+      if (!validateForm(true, true)) {
         setSubmitting(false);
         return;
       }
@@ -1889,8 +1963,10 @@ const preparePollDataForSubmission = () => {
                           value={voteTitle}
                           onChange={(e) => {
                             setVoteTitle(e.target.value);
-                            // Validate form without navigation to update errors in real-time
-                            setTimeout(() => validateForm(false), 0);
+                          }}
+                          onBlur={() => {
+                            setTouchedFields(prev => ({ ...prev, title: true }))
+                            setTimeout(() => validateForm(false), 100)
                           }}
                           className={cn(
                             "h-12 transition-all focus:scale-[1.01]",
@@ -2150,7 +2226,9 @@ const preparePollDataForSubmission = () => {
                                         {/* Add loading state */}
                                         {option.mediaUrl === 'loading' && (
                                           <div className="absolute inset-0 flex items-center justify-center bg-background/50 z-10">
-                                            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                                            <div className="relative h-5 w-5">
+                                              <Skeleton className="absolute inset-0 rounded-full animate-pulse" />
+                                            </div>
                                           </div>
                                         )}
                                         {option.mediaUrl && option.mediaUrl !== 'loading' && (
@@ -2348,6 +2426,9 @@ const preparePollDataForSubmission = () => {
                                   startDate: validDate
                                 }));
 
+                                // Mark dates as touched
+                                setTouchedFields(prev => ({ ...prev, settings: { ...prev.settings, dates: true } }))
+
                                 // If end date is now before or equal to start date, update it too
                                 if (!isAfter(endDate, validDate)) {
                                   const newEndDate = new Date(validDate.getTime() + 24 * 60 * 60 * 1000); // 1 day after
@@ -2357,6 +2438,9 @@ const preparePollDataForSubmission = () => {
                                     endDate: newEndDate
                                   }));
                                 }
+                                
+                                // Validate with smart validation
+                                setTimeout(() => validateForm(false), 100);
                               }}
                               label="Start date and time"
                             />
@@ -2373,6 +2457,12 @@ const preparePollDataForSubmission = () => {
                                   ...prev,
                                   endDate: validDate
                                 }));
+                                
+                                // Mark dates as touched
+                                setTouchedFields(prev => ({ ...prev, settings: { ...prev.settings, dates: true } }))
+                                
+                                // Validate with smart validation
+                                setTimeout(() => validateForm(false), 100);
                               }}
                               label="End date and time"
                             />
@@ -2395,8 +2485,16 @@ const preparePollDataForSubmission = () => {
                                   // Reset token weighted settings if no token is required
                                   isTokenWeighted: value === "none" ? false : votingSettings.isTokenWeighted,
                                 })
+                                // Mark token as touched
+                                setTouchedFields(prev => ({ ...prev, settings: { ...prev.settings, token: true } }))
+                                setTimeout(() => validateForm(false), 100)
                               }}
-                              onAmountChange={(amount) => setVotingSettings({ ...votingSettings, requiredAmount: amount })}
+                              onAmountChange={(amount) => {
+                                setVotingSettings({ ...votingSettings, requiredAmount: amount })
+                                // Mark token as touched when amount changes
+                                setTouchedFields(prev => ({ ...prev, settings: { ...prev.settings, token: true } }))
+                                setTimeout(() => validateForm(false), 100)
+                              }}
                               amount={votingSettings.requiredAmount}
                               error={errors.votingSettings?.token}
                               required={false}
@@ -2459,6 +2557,10 @@ const preparePollDataForSubmission = () => {
                                 placeholder="0.00"
                                 value={votingSettings.paymentAmount}
                                 onChange={(e) => setVotingSettings({ ...votingSettings, paymentAmount: e.target.value })}
+                                onBlur={() => {
+                                  setTouchedFields(prev => ({ ...prev, settings: { ...prev.settings, amount: true } }))
+                                  setTimeout(() => validateForm(false), 100)
+                                }}
                                 className={cn(
                                   "h-10 transition-all focus:scale-[1.01]",
                                   errors.votingSettings?.amount && "border-red-500 focus-visible:ring-red-500",
@@ -2546,7 +2648,7 @@ const preparePollDataForSubmission = () => {
                       </Button>
                       {/* Update your submit button to use the media handlers */}
                       {/* Find the button that calls handleSubmit and replace with: */}
-                      <LoadingButton
+                      <Button
                         size="lg"
                         className="gap-2 transition-all hover:scale-105"
                         onClick={() => handleSubmit(mediaHandlers)}
@@ -2556,12 +2658,23 @@ const preparePollDataForSubmission = () => {
                           !isSectionComplete("polls") ||
                           !isSectionComplete("settings")
                         }
-                        isLoading={txStatus !== TransactionStatus.IDLE && txStatus !== TransactionStatus.ERROR}
-                        loadingText="Creating Vote..."
                       >
-                        Create Vote
-                        <ArrowRight className="h-4 w-4" />
-                      </LoadingButton>
+                        {txStatus !== TransactionStatus.IDLE && txStatus !== TransactionStatus.ERROR ? (
+                          <>
+                            <div className="flex items-center gap-2">
+                              <div className="relative h-4 w-4">
+                                <Skeleton className="absolute inset-0 rounded-full animate-pulse" />
+                              </div>
+                              Creating Vote...
+                            </div>
+                          </>
+                        ) : (
+                          <>
+                            Create Vote
+                            <ArrowRight className="h-4 w-4" />
+                          </>
+                        )}
+                      </Button>
                     </CardFooter>
                   </Card>
 
