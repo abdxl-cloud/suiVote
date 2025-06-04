@@ -92,6 +92,22 @@ interface SortablePollCardProps {
   safeFormatDistanceToNow: (date: any) => string;
 }
 
+// Function to determine the correct destination based on vote state
+const getVoteDestination = (vote: any) => {
+  // If vote is closed/ended, redirect to closed page
+  if (vote.status === "closed" || vote.status === "ended") {
+    return `/vote/${vote.id}/closed`;
+  }
+  
+  // If user has already voted and live stats are disabled, redirect to success page
+  if (vote.status === "voted" && !vote.showLiveStats) {
+    return `/vote/${vote.id}/success`;
+  }
+  
+  // Default: go to the main voting page
+  return `/vote/${vote.id}`;
+};
+
 const SortablePollCard: React.FC<SortablePollCardProps> = ({ vote, index, handleShare, wallet, isClient, now, formatTimeRemaining, calculatePercentage, renderStatusBadge, renderFeatureBadges, safeFormatDistanceToNow }) => {
   const {
     attributes,
@@ -217,7 +233,7 @@ const SortablePollCard: React.FC<SortablePollCardProps> = ({ vote, index, handle
           </div>
         </CardContent>
         <CardFooter className="flex justify-between p-4 mt-auto">
-          <Link href={`/vote/${vote.id}`} className="flex-1 mr-2">
+          <Link href={getVoteDestination(vote)} className="flex-1 mr-2">
             <Button 
               variant={"ghost"} 
               size="sm" 

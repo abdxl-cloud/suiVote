@@ -201,12 +201,7 @@ export default function VotePage() {
         throw new Error("Vote not found")
       }
 
-      // If the vote is closed, redirect to the closed page
-      // Only redirect if showLiveStats is false
-      if (voteDetails.status === "closed" && !voteDetails?.showLiveStats) {
-        router.push(`/vote/${params.id}/closed`)
-        return
-      }
+      // Note: Routing logic moved to polls page - users are now directed to appropriate pages from there
 
       // Check if vote is upcoming but start time has passed
       const currentTime = Date.now()
@@ -270,11 +265,7 @@ export default function VotePage() {
         setHasVoted(votedStatus)
         setSubmitted(votedStatus)
 
-        // If vote is open, user has voted, and live stats are disabled, redirect to success page
-        if (votedStatus && !voteDetails?.showLiveStats && voteDetails.status === "active") {
-          router.push(`/vote/${params.id}/success`)
-          return
-        }
+        // Note: Routing logic moved to polls page - users are now directed to appropriate pages from there
 
         // If vote is open, user has voted, and live stats are enabled, show results
         if (votedStatus && voteDetails?.showLiveStats) {
@@ -938,7 +929,7 @@ export default function VotePage() {
           setShowingResults(true);
           fetchVoteData(); // Refresh to show updated results
         } else {
-          // Redirect to success page
+          // Redirect to success page after successful vote submission
           router.push(`/vote/${params.id}/success?digest=${response.digest}`);
         }
       }, 2000);
