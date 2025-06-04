@@ -2013,7 +2013,7 @@ export default function VotePage() {
 
                       try {
                         verifyOptionMappings([currentPoll], selections);
-                        console.log(`[Option Listing] Options verified successfully for poll: ${currentPoll.title}`);
+
                       } catch (error) {
                         console.warn(`[Option Listing] Option mapping verification failed for poll: ${currentPoll.title}`, error);
                       }
@@ -2023,11 +2023,7 @@ export default function VotePage() {
                       if (currentSelections.length > 0) {
                         try {
                           const mappedIndices = mapOptionIdsToIndices(currentPoll, currentSelections);
-                          console.log(`[Option Listing] Current selections mapping:`, {
-                            pollTitle: currentPoll.title,
-                            selectedIds: currentSelections,
-                            mappedIndices: mappedIndices
-                          });
+
                         } catch (error) {
                           console.warn(`[Option Listing] Failed to map current selections:`, error);
                         }

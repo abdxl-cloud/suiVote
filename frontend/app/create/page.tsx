@@ -340,7 +340,7 @@ export default function CreateVotePage() {
         // No need for special handling here as we handle it during load
         
         localStorage.setItem('voteFormData', JSON.stringify(formData))
-        console.log('Form data saved to localStorage')
+
       } catch (error) {
         console.error('Error saving form data:', error)
       }
@@ -352,12 +352,12 @@ export default function CreateVotePage() {
     // Only load if we haven't loaded before and we're in a browser environment
     if (typeof window !== 'undefined' && !formDataLoaded) {
       const savedData = localStorage.getItem('voteFormData')
-      console.log('Checking for saved data...', savedData ? 'Found' : 'Not found')
+
       
       if (savedData) {
         try {
           const parsedData = JSON.parse(savedData)
-          console.log('Parsed saved data:', parsedData)
+
           
           // Check if there's any meaningful data to restore
           const hasTitle = parsedData.voteTitle && parsedData.voteTitle.trim() !== ''
@@ -368,19 +368,13 @@ export default function CreateVotePage() {
             poll.options && poll.options.some(option => option.text && option.text.trim() !== '')
           )
           
-          console.log('Data analysis:', {
-            hasTitle,
-            hasDescription,
-            hasPolls,
-            hasPollTitles,
-            hasPollOptions
-          })
+
           
           // More lenient check - restore if there's ANY meaningful data
           const hasMeaningfulData = hasTitle || hasDescription || hasPollTitles || hasPollOptions
           
           if (!parsedData || !hasMeaningfulData) {
-            console.log('No meaningful saved data found, skipping load')
+
             setFormDataLoaded(true) // Mark as loaded anyway to prevent future load attempts
             return
           }
@@ -454,10 +448,7 @@ export default function CreateVotePage() {
             }
           }
           
-          console.log('About to show success toast:', {
-            loadedItems,
-            dateInfo
-          })
+
           
           // Use a small delay to ensure the toast system is ready
           setTimeout(() => {
@@ -466,7 +457,7 @@ export default function CreateVotePage() {
               icon: <Clock className="h-4 w-4" />,
               duration: 5000
             })
-            console.log('Toast shown for form data restoration')
+
           }, 100)
         } catch (error) {
           console.error('Error loading saved form data:', error)
@@ -538,11 +529,11 @@ export default function CreateVotePage() {
   const checkSavedData = () => {
     if (typeof window !== 'undefined') {
       const savedData = localStorage.getItem('voteFormData')
-      console.log('Current saved data:', savedData)
+
       if (savedData) {
         try {
           const parsed = JSON.parse(savedData)
-          console.log('Parsed data:', parsed)
+
           return parsed
         } catch (e) {
           console.error('Error parsing saved data:', e)
@@ -565,7 +556,7 @@ export default function CreateVotePage() {
   useEffect(() => {
     // Longer timeout to ensure component is fully mounted and toast system is ready
     const timer = setTimeout(() => {
-      console.log('Loading form data from localStorage...')
+
       loadFormData()
     }, 250) // Increased from 0 to 250ms
     
@@ -799,7 +790,7 @@ const addPoll = () => {
       }
     }
     
-    console.log(`Added option ${optionNumber} to poll ${pollIndex + 1}:`, newOption)
+
     setPolls(newPolls)
     
     // Clear any existing errors for this poll when adding options (better UX)
@@ -820,7 +811,7 @@ const addPoll = () => {
     const currentOptions = newPolls[pollIndex].options
     
     if (currentOptions.length > 2) {
-      console.log(`Removing option ${optionIndex + 1} from poll ${pollIndex + 1}`)
+
       
       // Remove the option at the specified index
       newPolls[pollIndex].options.splice(optionIndex, 1)
@@ -835,7 +826,7 @@ const addPoll = () => {
   
       setPolls(newPolls)
       
-      console.log(`Poll ${pollIndex + 1} now has ${newPolls[pollIndex].options.length} options`)
+
       
       // Update touched fields to remove the deleted option
       setTouchedFields(prev => {
@@ -861,7 +852,7 @@ const addPoll = () => {
         optionIndex >= 0 && optionIndex < newPolls[pollIndex].options.length) {
       
       newPolls[pollIndex].options[optionIndex].text = text
-      console.log(`Updated poll ${pollIndex + 1}, option ${optionIndex + 1}: "${text}"`)
+
       setPolls(newPolls)
       
       // Mark this option as touched
@@ -1174,7 +1165,7 @@ const preparePollDataForSubmission = () => {
 
   const addMediaToOption = (mediaHandlers: any, pollIndex: number, optionIndex: number, file: File) => {
     try {
-      console.log(`Adding media to poll ${pollIndex + 1}, option ${optionIndex + 1}`)
+
       
       // Validate file size (max 5MB)
       const maxSize = 5 * 1024 * 1024
@@ -1225,7 +1216,7 @@ const preparePollDataForSubmission = () => {
             icon: <Check className="h-4 w-4" />
           })
           
-          console.log(`Media successfully added to poll ${pollIndex + 1}, option ${optionIndex + 1}`)
+
         } else {
           // Reset on error
           const errorPolls = [...polls]
@@ -1263,7 +1254,7 @@ const preparePollDataForSubmission = () => {
   // 5. Fixed removeMediaFromOption function
   const removeMediaFromOption = (mediaHandlers: any, pollIndex: number, optionIndex: number) => {
     try {
-      console.log(`Removing media from poll ${pollIndex + 1}, option ${optionIndex + 1}`)
+
       
       const newPolls = [...polls]
       const fileId = newPolls[pollIndex].options[optionIndex].fileId

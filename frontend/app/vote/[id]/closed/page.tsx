@@ -177,7 +177,7 @@ export default function ClosedVotePage() {
     if (params.id) {
       // Subscribe to vote updates
       const unsubscribe = suivote.subscribeToVoteUpdates(params.id, (updatedVoteDetails) => {
-        console.log("Received vote update on closed page:", updatedVoteDetails)
+
         
         // If vote is not closed, but has live stats, redirect to main vote page
         if (updatedVoteDetails.status !== "closed" && updatedVoteDetails.showLiveStats) {

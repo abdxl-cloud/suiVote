@@ -104,7 +104,7 @@ export default function SuccessPage() {
         let targetVoteId = fetchState.voteId;
         
         if (!targetVoteId) {
-          console.log("Attempting to extract vote ID from transaction:", digest);
+
           
           // Create new client directly using network from config
           const client = new SuiClient({ 
@@ -121,11 +121,7 @@ export default function SuccessPage() {
             }
           });
           
-          console.log("Transaction data received:", 
-            txResult.effects?.created?.length || 0, "created objects",
-            txResult.objectChanges?.length || 0, "object changes",
-            txResult.events?.length || 0, "events"
-          );
+
           
           // Look for Vote object in object changes (better than effects)
           let voteObjectId = null;
@@ -140,7 +136,7 @@ export default function SuccessPage() {
             
             if (voteObject) {
               voteObjectId = voteObject.objectId;
-              console.log("Found vote ID from object changes:", voteObjectId);
+
             }
           }
           
@@ -152,7 +148,7 @@ export default function SuccessPage() {
               if (obj.owner?.AddressOwner === 'Shared') {
                 // Most likely this is our vote object (votes are shared)
                 voteObjectId = obj.reference.objectId;
-                console.log("Found vote ID from shared object:", voteObjectId);
+
                 break;
               }
             }
@@ -160,7 +156,7 @@ export default function SuccessPage() {
             // If we still don't have an ID, take the second object as a fallback
             if (!voteObjectId && txResult.effects.created.length > 1) {
               voteObjectId = txResult.effects.created[1].reference.objectId;
-              console.log("Falling back to second created object:", voteObjectId);
+
             }
           }
           
@@ -172,7 +168,7 @@ export default function SuccessPage() {
             
             if (voteCreatedEvent && voteCreatedEvent.parsedJson && voteCreatedEvent.parsedJson.vote_id) {
               voteObjectId = voteCreatedEvent.parsedJson.vote_id;
-              console.log("Found vote ID from VoteCreated event:", voteObjectId);
+
             }
           }
           
@@ -194,11 +190,11 @@ export default function SuccessPage() {
         
         // Now try to fetch details if we have a vote ID
         if (targetVoteId) {
-          console.log("Fetching vote details for ID:", targetVoteId);
+
           const details = await suivote.getVoteDetails(targetVoteId);
           
           if (details) {
-            console.log("Successfully retrieved vote details:", details.title);
+
             if (isMounted) {
               setFetchState(prev => ({
                 ...prev,
@@ -225,7 +221,7 @@ export default function SuccessPage() {
               
               // If we've made a few attempts without success, add a delay
               if (fetchState.attemptCount >= 2) {
-                console.log(`Attempt ${fetchState.attemptCount + 1} failed, retrying in 2 seconds...`);
+    
                 setTimeout(() => {
                   if (isMounted) {
                     // Force a re-render to trigger the effect again

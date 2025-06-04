@@ -162,7 +162,7 @@ export default function VoteSuccessPage() {
 
   // Initialize transaction digest from URL or localStorage
   useEffect(() => {
-    console.log("[Success Page] Initializing transaction digest")
+
     
     if (typeof window === "undefined") return
     
@@ -170,13 +170,13 @@ export default function VoteSuccessPage() {
     const digest = urlParams.get("digest")
     
     if (digest) {
-      console.log("[Success Page] Found digest in URL:", digest)
+
       setState(prev => ({ ...prev, txDigest: digest }))
       localStorage.setItem(`vote_${params.id}_txDigest`, digest)
     } else {
       const storedDigest = localStorage.getItem(`vote_${params.id}_txDigest`)
       if (storedDigest) {
-        console.log("[Success Page] Found digest in localStorage:", storedDigest)
+
         setState(prev => ({ ...prev, txDigest: storedDigest }))
       }
     }
@@ -185,7 +185,7 @@ export default function VoteSuccessPage() {
   // Fetch vote details and set up real-time updates
   useEffect(() => {
     if (!params.id) {
-      console.log("[Success Page] No vote ID provided")
+
       setState(prev => ({ 
         ...prev, 
         loading: false, 
@@ -195,11 +195,11 @@ export default function VoteSuccessPage() {
     }
 
     if (!suivote) {
-      console.log("[Success Page] SuiVote service not ready")
+
       return
     }
 
-    console.log("[Success Page] Starting data fetch for vote:", params.id)
+
     
     let isMounted = true
     let unsubscribe: (() => void) | null = null
@@ -208,16 +208,12 @@ export default function VoteSuccessPage() {
       try {
         setState(prev => ({ ...prev, loading: true, error: null }))
         
-        console.log("[Success Page] Fetching vote details...")
+
         const details = await suivote.getVoteDetails(params.id as string)
         
         if (!isMounted) return
         
-        console.log("[Success Page] Vote details received:", {
-          title: details?.title,
-          status: details?.status,
-          totalVotes: details?.totalVotes
-        })
+
         
         if (!details) {
           throw new Error("Vote not found")
@@ -233,10 +229,10 @@ export default function VoteSuccessPage() {
         document.title = `Vote Submitted - ${details.title} - SuiVote`
         
         // Set up real-time updates
-        console.log("[Success Page] Setting up real-time subscription")
+
         unsubscribe = suivote.subscribeToVoteUpdates(params.id as string, (updatedDetails) => {
           if (isMounted) {
-            console.log("[Success Page] Received real-time update:", updatedDetails?.title)
+
             setState(prev => ({ 
               ...prev, 
               voteDetails: updatedDetails 
@@ -247,7 +243,7 @@ export default function VoteSuccessPage() {
       } catch (error) {
         if (!isMounted) return
         
-        console.error("[Success Page] Error fetching vote details:", error)
+
         const errorMessage = error instanceof Error ? error.message : "Failed to load vote details"
         
         setState(prev => ({ 
@@ -261,7 +257,7 @@ export default function VoteSuccessPage() {
     fetchData()
 
     return () => {
-      console.log("[Success Page] Cleaning up")
+
       isMounted = false
       if (unsubscribe) {
         unsubscribe()

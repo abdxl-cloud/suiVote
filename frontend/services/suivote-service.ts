@@ -741,7 +741,7 @@ export class SuiVoteService {
       const voteDetails = await this.getVoteDetails(voteId)
       if (!voteDetails) throw new Error(`Vote ${voteId} not found`)
   
-      console.log(`Fetching ${voteDetails.pollsCount} polls for vote ${voteId}`)
+
   
       const polls: (PollDetails | null)[] = new Array(voteDetails.pollsCount).fill(null)
       
@@ -751,7 +751,7 @@ export class SuiVoteService {
         
         return (async () => {
           try {
-            console.log(`Fetching poll at index ${pollIndex}`)
+
             
             // Get the dynamic field (poll) by name
             const pollField = await this.client.getDynamicFieldObject({
@@ -783,7 +783,7 @@ export class SuiVoteService {
               options: [], // Will be populated separately if needed
             }
             
-            console.log(`Poll ${pollIndex} fetched: "${pollDetails.title}" with ${pollDetails.optionsCount} options`)
+
             
             // Store in the correct position
             polls[i] = pollDetails
@@ -802,10 +802,7 @@ export class SuiVoteService {
       // Filter out null values and ensure order is preserved
       const orderedPolls = polls.filter((poll): poll is PollDetails => poll !== null)
       
-      console.log(`Successfully fetched ${orderedPolls.length} polls in order:`)
-      orderedPolls.forEach((poll, index) => {
-        console.log(`  ${index + 1}. "${poll.title}" (${poll.optionsCount} options)`)
-      })
+
   
       return orderedPolls
     } catch (error) {
@@ -833,7 +830,7 @@ export class SuiVoteService {
         throw new Error("Poll index must be 1 or greater")
       }
   
-      console.log(`Fetching options for vote ${voteId}, poll ${pollIndex}`)
+
   
       // First get the poll details
       const polls = await this.getVotePolls(voteId)
@@ -844,7 +841,7 @@ export class SuiVoteService {
       const poll = polls[pollIndex - 1] // Convert to 0-based index
       const pollId = poll.id
   
-      console.log(`Poll ${pollIndex} has ${poll.optionsCount} options`)
+
   
       const options: (PollOptionDetails | null)[] = new Array(poll.optionsCount).fill(null)
   
@@ -854,7 +851,7 @@ export class SuiVoteService {
         
         return (async () => {
           try {
-            console.log(`Fetching option at index ${optionIndex} for poll ${pollId}`)
+
             
             // Get the dynamic field (option) by name
             const optionField = await this.client.getDynamicFieldObject({
@@ -881,7 +878,7 @@ export class SuiVoteService {
               votes: Number(optionFields.votes || 0),
             }
   
-            console.log(`Option ${optionIndex}: "${optionDetails.text}" (${optionDetails.votes} votes)`)
+
             
             // Store in the correct position
             options[i] = optionDetails
@@ -900,10 +897,7 @@ export class SuiVoteService {
       // Filter out null values and ensure order is preserved
       const orderedOptions = options.filter((option): option is PollOptionDetails => option !== null)
       
-      console.log(`Successfully fetched ${orderedOptions.length} options in order:`)
-      orderedOptions.forEach((option, index) => {
-        console.log(`  ${index + 1}. "${option.text}" (${option.votes} votes)`)
-      })
+
   
       return orderedOptions
     } catch (error) {
@@ -951,7 +945,7 @@ export class SuiVoteService {
         throw new Error("End timestamp must be after start timestamp")
       }
 
-      console.log("1", pollData)
+
 
       if (!pollData || !Array.isArray(pollData) || pollData.length === 0) {
         throw new Error("At least one poll is required")
@@ -975,7 +969,7 @@ export class SuiVoteService {
       for (let pollIndex = 0; pollIndex < pollData.length; pollIndex++) {
         const poll = pollData[pollIndex]
         
-        console.log(`Processing poll ${pollIndex + 1}/${pollData.length}: "${poll.title}"`)
+
         
         pollTitles.push(poll.title || "")
         pollDescriptions.push(poll.description || "")
@@ -992,11 +986,11 @@ export class SuiVoteService {
         pollOptionCounts.push(poll.options.length)
   
         // Process options for this poll in strict sequential order
-        console.log(`  Processing ${poll.options.length} options:`)
+
         for (let optionIndex = 0; optionIndex < poll.options.length; optionIndex++) {
           const option = poll.options[optionIndex]
           
-          console.log(`    Option ${optionIndex + 1}/${poll.options.length}: "${option.text}"`)
+
           
           pollOptionTexts.push(option.text || "")
   
@@ -1015,7 +1009,7 @@ export class SuiVoteService {
         ? Array.from(new TextEncoder().encode(requiredToken))
         : []
 
-      console.log("TX", requiredToken, tokenRequirementBytes)
+
       
       // Build the transaction with proper arguments matching the contract
       tx.moveCall({
@@ -1090,7 +1084,7 @@ export class SuiVoteService {
       }
       for (let i = 0; i < pollData.length; i++) {
         const poll = pollData[i]
-        console.log(`Poll ${i + 1}: "${poll.title}"`)
+
         
         if (!poll.title) {
           throw new Error(`Poll ${i + 1} is missing a title`)
@@ -1102,7 +1096,7 @@ export class SuiVoteService {
         
         for (let j = 0; j < poll.options.length; j++) {
           const option = poll.options[j]
-          console.log(`  Option ${j + 1}: "${option.text}"`)
+
           
           if (!option.text) {
             throw new Error(`Poll ${i + 1}, Option ${j + 1} is missing text`)
@@ -1177,7 +1171,7 @@ export class SuiVoteService {
       for (let pollIndex = 0; pollIndex < pollData.length; pollIndex++) {
         const poll = pollData[pollIndex]
         
-        console.log(`Processing poll ${pollIndex + 1}/${pollData.length}: "${poll.title}"`)
+
         
         pollTitles.push(poll.title || "")
         pollDescriptions.push(poll.description || "")
@@ -1194,11 +1188,11 @@ export class SuiVoteService {
         pollOptionCounts.push(poll.options.length)
   
         // Process options for this poll in strict sequential order
-        console.log(`  Processing ${poll.options.length} options:`)
+
         for (let optionIndex = 0; optionIndex < poll.options.length; optionIndex++) {
           const option = poll.options[optionIndex]
           
-          console.log(`    Option ${optionIndex + 1}/${poll.options.length}: "${option.text}"`)
+
           
           pollOptionTexts.push(option.text || "")
   
@@ -1683,14 +1677,7 @@ async castMultipleVotesTransaction(
     const clockObj = tx.object(SUI_CLOCK_OBJECT_ID)
     
     // Log the data being sent to the transaction for debugging
-    console.log("Multi-poll transaction data:", {
-      voteId,
-      pollIndices,
-      optionIndicesPerPoll,
-      tokenBalance,
-      convertedTokenBalance,
-      payment
-    })
+
 
     tx.moveCall({
       target: `${PACKAGE_ID}::voting::cast_multiple_votes`,
@@ -2059,9 +2046,7 @@ async castMultipleVotesTransaction(
   async checkTokenBalance(userAddress: string, tokenType: string, requiredAmount: string): Promise<{ hasBalance: boolean; tokenBalance: number }> {
     try {
       this.checkInitialization();
-      console.log("Checking token balance for user:", userAddress);
-      console.log("Token type:", tokenType);
-      console.log("Required amount:", requiredAmount);
+
       // Return default values if no token requirement or required amount is zero
       if (!tokenType || requiredAmount === undefined) return { hasBalance: true, tokenBalance: 0 };
       if (requiredAmount === "0") return { hasBalance: true, tokenBalance: 0 };

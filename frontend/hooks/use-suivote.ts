@@ -271,7 +271,7 @@ export function useSuiVote() {
         setLoading(true)
         setError(null)
 
-        console.log(`Creating transaction to add ${voterAddresses.length} voters to whitelist for vote ${voteId}`)
+    
 
         const transaction = suiVoteService.addAllowedVotersTransaction(voteId, voterAddresses)
         return transaction

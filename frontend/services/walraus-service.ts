@@ -66,10 +66,10 @@ function FileUpload() {
       const fileBuffer = await selectedFile.arrayBuffer();
       const file = new Uint8Array(fileBuffer);
 
-      console.log('Encoding blob...');
+
       const encoded = await walrusClient.encodeBlob(file);
 
-      console.log('Registering blob transaction...');
+
       const registerBlobTransaction = await walrusClient.registerBlobTransaction({
         blobId: encoded.blobId,
         rootHash: encoded.rootHash,
@@ -80,12 +80,12 @@ function FileUpload() {
       });
       registerBlobTransaction.setSender(currentAccount.address);
 
-      console.log('Signing and executing register transaction...');
+
       const { digest } = await signAndExecuteTransaction({ 
         transaction: registerBlobTransaction 
       });
 
-      console.log('Waiting for transaction confirmation...');
+
       const { objectChanges, effects } = await suiClient.waitForTransaction({
         digest,
         options: { showObjectChanges: true, showEffects: true },
@@ -105,7 +105,7 @@ function FileUpload() {
         throw new Error('Blob object not found');
       }
 
-      console.log('Writing encoded blob to nodes...');
+
       let confirmations;
       try {
         confirmations = await walrusClient.writeEncodedBlobToNodes({
@@ -120,7 +120,7 @@ function FileUpload() {
         throw new Error(`Failed to store file data on Walrus nodes. This might be due to testnet instability. Error: ${storageError instanceof Error ? storageError.message : 'Unknown storage error'}`);
       }
 
-      console.log('Certifying blob...');
+
       const certifyBlobTransaction = await walrusClient.certifyBlobTransaction({
         blobId: encoded.blobId,
         blobObjectId: blobObject.objectId,
@@ -143,7 +143,7 @@ function FileUpload() {
       }
 
       setBlobId(encoded.blobId);
-      console.log('Upload successful! Blob ID:', encoded.blobId);
+
       
     } catch (err) {
       console.error('Upload failed:', err);
@@ -298,8 +298,7 @@ function FileRetrieval() {
   const retrieveFile = async () => {
     const trimmedBlobId = blobId?.trim();
     
-    console.log('retrieveFile called with blobId:', blobId);
-    console.log('trimmedBlobId:', trimmedBlobId);
+
     
     if (!trimmedBlobId) {
       setError('Please enter a blob ID');
@@ -311,20 +310,19 @@ function FileRetrieval() {
     setRetrievedData(null);
 
     try {
-      console.log('Retrieving blob:', trimmedBlobId);
-      console.log('Blob ID length:', trimmedBlobId.length);
+
       
       // Validate blob ID format (should be base64-like)
       if (trimmedBlobId.length < 10) {
         throw new Error('Blob ID appears to be too short. Please check the ID.');
       }
       
-      console.log('Calling walrusClient.readBlob...');
+
       
       // Read the blob from Walrus
       const blobData = await walrusClient.readBlob({ blobId: trimmedBlobId });
       
-      console.log('File retrieved successfully, size:', blobData.length, 'bytes');
+
       
       setRetrievedData({
         content: blobData,
@@ -494,7 +492,7 @@ function FileRetrieval() {
           type="text"
           value={blobId}
           onChange={(e) => {
-            console.log('Blob ID input changed:', e.target.value);
+
             setBlobId(e.target.value);
           }}
           placeholder="e.g., 5NFglzelMz_ZezfNWTC0Y-k2ltSOfo2UGIvwu1hcS_Y"
@@ -542,7 +540,7 @@ function FileRetrieval() {
       <button 
         onClick={() => {
           const testBlobId = '5NFglzelMz_ZezfNWTC0Y-k2ltSOfo2UGIvwu1hcS_Y';
-          console.log('Setting test blob ID:', testBlobId);
+
           setBlobId(testBlobId);
           setError(null);
           setRetrievedData(null);

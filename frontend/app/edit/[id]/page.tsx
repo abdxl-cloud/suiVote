@@ -651,7 +651,7 @@ export default function EditVotePage() {
           if (newEndTimestamp !== oldEndTimestamp) {
             // Only extend the voting period if the new end date is later than the original
             if (newEndTimestamp > oldEndTimestamp) {
-              console.log("Building transaction to extend voting period...")
+
               setTxStatus(TransactionStatus.BUILDING)
               
               let transaction;
@@ -662,7 +662,7 @@ export default function EditVotePage() {
                 throw buildError;
               }
               
-              console.log("Transaction built successfully, signing transaction...")
+
               setTxStatus(TransactionStatus.SIGNING)
               
               let response;
@@ -677,7 +677,7 @@ export default function EditVotePage() {
                 throw signingError;
               }
               
-              console.log("Transaction executed successfully:", response)
+
               setTxStatus(TransactionStatus.EXECUTING)
               setTxDigest(response.digest)
               

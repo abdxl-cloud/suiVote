@@ -351,7 +351,7 @@ export default function PollsPage() {
           
           // Retry logic to prevent need for manual refresh
           if (retryCount < 3) {
-            console.log(`Retrying vote fetch (attempt ${retryCount + 1}/3)...`)
+    
             setTimeout(() => fetchVotes(retryCount + 1), 2000 * (retryCount + 1))
           }
         }

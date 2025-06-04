@@ -110,12 +110,12 @@ export function TokenSelector({
   // Load popular tokens on mount
   useEffect(() => {
     const loadPopularTokens = async () => {
-      console.log('🔄 Loading popular tokens...')
+  
       try {
         const tokens = await tokenService.getPopularTokens(5)
-        console.log('📊 Raw tokens from service:', tokens)
+    
         const coinTypes = tokens.map(convertTokenInfoToCoinType)
-        console.log('🪙 Converted coin types:', coinTypes)
+    
         setPopularTokens(coinTypes)
         setSearchResults(coinTypes)
       } catch (error) {
@@ -132,15 +132,15 @@ export function TokenSelector({
   // Find selected token on mount and when value changes
   useEffect(() => {
     const loadSelectedToken = async () => {
-      console.log('🔍 Loading selected token for value:', value)
+  
       if (value && value !== "none") {
         try {
           // Try to get token info from the service
           const tokenInfo = await tokenService.getTokenInfo(value)
-          console.log('📋 Token info received:', tokenInfo)
+    
           if (tokenInfo) {
             const convertedToken = convertTokenInfoToCoinType(tokenInfo)
-            console.log('🔄 Converted token:', convertedToken)
+      
             setSelectedToken(convertedToken)
             return
           }
@@ -158,11 +158,11 @@ export function TokenSelector({
             name: `Custom Token (${symbol})`,
             verified: false
           }
-          console.log('⚠️ Using fallback token:', fallbackToken)
+    
           setSelectedToken(fallbackToken)
         }
       } else {
-        console.log('🚫 No token selected')
+  
         setSelectedToken(null)
       }
     }
