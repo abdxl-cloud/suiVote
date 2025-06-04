@@ -85,16 +85,16 @@ export default function VotePage() {
   const [activeTab, setActiveTab] = useState("vote")
   const [activePollIndex, setActivePollIndex] = useState(0)
   const [shareDialogOpen, setShareDialogOpen] = useState(false)
-  const [validationErrors, setValidationErrors] = useState<{[key: string]: string}>({})
+  const [validationErrors, setValidationErrors] = useState<{ [key: string]: string }>({})
   const [userCanVote, setUserCanVote] = useState(false)
   const [userHasRequiredTokens, setUserHasRequiredTokens] = useState(true)
   const [tokenBalance, setTokenBalance] = useState(0)
   const [hasUserInteracted, setHasUserInteracted] = useState(false) // Track if user has made any selections
   const [loadingError, setLoadingError] = useState<string | null>(null) // Separate loading errors from validation errors
-  const [expandedBadges, setExpandedBadges] = useState<{[key: string]: boolean}>({}) // Track which badge info is expanded
-  
+  const [expandedBadges, setExpandedBadges] = useState<{ [key: string]: boolean }>({}) // Track which badge info is expanded
+
   // Smart validation states
-  const [touchedPolls, setTouchedPolls] = useState<{[key: string]: boolean}>({})
+  const [touchedPolls, setTouchedPolls] = useState<{ [key: string]: boolean }>({})
   const [attemptedSubmit, setAttemptedSubmit] = useState(false)
 
   // Helper function to toggle badge expansion
@@ -112,7 +112,7 @@ export default function VotePage() {
     seconds: 0,
     hasStarted: false
   });
-  
+
   const calculateTimeRemaining = (startTimestamp: number) => {
     const now = Date.now();
     const difference = startTimestamp - now;
@@ -129,7 +129,7 @@ export default function VotePage() {
       hasStarted: false
     };
   };
-  
+
   useEffect(() => {
     if (!vote || vote.status !== 'upcoming') return;
 
@@ -149,7 +149,7 @@ export default function VotePage() {
     return () => clearInterval(timer);
   }, [vote?.status, vote?.startTimestamp]);
 
-  
+
   // Transaction state
   const [txStatus, setTxStatus] = useState(TransactionStatus.IDLE)
   const [txDigest, setTxDigest] = useState<string | null>(null)
@@ -157,7 +157,7 @@ export default function VotePage() {
   const [failedStep, setFailedStep] = useState<TransactionStatus | undefined>(undefined)
 
   // State to track selections for each poll
-  const [selections, setSelections] = useState<{[key: string]: string[]}>({})
+  const [selections, setSelections] = useState<{ [key: string]: string[] }>({})
 
   // Transaction dialog state
   const [txStatusDialogOpen, setTxStatusDialogOpen] = useState(false)
@@ -204,7 +204,6 @@ export default function VotePage() {
       // If the vote is closed, redirect to the closed page
       // Only redirect if showLiveStats is false
       if (voteDetails.status === "closed" && !voteDetails?.showLiveStats) {
-        setLoading(false)
         router.push(`/vote/${params.id}/closed`)
         return
       }
@@ -219,7 +218,7 @@ export default function VotePage() {
             duration: 5000,
           })
         }
-      
+
         // Update the UI to show that the vote can be started
         voteDetails.canBeStarted = true;
       }
@@ -273,7 +272,6 @@ export default function VotePage() {
 
         // If vote is open, user has voted, and live stats are disabled, redirect to success page
         if (votedStatus && !voteDetails?.showLiveStats && voteDetails.status === "active") {
-          setLoading(false)
           router.push(`/vote/${params.id}/success`)
           return
         }
@@ -363,42 +361,42 @@ export default function VotePage() {
   useEffect(() => {
     // Initial data fetch
     fetchVoteData()
-    
+
     // Set up real-time updates subscription if we have a vote ID
     if (params.id) {
       // Subscribe to vote updates
       const unsubscribe = suivote.subscribeToVoteUpdates(params.id as string, async (updatedVoteDetails) => {
         // Update the vote state with the latest data
         setVote(updatedVoteDetails)
-        
+
         // If showing results, update the UI accordingly
         if (showingResults || (updatedVoteDetails.showLiveStats)) {
           setShowingResults(true)
-          
+
           try {
             // Get polls for the vote to update the UI with latest vote counts
             const pollsData = await suivote.getVotePolls(params.id as string)
-            
+
             // Fetch options for each poll
             const pollsWithOptions = await Promise.all(
               pollsData.map(async (poll, index) => {
                 // Get options for this poll (index + 1 because poll indices are 1-based)
                 const options = await suivote.getPollOptions(params.id as string, index + 1)
-                
+
                 // Calculate percentage for each option based on votes
                 const totalVotesForPoll = options.reduce((sum, option) => sum + option.votes, 0)
                 const optionsWithPercentage = options.map(option => ({
                   ...option,
                   percentage: totalVotesForPoll > 0 ? (option.votes / totalVotesForPoll) * 100 : 0
                 }))
-                
+
                 return {
                   ...poll,
                   options: optionsWithPercentage || []
                 }
               })
             )
-            
+
             // Update the polls state with the latest data
             setPolls(pollsWithOptions || [])
           } catch (error) {
@@ -406,7 +404,7 @@ export default function VotePage() {
           }
         }
       })
-      
+
       // Clean up subscription when component unmounts or params change
       return () => {
         unsubscribe()
@@ -454,7 +452,7 @@ export default function VotePage() {
       // Wait for confirmation
       setTxStatus(TransactionStatus.CONFIRMING)
       setTxProgress(80)
-      
+
       try {
         // Simulate confirmation wait
         await new Promise((resolve) => setTimeout(resolve, 1000))
@@ -513,8 +511,8 @@ export default function VotePage() {
   }, [txStatus])
 
   // Enhanced validation with detailed error messages and better UX
-  const validateSelections = (selections: {[key: string]: string[]}, forceValidation = false) => {
-    const validationErrors: {[key: string]: string} = {};
+  const validateSelections = (selections: { [key: string]: string[] }, forceValidation = false) => {
+    const validationErrors: { [key: string]: string } = {};
     let hasValidSelections = false;
     let hasRequiredSelections = true;
     let requiredPollsCount = 0;
@@ -529,7 +527,7 @@ export default function VotePage() {
     polls.forEach(poll => {
       const selectedOptions = selections[poll.id] || [];
       const shouldShowError = forceValidation || attemptedSubmit || touchedPolls[poll.id];
-      
+
       // Count required polls
       if (poll.isRequired) {
         requiredPollsCount++;
@@ -564,7 +562,7 @@ export default function VotePage() {
 
     // Provide more specific error messages (only show if submit was attempted or user has interacted significantly)
     const shouldShowGeneralError = forceValidation || attemptedSubmit || Object.keys(touchedPolls).length > 0;
-    
+
     if (hasUserInteracted && !hasValidSelections && shouldShowGeneralError) {
       if (requiredPollsCount > 0) {
         validationErrors.general = `Please complete ${requiredPollsCount} required poll${requiredPollsCount > 1 ? 's' : ''}`;
@@ -590,7 +588,7 @@ export default function VotePage() {
     if (hasVoted) return false;
     if (!userCanVote) return false;
     if (!hasUserInteracted) return false; // Must have interacted with the form
-    
+
     // Check validation errors with force validation
     const currentErrors = validateSelections(selections, true);
     return Object.keys(currentErrors).length === 0;
@@ -603,7 +601,7 @@ export default function VotePage() {
       setValidationErrors({});
       return;
     }
-    
+
     if (polls.length > 0 && hasUserInteracted && !loading) {
       const errors = validateSelections(selections);
       setValidationErrors(errors);
@@ -636,16 +634,16 @@ export default function VotePage() {
         } else {
           // If not selected, add it (respecting maxSelections)
           const poll = polls.find(p => p.id === pollId)
-        if (poll && currentSelections.length < poll.maxSelections) {
-          newSelections[pollId] = [...currentSelections, optionId]
-        } else {
-          // Show a toast to inform user they've reached max selections
-          toast.info(`You can select up to ${poll?.maxSelections} options for this poll`, {
-            description: "Please deselect an option before selecting a new one"
-          });
-          // Return unchanged selections
-          return prev;
-        }
+          if (poll && currentSelections.length < poll.maxSelections) {
+            newSelections[pollId] = [...currentSelections, optionId]
+          } else {
+            // Show a toast to inform user they've reached max selections
+            toast.info(`You can select up to ${poll?.maxSelections} options for this poll`, {
+              description: "Please deselect an option before selecting a new one"
+            });
+            // Return unchanged selections
+            return prev;
+          }
         }
       } else {
         // For single-select polls - always just one option
@@ -673,7 +671,7 @@ export default function VotePage() {
         } else {
           currentSelections[pollId] = [optionId];
         }
-        
+
         return validateSelections(currentSelections);
       });
     }, 300);
@@ -773,18 +771,18 @@ export default function VotePage() {
       // STEP 2: Comprehensive validation
       setTxProgress(20);
       const validationErrors = validateSelections(selections);
-      
+
       if (Object.keys(validationErrors).length > 0) {
         console.error("[Vote Debug] Validation errors:", validationErrors);
         setValidationErrors(validationErrors);
-        
+
         // Show the first validation error in a toast
         const firstError = validationErrors.general || Object.values(validationErrors)[0];
         toast.error("Validation Error", {
           description: firstError,
           duration: 5000,
         });
-        
+
         throw new Error("Please fix the validation errors before submitting");
       }
 
@@ -900,7 +898,7 @@ export default function VotePage() {
       // STEP 9: Wait for confirmation
       setTxStatus(TransactionStatus.CONFIRMING);
       setTxProgress(90);
-      
+
       try {
         // Simulate confirmation wait
         await new Promise((resolve) => setTimeout(resolve, 1000));
@@ -934,7 +932,7 @@ export default function VotePage() {
       setTimeout(() => {
         setTxStatus(TransactionStatus.IDLE);
         setTxStatusDialogOpen(false);
-        
+
         if (vote?.showLiveStats) {
           // Show live results on the same page
           setShowingResults(true);
@@ -947,18 +945,18 @@ export default function VotePage() {
 
     } catch (error) {
       console.error("[Vote Debug] Transaction failed:", error instanceof Error ? error.message : String(error));
-      
+
       // Update UI state
       setTxStatus(TransactionStatus.ERROR);
       setTxProgress(100);
-      
+
       // Determine error type and provide appropriate feedback
       let errorMessage = "An unexpected error occurred";
       let errorDescription = "Please try again or contact support if the issue persists";
-      
+
       if (error.message) {
         errorMessage = error.message;
-        
+
         // Provide specific guidance for common errors
         if (error.message.includes("User rejected") || error.message.includes("rejected")) {
           errorMessage = "Transaction cancelled";
@@ -977,9 +975,9 @@ export default function VotePage() {
           errorDescription = "You don't meet the requirements to vote in this poll";
         }
       }
-      
+
       setTransactionError(errorMessage);
-      
+
       // Show error toast with actionable information
       toast.error(errorMessage, {
         description: errorDescription,
@@ -988,7 +986,7 @@ export default function VotePage() {
 
       // Store error information for display
       setSubmitting(false);
-      
+
       // Keep dialog open for user to see error details or retry
       // User can manually close it or try again
     }
@@ -1019,18 +1017,18 @@ export default function VotePage() {
   // Function to detect URLs in text and convert them to clickable links
   const formatTextWithLinks = (text) => {
     if (!text) return [text]
-    
+
     // Simple and reliable URL regex
     const urlRegex = /(https?:\/\/[^\s]+)|(www\.[^\s]+)|([a-zA-Z0-9][a-zA-Z0-9-]*[a-zA-Z0-9]*\.(?:com|org|net|edu|gov|io|co|uk|de|fr|jp|cn|app|dev|tech|info|biz|me|xyz|link|ai|ml|tv|cc|to|ca|au|in|br|ru|int|mil)(?:\/[^\s]*)?)/gi
-    
+
     const parts = []
     let lastIndex = 0
     let match
     let linkIndex = 0
-    
+
     // Reset regex lastIndex to ensure it starts from beginning
     urlRegex.lastIndex = 0
-    
+
     // Find all URL matches
     while ((match = urlRegex.exec(text)) !== null) {
       // Add text before the URL
@@ -1040,22 +1038,22 @@ export default function VotePage() {
           parts.push(<span key={`text-before-${linkIndex}`}>{textBefore}</span>)
         }
       }
-      
+
       // Get the matched URL (could be from any of the 3 capture groups)
       const matchedUrl = match[1] || match[2] || match[3]
-      
+
       if (matchedUrl) {
         // Ensure URL has protocol
         let fullUrl = matchedUrl
         if (!matchedUrl.startsWith('http://') && !matchedUrl.startsWith('https://')) {
           fullUrl = `https://${matchedUrl}`
         }
-        
+
         parts.push(
-          <a 
+          <a
             key={`url-${linkIndex}`}
-            href={fullUrl} 
-            target="_blank" 
+            href={fullUrl}
+            target="_blank"
             rel="noopener noreferrer"
             className="text-blue-500 hover:text-blue-700 hover:underline transition-colors duration-200 font-medium inline-flex items-center gap-1 cursor-pointer"
             onClick={(e) => {
@@ -1068,11 +1066,11 @@ export default function VotePage() {
           </a>
         )
       }
-      
+
       lastIndex = match.index + match[0].length
       linkIndex++
     }
-    
+
     // Add remaining text after the last URL
     if (lastIndex < text.length) {
       const remainingText = text.substring(lastIndex)
@@ -1080,7 +1078,7 @@ export default function VotePage() {
         parts.push(<span key={`text-after-${linkIndex}`}>{remainingText}</span>)
       }
     }
-    
+
     // If no URLs were found, return the original text wrapped in span
     return parts.length > 0 ? parts : [<span key="no-urls">{text}</span>]
   }
@@ -1183,7 +1181,6 @@ export default function VotePage() {
             {loadingError || "Failed to load vote data. Please try again later."}
           </AlertDescription>
         </Alert>
-
         <Button asChild variant="outline" className="gap-2">
           <Link href="/polls">
             <ArrowLeft className="h-4 w-4" />
@@ -1485,7 +1482,7 @@ export default function VotePage() {
 
                       return poll.options.slice(0, 3).map((option, optionIndex) => {
                         // Log option mapping info for preview
-                      
+
                         return (
                           <div key={option.id} className="flex items-center gap-3">
                             <div className="h-5 w-5 rounded-full border border-muted-foreground flex items-center justify-center">
@@ -1688,16 +1685,16 @@ export default function VotePage() {
                           <span className="text-xs font-medium text-blue-800 dark:text-blue-200">
                             Requirements:
                           </span>
-                          
+
                           {/* Token Requirement */}
                           {vote.tokenRequirement && (
                             <div className="space-y-2">
-                              <Badge 
-                                variant="outline" 
+                              <Badge
+                                variant="outline"
                                 className={cn(
                                   "text-xs gap-1 cursor-pointer transition-all hover:scale-105",
-                                  userHasRequiredTokens 
-                                    ? "bg-green-50 text-green-700 border-green-200 dark:bg-green-900/20 dark:text-green-400" 
+                                  userHasRequiredTokens
+                                    ? "bg-green-50 text-green-700 border-green-200 dark:bg-green-900/20 dark:text-green-400"
                                     : "bg-red-50 text-red-700 border-red-200 dark:bg-red-900/20 dark:text-red-400"
                                 )}
                                 onClick={() => toggleBadgeExpansion('tokenRequirement')}
@@ -1705,8 +1702,8 @@ export default function VotePage() {
                                 <Wallet className="h-3 w-3" />
                                 {vote.tokenAmount} {vote.tokenRequirement.split("::").pop()}
                                 {wallet.connected && (
-                                  userHasRequiredTokens ? 
-                                    <CheckCircle2 className="h-3 w-3" /> : 
+                                  userHasRequiredTokens ?
+                                    <CheckCircle2 className="h-3 w-3" /> :
                                     <X className="h-3 w-3" />
                                 )}
                                 <Info className="h-3 w-3" />
@@ -1723,8 +1720,8 @@ export default function VotePage() {
                                     {userHasRequiredTokens && wallet.connected
                                       ? `✅ You have enough ${vote.tokenRequirement.split("::").pop()} tokens to vote`
                                       : wallet.connected
-                                      ? `❌ You need at least ${vote.tokenAmount} ${vote.tokenRequirement.split("::").pop()} tokens in your wallet to participate`
-                                      : `You must hold at least ${vote.tokenAmount} ${vote.tokenRequirement.split("::").pop()} tokens to vote. Connect your wallet to check your balance.`
+                                        ? `❌ You need at least ${vote.tokenAmount} ${vote.tokenRequirement.split("::").pop()} tokens in your wallet to participate`
+                                        : `You must hold at least ${vote.tokenAmount} ${vote.tokenRequirement.split("::").pop()} tokens to vote. Connect your wallet to check your balance.`
                                     }
                                   </motion.div>
                                 )}
@@ -1735,8 +1732,8 @@ export default function VotePage() {
                           {/* Payment Requirement */}
                           {vote.paymentAmount > 0 && (
                             <div className="space-y-2">
-                              <Badge 
-                                variant="outline" 
+                              <Badge
+                                variant="outline"
                                 className="text-xs gap-1 bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/20 dark:text-amber-400 cursor-pointer transition-all hover:scale-105"
                                 onClick={() => toggleBadgeExpansion('paymentRequirement')}
                               >
@@ -1763,8 +1760,8 @@ export default function VotePage() {
                           {/* Whitelist Requirement */}
                           {vote.hasWhitelist && (
                             <div className="space-y-2">
-                              <Badge 
-                                variant="outline" 
+                              <Badge
+                                variant="outline"
                                 className={cn(
                                   "text-xs gap-1 cursor-pointer transition-all hover:scale-105",
                                   wallet.connected && userCanVote
@@ -1776,8 +1773,8 @@ export default function VotePage() {
                                 <Shield className="h-3 w-3" />
                                 Whitelist
                                 {wallet.connected && (
-                                  userCanVote ? 
-                                    <CheckCircle2 className="h-3 w-3" /> : 
+                                  userCanVote ?
+                                    <CheckCircle2 className="h-3 w-3" /> :
                                     <AlertCircle className="h-3 w-3" />
                                 )}
                                 <Info className="h-3 w-3" />
@@ -1794,8 +1791,8 @@ export default function VotePage() {
                                     {wallet.connected && userCanVote
                                       ? "✅ Your wallet address is approved to participate in this vote"
                                       : wallet.connected
-                                      ? "❌ Only pre-approved wallet addresses can vote. Your address is not on the whitelist."
-                                      : "🛡️ This vote is restricted to pre-approved wallet addresses only. Connect your wallet to check if you're eligible."
+                                        ? "❌ Only pre-approved wallet addresses can vote. Your address is not on the whitelist."
+                                        : "🛡️ This vote is restricted to pre-approved wallet addresses only. Connect your wallet to check if you're eligible."
                                     }
                                   </motion.div>
                                 )}
@@ -1806,8 +1803,8 @@ export default function VotePage() {
                           {/* Token Weighting Indicator */}
                           {vote.useTokenWeighting && (
                             <div className="space-y-2">
-                              <Badge 
-                                variant="outline" 
+                              <Badge
+                                variant="outline"
                                 className="text-xs gap-1 bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-900/20 dark:text-purple-400 cursor-pointer transition-all hover:scale-105"
                                 onClick={() => toggleBadgeExpansion('tokenWeighting')}
                               >
@@ -1971,7 +1968,7 @@ export default function VotePage() {
                   "h-1.5 w-full",
                   validationErrors[polls[activePollIndex].id] ? "bg-red-500" :
                     polls[activePollIndex].isRequired && (!selections[polls[activePollIndex].id] || selections[polls[activePollIndex].id].length === 0) ? "bg-amber-500" :
-                    selections[polls[activePollIndex].id]?.length > 0 ? "bg-green-500" : "bg-blue-500",
+                      selections[polls[activePollIndex].id]?.length > 0 ? "bg-green-500" : "bg-blue-500",
                 )}></div>
                 <CardHeader>
                   <CardTitle className="text-xl md:text-2xl flex items-center gap-2">
@@ -2012,7 +2009,7 @@ export default function VotePage() {
                     {(() => {
                       // Verify option mappings before rendering
                       const currentPoll = polls[activePollIndex];
-                      
+
 
                       try {
                         verifyOptionMappings([currentPoll], selections);
@@ -2047,7 +2044,7 @@ export default function VotePage() {
                             !userCanVote ||
                             (!isSelected && currentSelections.length >= currentPoll.maxSelections)
 
-                         
+
                           return (
                             <div key={option.id} className={cn(
                               "rounded-lg border p-4 transition-all duration-200 hover:bg-accent/30",
@@ -2068,7 +2065,7 @@ export default function VotePage() {
                                   id={option.id}
                                   checked={isSelected}
                                   onCheckedChange={() => {
-                                     handleOptionSelect(currentPoll.id, option.id, true);
+                                    handleOptionSelect(currentPoll.id, option.id, true);
                                   }}
                                   disabled={isDisabled}
                                   className={cn(
@@ -2136,7 +2133,7 @@ export default function VotePage() {
                               !userCanVote
 
                             // Log option mapping info for debugging
-                           
+
                             return (
                               <div key={option.id} className={cn(
                                 "rounded-lg border p-4 transition-all duration-200 hover:bg-accent/30",
@@ -2221,10 +2218,10 @@ export default function VotePage() {
                         className="gap-2 transition-all duration-300 hover:translate-x-[-2px] h-10 px-4 shadow-sm"
                       >
                         <ChevronLeft className="h-4 w-4" />
-                        
+
                       </Button>
 
-                      
+
 
                       <Button
                         variant="outline"
@@ -2237,7 +2234,7 @@ export default function VotePage() {
                         disabled={activePollIndex === polls.length - 1}
                         className="gap-2 transition-all duration-300 hover:translate-x-[2px] h-10 px-4 shadow-sm"
                       >
-                        
+
                         <ChevronRight className="h-4 w-4" />
                       </Button>
                     </div>
@@ -2259,18 +2256,18 @@ export default function VotePage() {
                               ? "scale-125 ring-2 ring-primary/20" : "",
                             // Color based on validation state
                             validationErrors[poll.id] ? "bg-red-500 ring-2 ring-red-500/30" :
-                            selections[poll.id]?.length > 0 ? "bg-green-500 ring-2 ring-green-500/30" :
-                            poll.isRequired ? "bg-amber-500 ring-2 ring-amber-500/30" :
-                            activePollIndex === index ? "bg-primary" : "bg-muted hover:bg-primary/50"
+                              selections[poll.id]?.length > 0 ? "bg-green-500 ring-2 ring-green-500/30" :
+                                poll.isRequired ? "bg-amber-500 ring-2 ring-amber-500/30" :
+                                  activePollIndex === index ? "bg-primary" : "bg-muted hover:bg-primary/50"
                           )} />
                           <span className={cn(
                             "text-xs transition-all",
                             activePollIndex === index ? "font-medium" : "group-hover:text-foreground",
                             // Text color based on validation state
                             validationErrors[poll.id] ? "text-red-500" :
-                            selections[poll.id]?.length > 0 ? "text-green-600" :
-                            poll.isRequired && (!selections[poll.id] || selections[poll.id].length === 0) ? "text-amber-600" :
-                            activePollIndex === index ? "text-primary" : "text-muted-foreground"
+                              selections[poll.id]?.length > 0 ? "text-green-600" :
+                                poll.isRequired && (!selections[poll.id] || selections[poll.id].length === 0) ? "text-amber-600" :
+                                  activePollIndex === index ? "text-primary" : "text-muted-foreground"
                           )}>
                             {index + 1}
                           </span>
@@ -2306,7 +2303,7 @@ export default function VotePage() {
                   "h-1.5 w-full",
                   validationErrors[poll.id] ? "bg-red-500" :
                     poll.isRequired && (!selections[poll.id] || selections[poll.id].length === 0) ? "bg-amber-500" :
-                    selections[poll.id]?.length > 0 ? "bg-green-500" : "bg-blue-500",
+                      selections[poll.id]?.length > 0 ? "bg-green-500" : "bg-blue-500",
                 )}></div>
                 <CardHeader className="pb-2">
                   <div className="flex items-start justify-between">
@@ -2339,8 +2336,8 @@ export default function VotePage() {
                           className={cn(
                             "text-xs",
                             validationErrors[poll.id] ? "bg-red-100/50 text-red-700 dark:bg-red-900/30 dark:text-red-400 border-red-200" :
-                            (!selections[poll.id] || selections[poll.id].length === 0) ? "bg-amber-100/50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 border-amber-200" :
-                            "bg-green-100/50 text-green-700 dark:bg-green-900/30 dark:text-green-400 border-green-200"
+                              (!selections[poll.id] || selections[poll.id].length === 0) ? "bg-amber-100/50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 border-amber-200" :
+                                "bg-green-100/50 text-green-700 dark:bg-green-900/30 dark:text-green-400 border-green-200"
                           )}
                         >
                           Required
@@ -2368,7 +2365,7 @@ export default function VotePage() {
                           .map((option, optionIndex) => {
                             // Log the mapping information for results display
                             const originalIndex = poll.options.findIndex(opt => opt.id === option.id);
-                            
+
                             return (
                               <div key={option.id} className="space-y-1.5">
                                 <div className="flex justify-between text-sm">
@@ -2391,7 +2388,7 @@ export default function VotePage() {
                         <>
                           {poll.options.slice(0, 3).map((option, optionIndex) => {
                             // Log option mapping info for preview
-                            
+
                             return (
                               <div key={option.id} className="flex items-center gap-3">
                                 <div className="h-4 w-4 flex-shrink-0 rounded-full border border-muted-foreground flex items-center justify-center">
@@ -2457,7 +2454,7 @@ export default function VotePage() {
                           Optional
                         </Badge>
                       ) : null}
-                      
+
                       {/* Show selection count */}
                       {selections[poll.id]?.length > 0 && (
                         <span className="text-xs text-muted-foreground">
@@ -2495,8 +2492,8 @@ export default function VotePage() {
                 <div className="text-sm text-red-600 dark:text-red-400 flex items-center gap-2">
                   <AlertCircle className="h-4 w-4" />
                   <span>
-                    {validationErrors.general || 
-                     `${Object.keys(validationErrors).length} poll${Object.keys(validationErrors).length > 1 ? 's' : ''} need${Object.keys(validationErrors).length === 1 ? 's' : ''} attention`}
+                    {validationErrors.general ||
+                      `${Object.keys(validationErrors).length} poll${Object.keys(validationErrors).length > 1 ? 's' : ''} need${Object.keys(validationErrors).length === 1 ? 's' : ''} attention`}
                   </span>
                   {activeTab === "polls" && Object.keys(validationErrors).length > 0 && (
                     <Button
@@ -2525,12 +2522,12 @@ export default function VotePage() {
                 onClick={() => {
                   // Mark that user attempted to submit
                   setAttemptedSubmit(true);
-                  
+
                   // Double-check validation before submission with force validation
                   if (!canSubmitVote()) {
                     const currentErrors = validateSelections(selections, true);
                     setValidationErrors(currentErrors);
-                    
+
                     // Navigate to first error if in "polls" view
                     if (activeTab === "polls" && Object.keys(currentErrors).length > 0) {
                       const firstErrorPollId = Object.keys(currentErrors).find(key => key !== 'general');
@@ -2542,13 +2539,13 @@ export default function VotePage() {
                         }
                       }
                     }
-                    
+
                     toast.error("Please complete all required fields", {
                       description: "Review the highlighted errors and make your selections."
                     });
                     return;
                   }
-                  
+
                   handleSubmitVote();
                 }}
                 disabled={!canSubmitVote()}
@@ -2621,7 +2618,7 @@ export default function VotePage() {
       />
 
       {/* Transaction Status Dialog */}
-      <TransactionStatusDialog 
+      <TransactionStatusDialog
         open={txStatusDialogOpen}
         onOpenChange={(open) => {
           if (!open) {

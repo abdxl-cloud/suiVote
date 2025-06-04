@@ -138,6 +138,12 @@ export class SuiVoteService {
   private client: SuiClient
   private isInitialized = false
   private subscriptions: Map<string, () => void> = new Map()
+  
+  // Performance optimization: Caching
+  private voteStatusCache = new Map<string, { hasVoted: boolean; timestamp: number }>()
+  private voteDetailsCache = new Map<string, { details: VoteDetails; timestamp: number }>()
+  private readonly CACHE_TTL = 5 * 60 * 1000 // 5 minutes
+  private readonly VOTE_STATUS_CACHE_TTL = 2 * 60 * 1000 // 2 minutes for vote status
 
   constructor(network = SUI_CONFIG.NETWORK) {
     try {
@@ -153,6 +159,11 @@ export class SuiVoteService {
       
       this.client = new SuiClient({ transport })
       this.isInitialized = true
+      
+      // Set up periodic cache cleanup (every 10 minutes)
+      setInterval(() => {
+        this.clearExpiredCaches()
+      }, 10 * 60 * 1000)
     } catch (error) {
       throw new Error(`Failed to initialize SuiVoteService: ${error instanceof Error ? error.message : String(error)}`)
     }
@@ -394,21 +405,18 @@ export class SuiVoteService {
       // Get votes where the user is whitelisted
       const { data: whitelistedVotes } = await this.getVotesWhitelistedForAddress(address, limit)
 
-      // Check which votes the user has already voted in
-      const votedPromises = Array.from(new Set([
+      // Check which votes the user has already voted in (optimized batch check)
+      const allVoteIds = Array.from(new Set([
         ...createdVotes.map(vote => vote.id),
         ...participatedVotes.map(vote => vote.id),
         ...whitelistedVotes.map(vote => vote.id)
-      ])).map(async (voteId) => {
-        const hasVoted = await this.hasVoted(address, voteId)
-        return { voteId, hasVoted }
-      })
+      ]))
 
-      const votedResults = await Promise.all(votedPromises)
+      const voteStatusMap = await this.batchCheckVoteStatus(address, allVoteIds)
       const votedVoteIds = new Set(
-        votedResults
-          .filter(result => result.hasVoted)
-          .map(result => result.voteId)
+        Array.from(voteStatusMap.entries())
+          .filter(([_, hasVoted]) => hasVoted)
+          .map(([voteId, _]) => voteId)
       )
 
       // Combine and deduplicate votes
@@ -579,7 +587,7 @@ export class SuiVoteService {
   }
   
   /**
-   * Get detailed information about a specific vote
+   * Get detailed information about a specific vote (with caching)
    * @param voteId The vote object ID
    * @returns Vote details
    * @throws Error if vote is not found or invalid
@@ -591,6 +599,12 @@ export class SuiVoteService {
     if (!voteId) {
       console.warn("Empty voteId provided to getVoteDetails")
       throw new Error("Vote ID is required")
+    }
+
+    // Check cache first
+    const cached = this.voteDetailsCache.get(voteId)
+    if (cached && Date.now() - cached.timestamp < this.CACHE_TTL) {
+      return cached.details
     }
 
     // Fetch the vote object with retry logic
@@ -690,6 +704,9 @@ export class SuiVoteService {
       useTokenWeighting,
       tokensPerVote
     }
+
+    // Cache the result
+    this.voteDetailsCache.set(voteId, { details: voteDetails, timestamp: Date.now() })
 
     return voteDetails
   } catch (error) {
@@ -1840,7 +1857,7 @@ async castMultipleVotesTransaction(
   }
 
   /**
- * Check if a user has voted on a specific vote
+ * Check if a user has voted on a specific vote (with caching)
  * @param userAddress User address
  * @param voteId Vote object ID
  * @returns Boolean indicating whether the user has voted
@@ -1857,6 +1874,13 @@ async castMultipleVotesTransaction(
         throw new Error("Vote ID is required")
       }
 
+      // Check cache first
+      const cacheKey = `${userAddress}:${voteId}`
+      const cached = this.voteStatusCache.get(cacheKey)
+      
+      if (cached && Date.now() - cached.timestamp < this.VOTE_STATUS_CACHE_TTL) {
+        return cached.hasVoted
+      }
 
       // Query for VoteCast events using MoveEventType filter
       // Order by descending to get most recent events first
@@ -1876,10 +1900,94 @@ async castMultipleVotesTransaction(
         return voteCastEvent.voter === userAddress && voteCastEvent.vote_id === voteId
       })
 
+      // Cache the result
+      this.voteStatusCache.set(cacheKey, { hasVoted, timestamp: Date.now() })
 
       return hasVoted
     } catch (error) {
       return false
+    }
+  }
+
+  /**
+   * Batch check vote status for multiple votes (performance optimization)
+   * @param userAddress User address
+   * @param voteIds Array of vote IDs to check
+   * @returns Map of vote ID to voting status
+   */
+  async batchCheckVoteStatus(userAddress: string, voteIds: string[]): Promise<Map<string, boolean>> {
+    try {
+      this.checkInitialization()
+
+      if (!userAddress || !voteIds.length) {
+        return new Map()
+      }
+
+      const results = new Map<string, boolean>()
+      const uncachedVoteIds: string[] = []
+
+      // Check cache first for all vote IDs
+      for (const voteId of voteIds) {
+        const cacheKey = `${userAddress}:${voteId}`
+        const cached = this.voteStatusCache.get(cacheKey)
+        
+        if (cached && Date.now() - cached.timestamp < this.VOTE_STATUS_CACHE_TTL) {
+          results.set(voteId, cached.hasVoted)
+        } else {
+          uncachedVoteIds.push(voteId)
+        }
+      }
+
+      // If all results are cached, return early
+      if (uncachedVoteIds.length === 0) {
+        return results
+      }
+
+      // Query all VoteCast events once for uncached votes
+      const { data } = await this.client.queryEvents({
+        query: {
+          MoveEventType: `${PACKAGE_ID}::voting::VoteCast`
+        },
+        limit: 500, // Increased limit for batch processing
+        order: 'descending'
+      })
+
+      // Create a set of vote IDs that the user has voted on
+      const userVotes = new Set<string>()
+      data.forEach(event => {
+        if (event.parsedJson) {
+          const voteCastEvent = event.parsedJson as VoteCastEvent
+          if (voteCastEvent.voter === userAddress) {
+            userVotes.add(voteCastEvent.vote_id)
+          }
+        }
+      })
+
+      // Process uncached vote IDs
+      for (const voteId of uncachedVoteIds) {
+        const hasVoted = userVotes.has(voteId)
+        results.set(voteId, hasVoted)
+        
+        // Cache the result
+        const cacheKey = `${userAddress}:${voteId}`
+        this.voteStatusCache.set(cacheKey, { hasVoted, timestamp: Date.now() })
+      }
+
+      return results
+    } catch (error) {
+      console.error('Batch vote status check failed:', error)
+      // Return empty results for uncached votes on error
+      const results = new Map<string, boolean>()
+      for (const voteId of voteIds) {
+        const cacheKey = `${userAddress}:${voteId}`
+        const cached = this.voteStatusCache.get(cacheKey)
+        if (cached && Date.now() - cached.timestamp < this.VOTE_STATUS_CACHE_TTL) {
+          results.set(voteId, cached.hasVoted)
+        } else {
+          results.set(voteId, false) // Default to false on error
+        }
+      }
+      return results
     }
   }
 
@@ -2008,6 +2116,49 @@ async castMultipleVotesTransaction(
     if (fullNumberStr === '') return BigInt(0);
 
     return BigInt(fullNumberStr);
+  }
+
+  /**
+   * Clear cache for a specific vote (useful when vote is updated)
+   * @param voteId Vote ID to clear from cache
+   */
+  clearVoteCache(voteId: string): void {
+    this.voteDetailsCache.delete(voteId)
+    // Clear all vote status cache entries for this vote
+    for (const [key] of this.voteStatusCache) {
+      if (key.endsWith(`:${voteId}`)) {
+        this.voteStatusCache.delete(key)
+      }
+    }
+  }
+
+  /**
+   * Clear all caches (useful for logout or data refresh)
+   */
+  clearAllCaches(): void {
+    this.voteDetailsCache.clear()
+    this.voteStatusCache.clear()
+  }
+
+  /**
+   * Clear expired cache entries
+   */
+  clearExpiredCaches(): void {
+    const now = Date.now()
+    
+    // Clear expired vote details cache
+    for (const [key, value] of this.voteDetailsCache) {
+      if (now - value.timestamp > this.CACHE_TTL) {
+        this.voteDetailsCache.delete(key)
+      }
+    }
+    
+    // Clear expired vote status cache
+    for (const [key, value] of this.voteStatusCache) {
+      if (now - value.timestamp > this.VOTE_STATUS_CACHE_TTL) {
+        this.voteStatusCache.delete(key)
+      }
+    }
   }
 
 }
