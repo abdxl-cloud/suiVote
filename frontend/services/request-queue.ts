@@ -5,7 +5,7 @@ class RequestQueue {
   private queue: Array<() => Promise<any>> = []
   private processing = false
   private lastRequestTime = 0
-  private readonly minInterval = 500 // Minimum 500ms between requests (increased from 100ms)
+  private readonly minInterval = 100 // Minimum 100ms between requests for better performance
 
   async add<T>(request: () => Promise<T>): Promise<T> {
     return new Promise((resolve, reject) => {

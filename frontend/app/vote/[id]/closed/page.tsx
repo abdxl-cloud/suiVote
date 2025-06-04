@@ -203,9 +203,39 @@ export default function ClosedVotePage() {
   if (loading) {
     return (
       <div className="container max-w-3xl py-10 px-4 md:px-6">
-        <div className="flex flex-col items-center justify-center h-64 gap-4">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
-          <p className="text-muted-foreground">Loading vote results...</p>
+        <div className="flex flex-col items-center justify-center h-64 gap-8">
+          {/* Loading Steps */}
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5 }}
+            className="text-center space-y-2 text-sm text-muted-foreground font-inter"
+          >
+            <motion.div
+              className="flex items-center justify-center space-x-2"
+              animate={{ opacity: [0.5, 1, 0.5] }}
+              transition={{ duration: 1.5, repeat: Infinity, delay: 0 }}
+            >
+              <div className="w-1.5 h-1.5 bg-primary rounded-full" />
+              <span>Loading vote details</span>
+            </motion.div>
+            <motion.div
+              className="flex items-center justify-center space-x-2"
+              animate={{ opacity: [0.5, 1, 0.5] }}
+              transition={{ duration: 1.5, repeat: Infinity, delay: 0.5 }}
+            >
+              <div className="w-1.5 h-1.5 bg-primary rounded-full" />
+              <span>Fetching poll results</span>
+            </motion.div>
+            <motion.div
+              className="flex items-center justify-center space-x-2"
+              animate={{ opacity: [0.5, 1, 0.5] }}
+              transition={{ duration: 1.5, repeat: Infinity, delay: 1 }}
+            >
+              <div className="w-1.5 h-1.5 bg-primary rounded-full" />
+              <span>Preparing results page</span>
+            </motion.div>
+          </motion.div>
         </div>
       </div>
     )

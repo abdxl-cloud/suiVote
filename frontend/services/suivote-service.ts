@@ -444,17 +444,17 @@ export class SuiVoteService {
         // Determine the correct status based on the requirements
         let status: "active" | "pending" | "upcoming" | "closed" | "voted"
 
-        // First, check if the user has already voted in this vote
-        if (votedVoteIds.has(vote.id)) {
+        // First, If it's a closed vote 
+        if (currentTime > vote.endTimestamp || vote.isCancelled) {
+          status = "closed"
+        }
+        // Then check if the user has already voted in this vote 
+        else if (votedVoteIds.has(vote.id) ) {
           status = "voted"
         }
-        // If it's an upcoming vote
+        // it's an upcoming vote
         else if (currentTime < vote.startTimestamp) {
           status = "upcoming"
-        }
-        // If it's a closed vote
-        else if (currentTime > vote.endTimestamp || vote.isCancelled) {
-          status = "closed"
         }
         // If the user's wallet is whitelisted for this vote and it's active
         else if (whitelistedVoteIds.has(vote.id)) {

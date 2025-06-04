@@ -282,7 +282,7 @@ export default function PollsPage() {
 
   useEffect(() => {
     if (wallet.connected && wallet.address) {
-      const fetchVotes = async () => {
+      const fetchVotes = async (retryCount = 0) => {
         try {
           const { data } = await getMyVotes(wallet.address!)
           setVotes(data)
@@ -299,11 +299,14 @@ export default function PollsPage() {
                     let finalStatus = v.status;
                     
                     // Handle status transitions based on current state and updates
-                    if (updatedVoteDetails.status === "voted") {
+                    if (updatedVoteDetails.status === "closed") {
+                      // Always transition to closed when the vote ends, regardless of current status
+                      finalStatus = "closed";
+                    } else if (updatedVoteDetails.status === "voted") {
                       // If the service detected the user has voted, always use "voted"
                       finalStatus = "voted";
                     } else if (v.status === "voted") {
-                      // Once voted, status should never change back
+                      // Once voted, status should never change back unless the vote is closed
                       finalStatus = "voted";
                     } else if (v.status === "pending") {
                       // Pending votes can transition to closed when they end
@@ -345,6 +348,12 @@ export default function PollsPage() {
           }
         } catch (err) {
           console.error("Error fetching votes:", err)
+          
+          // Retry logic to prevent need for manual refresh
+          if (retryCount < 3) {
+            console.log(`Retrying vote fetch (attempt ${retryCount + 1}/3)...`)
+            setTimeout(() => fetchVotes(retryCount + 1), 2000 * (retryCount + 1))
+          }
         }
       }
       fetchVotes()

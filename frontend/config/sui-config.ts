@@ -25,11 +25,11 @@ export const SUI_CONFIG = {
   DEFAULT_GAS_BUDGET: 30000000, // 30M gas units
 
   // Timeouts
-  REQUEST_TIMEOUT_MS: 30000, // 30 seconds
+  REQUEST_TIMEOUT_MS: 10000, // 10 seconds
 
   // Retry configuration
   MAX_RETRIES: 5,
-  RETRY_DELAY_MS: 1000, // 1 seconds
+  RETRY_DELAY_MS: 500, // 5 milliseconds
 
   // Logging
   VERBOSE_LOGGING: process.env.NEXT_PUBLIC_VERBOSE_LOGGING === "true",
