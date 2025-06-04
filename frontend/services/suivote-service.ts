@@ -5,6 +5,7 @@ import { SuiHTTPTransport } from "@mysten/sui/client"
 import SUI_CONFIG from "@/config/sui-config"
 import { toDecimalUnits, fromDecimalUnits } from "@/utils/token-utils"
 import { tokenService } from "@/services/token-service"
+import { requestQueue } from './request-queue'
 
 // Constants from configuration
 const PACKAGE_ID = SUI_CONFIG.PACKAGE_ID
@@ -137,23 +138,93 @@ export class SuiVoteService {
   private client: SuiClient
   private isInitialized = false
   private subscriptions: Map<string, () => void> = new Map()
+  
+  // Performance optimization: Caching
+  private voteStatusCache = new Map<string, { hasVoted: boolean; timestamp: number }>()
+  private voteDetailsCache = new Map<string, { details: VoteDetails; timestamp: number }>()
+  private readonly CACHE_TTL = 5 * 60 * 1000 // 5 minutes
+  private readonly VOTE_STATUS_CACHE_TTL = 2 * 60 * 1000 // 2 minutes for vote status
 
   constructor(network = SUI_CONFIG.NETWORK) {
     try {
       // Initialize client with both HTTP and WebSocket transport
+      const validNetwork = network as 'mainnet' | 'testnet' | 'devnet' | 'localnet'
       const transport = new SuiHTTPTransport({
-        url: getFullnodeUrl(network),
+        url: getFullnodeUrl(validNetwork),
         websocket: {
           reconnectTimeout: 1000,
-          url: getFullnodeUrl(network).replace('http', 'ws'),
+          url: getFullnodeUrl(validNetwork).replace('http', 'ws'),
         }
       })
       
       this.client = new SuiClient({ transport })
       this.isInitialized = true
+      
+      // Set up periodic cache cleanup (every 10 minutes)
+      setInterval(() => {
+        this.clearExpiredCaches()
+      }, 10 * 60 * 1000)
     } catch (error) {
       throw new Error(`Failed to initialize SuiVoteService: ${error instanceof Error ? error.message : String(error)}`)
     }
+  }
+
+  /**
+   * Retry wrapper for network requests with exponential backoff
+   * @private
+   */
+  private async retryRequest<T>(
+    operation: () => Promise<T>,
+    maxRetries: number = SUI_CONFIG.MAX_RETRIES,
+    baseDelay: number = SUI_CONFIG.RETRY_DELAY_MS
+  ): Promise<T> {
+    return requestQueue.add(async () => {
+      let lastError: Error
+      
+      for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        return await operation()
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error))
+        
+        // Don't retry on certain errors
+        if (lastError.message.includes('CORS') || 
+            lastError.message.includes('Access-Control-Allow-Origin')) {
+          throw new Error('CORS error: Please ensure the application is served from a proper domain or configure CORS headers on the RPC endpoint.')
+        }
+        
+        // For rate limiting, wait longer
+        if (lastError.message.includes('429') || 
+            lastError.message.includes('Too Many Requests') ||
+            lastError.message.includes('rate limit') ||
+            lastError.message.includes('Rate limit')) {
+          if (attempt === maxRetries) {
+            throw new Error('Rate limit exceeded: The Sui testnet RPC is currently rate limiting requests. Please try again later or consider using a different RPC endpoint.')
+          }
+          // More aggressive exponential backoff with jitter for rate limits
+          const delay = Math.min(baseDelay * Math.pow(3, attempt) + Math.random() * 2000, 60000)
+          console.warn(`Rate limited, waiting ${delay}ms before retry ${attempt + 1}/${maxRetries}`)
+          await new Promise(resolve => setTimeout(resolve, delay))
+          continue
+        }
+        
+        // For other network errors, retry with shorter delay
+        if (attempt < maxRetries && 
+            (lastError.message.includes('fetch') || 
+             lastError.message.includes('network') ||
+             lastError.message.includes('ERR_FAILED'))) {
+          const delay = baseDelay * Math.pow(1.5, attempt)
+          await new Promise(resolve => setTimeout(resolve, delay))
+          continue
+        }
+        
+        // Don't retry on other errors
+        throw lastError
+      }
+    }
+    
+    throw lastError!
+    })
   }
 
   /**
@@ -194,13 +265,15 @@ export class SuiVoteService {
       }
 
       // Query for VoteCreated events using MoveEventType filter
-      const eventsResponse = await this.client.queryEvents({
-        query: {
-          MoveEventType: `${PACKAGE_ID}::voting::VoteCreated`
-        },
-        cursor,
-        limit: 100, // Using a higher limit initially since we'll filter manually
-        descending_order: true, // Get most recent first
+      const eventsResponse = await this.retryRequest(async () => {
+        return await this.client.queryEvents({
+          query: {
+            MoveEventType: `${PACKAGE_ID}::voting::VoteCreated`
+          },
+          cursor: cursor as any,
+          limit: 100, // Using a higher limit initially since we'll filter manually
+          order: "descending", // Get most recent first
+        })
       })
 
       // Process events to extract vote IDs
@@ -240,7 +313,7 @@ export class SuiVoteService {
       const limitedVotes = votes.slice(0, limit)
       return {
         data: limitedVotes,
-        nextCursor: eventsResponse.nextCursor,
+        nextCursor: eventsResponse.nextCursor as string | undefined,
       }
     } catch (error) {
       throw new Error(`Failed to fetch votes: ${error instanceof Error ? error.message : String(error)}`)
@@ -266,13 +339,15 @@ export class SuiVoteService {
         throw new Error("Address is required")
       }
       // Query for VoteCast events using MoveEventType filter
-      const eventsResponse = await this.client.queryEvents({
-        query: {
-          MoveEventType: `${PACKAGE_ID}::voting::VoteCast`
-        },
-        cursor,
-        limit: 100, // Using a higher limit initially since we'll filter manually
-        descending_order: true, // Get most recent first
+      const eventsResponse = await this.retryRequest(async () => {
+        return await this.client.queryEvents({
+          query: {
+            MoveEventType: `${PACKAGE_ID}::voting::VoteCast`
+          },
+          cursor: cursor as any,
+          limit: 100, // Using a higher limit initially since we'll filter manually
+          order: "descending", // Get most recent first
+        })
       })
 
       // Manually filter the events for voter = address
@@ -299,7 +374,7 @@ export class SuiVoteService {
 
       return {
         data: limitedVotes,
-        nextCursor: eventsResponse.nextCursor,
+        nextCursor: eventsResponse.nextCursor as string | undefined,
       }
     } catch (error) {
       console.error("Failed to fetch participated votes:", error)
@@ -330,21 +405,18 @@ export class SuiVoteService {
       // Get votes where the user is whitelisted
       const { data: whitelistedVotes } = await this.getVotesWhitelistedForAddress(address, limit)
 
-      // Check which votes the user has already voted in
-      const votedPromises = Array.from(new Set([
+      // Check which votes the user has already voted in (optimized batch check)
+      const allVoteIds = Array.from(new Set([
         ...createdVotes.map(vote => vote.id),
         ...participatedVotes.map(vote => vote.id),
         ...whitelistedVotes.map(vote => vote.id)
-      ])).map(async (voteId) => {
-        const hasVoted = await this.hasVoted(address, voteId)
-        return { voteId, hasVoted }
-      })
+      ]))
 
-      const votedResults = await Promise.all(votedPromises)
+      const voteStatusMap = await this.batchCheckVoteStatus(address, allVoteIds)
       const votedVoteIds = new Set(
-        votedResults
-          .filter(result => result.hasVoted)
-          .map(result => result.voteId)
+        Array.from(voteStatusMap.entries())
+          .filter(([_, hasVoted]) => hasVoted)
+          .map(([voteId, _]) => voteId)
       )
 
       // Combine and deduplicate votes
@@ -380,17 +452,17 @@ export class SuiVoteService {
         // Determine the correct status based on the requirements
         let status: "active" | "pending" | "upcoming" | "closed" | "voted"
 
-        // First, check if the user has already voted in this vote
-        if (votedVoteIds.has(vote.id)) {
+        // First, If it's a closed vote 
+        if (currentTime > vote.endTimestamp || vote.isCancelled) {
+          status = "closed"
+        }
+        // Then check if the user has already voted in this vote 
+        else if (votedVoteIds.has(vote.id) ) {
           status = "voted"
         }
-        // If it's an upcoming vote
+        // it's an upcoming vote
         else if (currentTime < vote.startTimestamp) {
           status = "upcoming"
-        }
-        // If it's a closed vote
-        else if (currentTime > vote.endTimestamp || vote.isCancelled) {
-          status = "closed"
         }
         // If the user's wallet is whitelisted for this vote and it's active
         else if (whitelistedVoteIds.has(vote.id)) {
@@ -413,7 +485,10 @@ export class SuiVoteService {
           tokenRequirement: vote.tokenRequirement,
           tokenAmount: vote.tokenAmount,
           hasWhitelist: vote.hasWhitelist,
-          isWhitelisted: whitelistedVoteIds.has(vote.id)
+          isWhitelisted: whitelistedVoteIds.has(vote.id),
+          showLiveStats: vote.showLiveStats,
+          useTokenWeighting: vote.useTokenWeighting,
+          tokensPerVote: vote.tokensPerVote
         }
       })
 
@@ -492,7 +567,7 @@ export class SuiVoteService {
         } catch (error) {
           console.error(`Error polling vote updates for ${voteId}:`, error)
         }
-      }, 3000) // Poll every 3 seconds
+      }, 10000) // Poll every 10 seconds (reduced from 3 seconds to prevent rate limiting)
       
       // Create unsubscribe function
       const unsubscribe = () => {
@@ -512,26 +587,35 @@ export class SuiVoteService {
   }
   
   /**
-   * Get detailed information about a specific vote
+   * Get detailed information about a specific vote (with caching)
    * @param voteId The vote object ID
-   * @returns Vote details or null if not found
+   * @returns Vote details
+   * @throws Error if vote is not found or invalid
    */
-  async getVoteDetails(voteId: string): Promise<VoteDetails | null> {
+  async getVoteDetails(voteId: string): Promise<VoteDetails> {
   try {
     this.checkInitialization()
 
     if (!voteId) {
       console.warn("Empty voteId provided to getVoteDetails")
-      return null
+      throw new Error("Vote ID is required")
     }
 
-    // Fetch the vote object
-    const { data } = await this.client.getObject({
-      id: voteId,
-      options: {
-        showContent: true,
-        showType: true,
-      },
+    // Check cache first
+    const cached = this.voteDetailsCache.get(voteId)
+    if (cached && Date.now() - cached.timestamp < this.CACHE_TTL) {
+      return cached.details
+    }
+
+    // Fetch the vote object with retry logic
+    const { data } = await this.retryRequest(async () => {
+      return await this.client.getObject({
+        id: voteId,
+        options: {
+          showContent: true,
+          showType: true,
+        },
+      })
     })
 
     if (!data || !data.content || data.content.dataType !== "moveObject") {
@@ -544,7 +628,9 @@ export class SuiVoteService {
     // Verify this is a Vote object from our package
     if (!objectType || !objectType.startsWith(`${PACKAGE_ID}::voting::Vote`)) {
       console.warn(`Object is not a Vote type: ${objectType}`)
-      return null
+      const error = new Error(`Invalid vote object type: ${objectType}. Expected a Vote object from package ${PACKAGE_ID}.`);
+      console.error(error.message);
+      throw error;
     }
 
     const fields = data.content.fields as Record<string, any>
@@ -584,7 +670,7 @@ export class SuiVoteService {
     // Convert token amounts from decimal units back to human-readable format
     if (tokenRequirement && tokenAmount > 0) {
       try {
-        const tokenInfo = await this.tokenService.getTokenInfo(tokenRequirement)
+        const tokenInfo = await tokenService.getTokenInfo(tokenRequirement)
         if (tokenInfo && tokenInfo.decimals !== undefined) {
           tokenAmount = parseFloat(fromDecimalUnits(tokenAmount.toString(), tokenInfo.decimals))
           if (useTokenWeighting && tokensPerVote > 0) {
@@ -619,17 +705,21 @@ export class SuiVoteService {
       tokensPerVote
     }
 
+    // Cache the result
+    this.voteDetailsCache.set(voteId, { details: voteDetails, timestamp: Date.now() })
+
     return voteDetails
   } catch (error) {
-    if (error.message?.includes("not found")) {
-      console.error(`Vote ${voteId} not found:`, error instanceof Error ? error.message : String(error));
+    const errorMessage = error instanceof Error ? error.message : String(error)
+    if (errorMessage?.includes("not found")) {
+      console.error(`Vote ${voteId} not found:`, errorMessage);
       throw new Error(`Vote ${voteId} not found. It may have been deleted or never existed.`);
-    } else if (error.message?.includes("network")) {
-      console.error(`Network error fetching vote ${voteId}:`, error instanceof Error ? error.message : String(error));
+    } else if (errorMessage?.includes("network")) {
+      console.error(`Network error fetching vote ${voteId}:`, errorMessage);
       throw new Error("Network error. Please check your connection and try again.");
     } else {
-      console.error(`Failed to fetch vote details for ${voteId}:`, error instanceof Error ? error.message : String(error));
-      throw new Error(`Failed to fetch vote details: ${error.message || "Unknown error"}`);
+      console.error(`Failed to fetch vote details for ${voteId}:`, errorMessage);
+      throw new Error(`Failed to fetch vote details: ${errorMessage || "Unknown error"}`);
     }
   }
 }
@@ -651,7 +741,7 @@ export class SuiVoteService {
       const voteDetails = await this.getVoteDetails(voteId)
       if (!voteDetails) throw new Error(`Vote ${voteId} not found`)
   
-      console.log(`Fetching ${voteDetails.pollsCount} polls for vote ${voteId}`)
+
   
       const polls: (PollDetails | null)[] = new Array(voteDetails.pollsCount).fill(null)
       
@@ -661,7 +751,7 @@ export class SuiVoteService {
         
         return (async () => {
           try {
-            console.log(`Fetching poll at index ${pollIndex}`)
+
             
             // Get the dynamic field (poll) by name
             const pollField = await this.client.getDynamicFieldObject({
@@ -693,7 +783,7 @@ export class SuiVoteService {
               options: [], // Will be populated separately if needed
             }
             
-            console.log(`Poll ${pollIndex} fetched: "${pollDetails.title}" with ${pollDetails.optionsCount} options`)
+
             
             // Store in the correct position
             polls[i] = pollDetails
@@ -712,10 +802,7 @@ export class SuiVoteService {
       // Filter out null values and ensure order is preserved
       const orderedPolls = polls.filter((poll): poll is PollDetails => poll !== null)
       
-      console.log(`Successfully fetched ${orderedPolls.length} polls in order:`)
-      orderedPolls.forEach((poll, index) => {
-        console.log(`  ${index + 1}. "${poll.title}" (${poll.optionsCount} options)`)
-      })
+
   
       return orderedPolls
     } catch (error) {
@@ -743,7 +830,7 @@ export class SuiVoteService {
         throw new Error("Poll index must be 1 or greater")
       }
   
-      console.log(`Fetching options for vote ${voteId}, poll ${pollIndex}`)
+
   
       // First get the poll details
       const polls = await this.getVotePolls(voteId)
@@ -754,7 +841,7 @@ export class SuiVoteService {
       const poll = polls[pollIndex - 1] // Convert to 0-based index
       const pollId = poll.id
   
-      console.log(`Poll ${pollIndex} has ${poll.optionsCount} options`)
+
   
       const options: (PollOptionDetails | null)[] = new Array(poll.optionsCount).fill(null)
   
@@ -764,7 +851,7 @@ export class SuiVoteService {
         
         return (async () => {
           try {
-            console.log(`Fetching option at index ${optionIndex} for poll ${pollId}`)
+
             
             // Get the dynamic field (option) by name
             const optionField = await this.client.getDynamicFieldObject({
@@ -791,7 +878,7 @@ export class SuiVoteService {
               votes: Number(optionFields.votes || 0),
             }
   
-            console.log(`Option ${optionIndex}: "${optionDetails.text}" (${optionDetails.votes} votes)`)
+
             
             // Store in the correct position
             options[i] = optionDetails
@@ -810,10 +897,7 @@ export class SuiVoteService {
       // Filter out null values and ensure order is preserved
       const orderedOptions = options.filter((option): option is PollOptionDetails => option !== null)
       
-      console.log(`Successfully fetched ${orderedOptions.length} options in order:`)
-      orderedOptions.forEach((option, index) => {
-        console.log(`  ${index + 1}. "${option.text}" (${option.votes} votes)`)
-      })
+
   
       return orderedOptions
     } catch (error) {
@@ -861,7 +945,7 @@ export class SuiVoteService {
         throw new Error("End timestamp must be after start timestamp")
       }
 
-      console.log("1", pollData)
+
 
       if (!pollData || !Array.isArray(pollData) || pollData.length === 0) {
         throw new Error("At least one poll is required")
@@ -885,7 +969,7 @@ export class SuiVoteService {
       for (let pollIndex = 0; pollIndex < pollData.length; pollIndex++) {
         const poll = pollData[pollIndex]
         
-        console.log(`Processing poll ${pollIndex + 1}/${pollData.length}: "${poll.title}"`)
+
         
         pollTitles.push(poll.title || "")
         pollDescriptions.push(poll.description || "")
@@ -902,11 +986,11 @@ export class SuiVoteService {
         pollOptionCounts.push(poll.options.length)
   
         // Process options for this poll in strict sequential order
-        console.log(`  Processing ${poll.options.length} options:`)
+
         for (let optionIndex = 0; optionIndex < poll.options.length; optionIndex++) {
           const option = poll.options[optionIndex]
           
-          console.log(`    Option ${optionIndex + 1}/${poll.options.length}: "${option.text}"`)
+
           
           pollOptionTexts.push(option.text || "")
   
@@ -925,7 +1009,7 @@ export class SuiVoteService {
         ? Array.from(new TextEncoder().encode(requiredToken))
         : []
 
-      console.log("TX", requiredToken, tokenRequirementBytes)
+
       
       // Build the transaction with proper arguments matching the contract
       tx.moveCall({
@@ -1000,7 +1084,7 @@ export class SuiVoteService {
       }
       for (let i = 0; i < pollData.length; i++) {
         const poll = pollData[i]
-        console.log(`Poll ${i + 1}: "${poll.title}"`)
+
         
         if (!poll.title) {
           throw new Error(`Poll ${i + 1} is missing a title`)
@@ -1012,7 +1096,7 @@ export class SuiVoteService {
         
         for (let j = 0; j < poll.options.length; j++) {
           const option = poll.options[j]
-          console.log(`  Option ${j + 1}: "${option.text}"`)
+
           
           if (!option.text) {
             throw new Error(`Poll ${i + 1}, Option ${j + 1} is missing text`)
@@ -1087,7 +1171,7 @@ export class SuiVoteService {
       for (let pollIndex = 0; pollIndex < pollData.length; pollIndex++) {
         const poll = pollData[pollIndex]
         
-        console.log(`Processing poll ${pollIndex + 1}/${pollData.length}: "${poll.title}"`)
+
         
         pollTitles.push(poll.title || "")
         pollDescriptions.push(poll.description || "")
@@ -1104,11 +1188,11 @@ export class SuiVoteService {
         pollOptionCounts.push(poll.options.length)
   
         // Process options for this poll in strict sequential order
-        console.log(`  Processing ${poll.options.length} options:`)
+
         for (let optionIndex = 0; optionIndex < poll.options.length; optionIndex++) {
           const option = poll.options[optionIndex]
           
-          console.log(`    Option ${optionIndex + 1}/${poll.options.length}: "${option.text}"`)
+
           
           pollOptionTexts.push(option.text || "")
   
@@ -1134,7 +1218,7 @@ export class SuiVoteService {
       if (requiredToken && requiredAmount > 0) {
         try {
           // Get token info to determine decimals
-          const tokenInfo = await this.tokenService.getTokenInfo(requiredToken)
+          const tokenInfo = await tokenService.getTokenInfo(requiredToken)
           if (tokenInfo && tokenInfo.decimals !== undefined) {
             convertedRequiredAmount = parseInt(toDecimalUnits(requiredAmount.toString(), tokenInfo.decimals))
             if (useTokenWeighting && tokensPerVote > 0) {
@@ -1306,11 +1390,13 @@ export class SuiVoteService {
       const whitelistedVoters: string[] = []
 
       // Query for VoterWhitelisted events
-      const { data } = await this.client.queryEvents({
-        query: {
-          MoveEventType: `${PACKAGE_ID}::voting::VoterWhitelisted`
-        },
-        limit: 1000, // Using a higher limit to get all events
+      const { data } = await this.retryRequest(async () => {
+        return await this.client.queryEvents({
+          query: {
+            MoveEventType: `${PACKAGE_ID}::voting::VoterWhitelisted`
+          },
+          limit: 1000, // Using a higher limit to get all events
+        })
       })
 
       // Filter events for the specific vote
@@ -1359,9 +1445,9 @@ export class SuiVoteService {
         query: {
           MoveEventType: `${PACKAGE_ID}::voting::VoterWhitelisted`
         },
-        cursor,
+        cursor: cursor as any,
         limit: 100, // Using a higher limit initially since we'll filter manually
-        descending_order: true, // Get most recent first
+        order: "descending", // Get most recent first
       })
 
       // Manually filter the events for voter_address = address
@@ -1391,7 +1477,7 @@ export class SuiVoteService {
 
       return {
         data: limitedVotes,
-        nextCursor: eventsResponse.nextCursor,
+        nextCursor: eventsResponse.nextCursor as string | undefined,
       }
     } catch (error) {
       console.error("Failed to fetch whitelisted votes:", error)
@@ -1435,7 +1521,7 @@ export class SuiVoteService {
           // Get vote details to determine token requirement
           const voteDetails = await this.getVoteDetails(voteId)
           if (voteDetails && voteDetails.tokenRequirement) {
-            const tokenInfo = await this.tokenService.getTokenInfo(voteDetails.tokenRequirement)
+            const tokenInfo = await tokenService.getTokenInfo(voteDetails.tokenRequirement)
             if (tokenInfo && tokenInfo.decimals !== undefined) {
               convertedTokenBalance = parseInt(toDecimalUnits(tokenBalance.toString(), tokenInfo.decimals))
             }
@@ -1556,11 +1642,11 @@ async castMultipleVotesTransaction(
       try {
         // Get vote details to find the token requirement
         const voteDetails = await this.getVoteDetails(voteId);
-        if (voteDetails.tokenRequirement) {
+        if (voteDetails && voteDetails.tokenRequirement) {
           // Get token info to determine decimals
-          const tokenInfo = await this.getTokenInfo(voteDetails.tokenRequirement);
+          const tokenInfo = await tokenService.getTokenInfo(voteDetails.tokenRequirement);
           if (tokenInfo) {
-            convertedTokenBalance = toDecimalUnits(tokenBalance, tokenInfo.decimals);
+            convertedTokenBalance = Number(toDecimalUnits(tokenBalance.toString(), tokenInfo.decimals));
           }
         }
       } catch (error) {
@@ -1591,14 +1677,7 @@ async castMultipleVotesTransaction(
     const clockObj = tx.object(SUI_CLOCK_OBJECT_ID)
     
     // Log the data being sent to the transaction for debugging
-    console.log("Multi-poll transaction data:", {
-      voteId,
-      pollIndices,
-      optionIndicesPerPoll,
-      tokenBalance,
-      convertedTokenBalance,
-      payment
-    })
+
 
     tx.moveCall({
       target: `${PACKAGE_ID}::voting::cast_multiple_votes`,
@@ -1765,7 +1844,7 @@ async castMultipleVotesTransaction(
   }
 
   /**
- * Check if a user has voted on a specific vote
+ * Check if a user has voted on a specific vote (with caching)
  * @param userAddress User address
  * @param voteId Vote object ID
  * @returns Boolean indicating whether the user has voted
@@ -1782,13 +1861,22 @@ async castMultipleVotesTransaction(
         throw new Error("Vote ID is required")
       }
 
+      // Check cache first
+      const cacheKey = `${userAddress}:${voteId}`
+      const cached = this.voteStatusCache.get(cacheKey)
+      
+      if (cached && Date.now() - cached.timestamp < this.VOTE_STATUS_CACHE_TTL) {
+        return cached.hasVoted
+      }
 
       // Query for VoteCast events using MoveEventType filter
+      // Order by descending to get most recent events first
       const { data } = await this.client.queryEvents({
         query: {
           MoveEventType: `${PACKAGE_ID}::voting::VoteCast`
         },
-        limit: 50, // Using a reasonable limit to search through
+        limit: 200, // Increased limit to catch more recent votes
+        order: 'descending' // Get most recent events first
       })
 
       // Manually filter for both voter and vote_id
@@ -1799,10 +1887,94 @@ async castMultipleVotesTransaction(
         return voteCastEvent.voter === userAddress && voteCastEvent.vote_id === voteId
       })
 
+      // Cache the result
+      this.voteStatusCache.set(cacheKey, { hasVoted, timestamp: Date.now() })
 
       return hasVoted
     } catch (error) {
       return false
+    }
+  }
+
+  /**
+   * Batch check vote status for multiple votes (performance optimization)
+   * @param userAddress User address
+   * @param voteIds Array of vote IDs to check
+   * @returns Map of vote ID to voting status
+   */
+  async batchCheckVoteStatus(userAddress: string, voteIds: string[]): Promise<Map<string, boolean>> {
+    try {
+      this.checkInitialization()
+
+      if (!userAddress || !voteIds.length) {
+        return new Map()
+      }
+
+      const results = new Map<string, boolean>()
+      const uncachedVoteIds: string[] = []
+
+      // Check cache first for all vote IDs
+      for (const voteId of voteIds) {
+        const cacheKey = `${userAddress}:${voteId}`
+        const cached = this.voteStatusCache.get(cacheKey)
+        
+        if (cached && Date.now() - cached.timestamp < this.VOTE_STATUS_CACHE_TTL) {
+          results.set(voteId, cached.hasVoted)
+        } else {
+          uncachedVoteIds.push(voteId)
+        }
+      }
+
+      // If all results are cached, return early
+      if (uncachedVoteIds.length === 0) {
+        return results
+      }
+
+      // Query all VoteCast events once for uncached votes
+      const { data } = await this.client.queryEvents({
+        query: {
+          MoveEventType: `${PACKAGE_ID}::voting::VoteCast`
+        },
+        limit: 500, // Increased limit for batch processing
+        order: 'descending'
+      })
+
+      // Create a set of vote IDs that the user has voted on
+      const userVotes = new Set<string>()
+      data.forEach(event => {
+        if (event.parsedJson) {
+          const voteCastEvent = event.parsedJson as VoteCastEvent
+          if (voteCastEvent.voter === userAddress) {
+            userVotes.add(voteCastEvent.vote_id)
+          }
+        }
+      })
+
+      // Process uncached vote IDs
+      for (const voteId of uncachedVoteIds) {
+        const hasVoted = userVotes.has(voteId)
+        results.set(voteId, hasVoted)
+        
+        // Cache the result
+        const cacheKey = `${userAddress}:${voteId}`
+        this.voteStatusCache.set(cacheKey, { hasVoted, timestamp: Date.now() })
+      }
+
+      return results
+    } catch (error) {
+      console.error('Batch vote status check failed:', error)
+      // Return empty results for uncached votes on error
+      const results = new Map<string, boolean>()
+      for (const voteId of voteIds) {
+        const cacheKey = `${userAddress}:${voteId}`
+        const cached = this.voteStatusCache.get(cacheKey)
+        if (cached && Date.now() - cached.timestamp < this.VOTE_STATUS_CACHE_TTL) {
+          results.set(voteId, cached.hasVoted)
+        } else {
+          results.set(voteId, false) // Default to false on error
+        }
+      }
+      return results
     }
   }
 
@@ -1874,9 +2046,7 @@ async castMultipleVotesTransaction(
   async checkTokenBalance(userAddress: string, tokenType: string, requiredAmount: string): Promise<{ hasBalance: boolean; tokenBalance: number }> {
     try {
       this.checkInitialization();
-      console.log("Checking token balance for user:", userAddress);
-      console.log("Token type:", tokenType);
-      console.log("Required amount:", requiredAmount);
+
       // Return default values if no token requirement or required amount is zero
       if (!tokenType || requiredAmount === undefined) return { hasBalance: true, tokenBalance: 0 };
       if (requiredAmount === "0") return { hasBalance: true, tokenBalance: 0 };
@@ -1905,7 +2075,7 @@ async castMultipleVotesTransaction(
       const userBalance = BigInt(totalBalance);
       
       // Convert balance from decimal units to human-readable format
-      const tokenBalance = fromDecimalUnits(Number(userBalance), decimals);
+      const tokenBalance = Number(fromDecimalUnits(userBalance.toString(), decimals));
       return { 
         hasBalance: userBalance >= requiredBase,
         tokenBalance: tokenBalance
@@ -1928,9 +2098,52 @@ async castMultipleVotesTransaction(
     const fullNumberStr = integerPart + fractionalPadded;
 
     // Handle empty integer part (e.g., ".5")
-    if (fullNumberStr === '') return 0n;
+    if (fullNumberStr === '') return BigInt(0);
 
     return BigInt(fullNumberStr);
+  }
+
+  /**
+   * Clear cache for a specific vote (useful when vote is updated)
+   * @param voteId Vote ID to clear from cache
+   */
+  clearVoteCache(voteId: string): void {
+    this.voteDetailsCache.delete(voteId)
+    // Clear all vote status cache entries for this vote
+    for (const [key] of this.voteStatusCache) {
+      if (key.endsWith(`:${voteId}`)) {
+        this.voteStatusCache.delete(key)
+      }
+    }
+  }
+
+  /**
+   * Clear all caches (useful for logout or data refresh)
+   */
+  clearAllCaches(): void {
+    this.voteDetailsCache.clear()
+    this.voteStatusCache.clear()
+  }
+
+  /**
+   * Clear expired cache entries
+   */
+  clearExpiredCaches(): void {
+    const now = Date.now()
+    
+    // Clear expired vote details cache
+    for (const [key, value] of this.voteDetailsCache) {
+      if (now - value.timestamp > this.CACHE_TTL) {
+        this.voteDetailsCache.delete(key)
+      }
+    }
+    
+    // Clear expired vote status cache
+    for (const [key, value] of this.voteStatusCache) {
+      if (now - value.timestamp > this.VOTE_STATUS_CACHE_TTL) {
+        this.voteStatusCache.delete(key)
+      }
+    }
   }
 
 }

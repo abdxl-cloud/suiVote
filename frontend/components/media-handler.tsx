@@ -108,7 +108,7 @@ export function VoteMediaHandler({ children }: { children: (handlers: MediaHandl
       // Update progress to 10% - starting upload
       setUploadProgress(prev => ({ ...prev, [fileId]: 10 }))
       
-      console.log(`Uploading file ${fileId} to Walrus...`)
+
       
       // Walrus API requires sending the file directly
       const uploadUrl = `${WALRUS_PUBLISHER_URL}/v1/blobs?epochs=${WALRUS_STORAGE_EPOCHS}`
@@ -128,7 +128,7 @@ export function VoteMediaHandler({ children }: { children: (handlers: MediaHandl
       
       // Parse the response
       const responseData = await response.json()
-      console.log("Walrus upload response:", responseData)
+
       
       let blobId = ""
       let suiObjectId = ""
@@ -255,7 +255,7 @@ export function VoteMediaHandler({ children }: { children: (handlers: MediaHandl
       const requireAllPolls = params.requireAllPolls !== undefined ? params.requireAllPolls : true
       const showLiveStats = params.showLiveStats !== undefined ? params.showLiveStats : false
 
-      console.log(pollData)
+
       // Create a transaction using the SuiVoteService
       
       const transaction = await createCompleteVoteTransaction(

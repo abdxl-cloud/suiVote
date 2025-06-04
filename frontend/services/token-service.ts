@@ -54,7 +54,7 @@ export class TokenService {
       this.client = new SuiClient({ url: getFullnodeUrl(network) })
       this.isInitialized = true
       
-      console.log(`✅ TokenService initialized for ${network}`)
+
 
       // Pre-populate cache with common tokens
       Object.entries(this.COMMON_TOKENS).forEach(([coinType, { info }]) => {
@@ -225,7 +225,7 @@ export class TokenService {
       if (tokenInfo) {
         // Cache the result
         this.tokenCache.set(coinType, tokenInfo)
-        console.log(`✅ Token info cached for ${coinType}: ${tokenInfo.name} (${tokenInfo.symbol})`)
+
       } else {
         console.warn(`⚠️ No token info found for ${coinType}`)
       }
@@ -362,7 +362,7 @@ export class TokenService {
    */
   clearCache(): void {
     this.tokenCache.clear()
-    console.log('🧹 Token cache cleared')
+
     
     // Re-populate with common tokens
     Object.entries(this.COMMON_TOKENS).forEach(([coinType, { info }]) => {
@@ -400,7 +400,7 @@ export class TokenService {
     
     // Remove from cache to force refresh
     this.tokenCache.delete(coinType)
-    console.log(`📝 Custom token added: ${coinType} -> ${coingeckoId}`)
+
   }
 
   /**

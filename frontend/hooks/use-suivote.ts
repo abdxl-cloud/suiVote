@@ -140,7 +140,7 @@ export function useSuiVote() {
   /**
    * Get detailed information about a specific vote
    */
-  const getVoteDetails = useCallback(async (voteId: string): Promise<VoteDetails | null> => {
+  const getVoteDetails = useCallback(async (voteId: string): Promise<VoteDetails> => {
     try {
       setLoading(true)
       setError(null)
@@ -155,7 +155,7 @@ export function useSuiVote() {
       const errorMessage = err instanceof Error ? err.message : String(err)
       setError(errorMessage)
       console.error("Error fetching vote details:", errorMessage)
-      return null
+      throw err // Re-throw the error instead of returning null
     } finally {
       setLoading(false)
     }
@@ -271,7 +271,7 @@ export function useSuiVote() {
         setLoading(true)
         setError(null)
 
-        console.log(`Creating transaction to add ${voterAddresses.length} voters to whitelist for vote ${voteId}`)
+    
 
         const transaction = suiVoteService.addAllowedVotersTransaction(voteId, voterAddresses)
         return transaction
