@@ -4,7 +4,7 @@ import { useState, useCallback } from "react"
 import { useWallet } from "@/contexts/wallet-context"
 import { useSignAndExecuteTransaction } from "@mysten/dapp-kit"
 import type { Transaction } from "@mysten/sui/transactions"
-import { SuiClient, getFullnodeUrl } from "@mysten/sui/client"
+import { getFullnodeUrl } from "@mysten/sui/client"
 import {
   SuiVoteService,
   type PollData,
@@ -12,14 +12,12 @@ import {
   type VoteDetails,
   type PollDetails,
   type PollOptionDetails,
+  type VoterInfo,
 } from "@/services/suivote-service"
 import { SUI_CONFIG } from "@/config/sui-config"
 
 // Initialize the service
 const suiVoteService = new SuiVoteService(SUI_CONFIG.NETWORK)
-
-// Initialize the SuiClient
-const suiClient = new SuiClient({ url: getFullnodeUrl(SUI_CONFIG.NETWORK) })
 
 export function useSuiVote() {
   const wallet = useWallet()
@@ -27,6 +25,32 @@ export function useSuiVote() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   
+  /**
+   * Get all voters and their voting information for a specific vote
+   * @param voteId The vote object ID
+   * @returns Array of voter information objects
+   */
+  const getVotersForVote = useCallback(async (voteId: string): Promise<VoterInfo[]> => {
+    try {
+      setLoading(true)
+      setError(null)
+
+      if (!voteId) {
+        throw new Error("Vote ID is required")
+      }
+
+      const result = await suiVoteService.getVotersForVote(voteId)
+      return result
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err)
+      setError(errorMessage)
+      console.error("Error fetching voters for vote:", errorMessage)
+      throw err
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
   /**
    * Subscribe to vote updates for real-time data
    * @param voteId The vote object ID
@@ -608,11 +632,10 @@ export function useSuiVote() {
     getVoteResults,
     executeTransaction,
     checkTokenBalance,
-    // Whitelist functionality
+    getVotersForVote,
     addAllowedVotersTransaction,
     isVoterWhitelisted,
     getWhitelistedVoters,
-    // Real-time updates
     subscribeToVoteUpdates,
   }
 }

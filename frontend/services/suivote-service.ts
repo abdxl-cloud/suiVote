@@ -134,6 +134,17 @@ export interface VoteList {
   tokensPerVote: number        
 }
 
+export interface VoterInfo {
+  voter: string;
+  tokenBalance: number;
+  voteWeight: number;
+  timestamp: number; // New timestamp field
+  polls: {
+    pollId: string;
+    optionIndices: number[];
+  }[];
+}
+
 export class SuiVoteService {
   private client: SuiClient
   private isInitialized = false
@@ -2033,6 +2044,133 @@ async castMultipleVotesTransaction(
       return results
     } catch (error) {
       return null
+    }
+  }
+
+  /**
+   * Get all voters and their voting information for a specific vote with timestamps
+   * @param voteId The vote object ID
+   * @returns Array of voter information objects with timestamps
+   */
+  async getVotersForVote(voteId: string): Promise<VoterInfo[]> {
+    try {
+      console.log('🔍 SuiVoteService.getVotersForVote called for voteId:', voteId);
+      this.checkInitialization();
+
+      if (!voteId) {
+        throw new Error("Vote ID is required");
+      }
+
+      const voterMap = new Map<string, VoterInfo>();
+      let cursor: string | null = null;
+      let hasNextPage = true;
+      let pageCount = 0;
+      let totalEvents = 0;
+      let relevantEvents = 0;
+
+      console.log('📡 Starting to query VoteCast events...');
+
+      let previousCursor: string | null = null;
+      
+      while (hasNextPage) {
+        pageCount++;
+        console.log(`📄 Querying page ${pageCount} with cursor:`, cursor);
+        
+        // Check for cursor loop - if cursor hasn't changed, break
+        if (cursor && cursor === previousCursor) {
+          console.warn('⚠️ Cursor loop detected, stopping pagination');
+          break;
+        }
+        
+        // Check for empty results with same cursor multiple times
+        if (pageCount > 2 && cursor === previousCursor) {
+          console.warn('⚠️ Same cursor returned multiple times, stopping pagination');
+          break;
+        }
+        
+        previousCursor = cursor;
+        
+        const response = await this.retryRequest(async () => {
+          return await this.client.queryEvents({
+            query: {
+              MoveEventType: `${PACKAGE_ID}::voting::VoteCast`
+            },
+            cursor: cursor as any,
+            limit: 100,
+            order: "ascending",
+          });
+        });
+
+        console.log(`✅ Page ${pageCount} returned ${response.data.length} events`);
+        totalEvents += response.data.length;
+        
+        // If we get 0 events and have a cursor, it might be a pagination issue
+        if (response.data.length === 0 && cursor) {
+          console.warn(`⚠️ Page ${pageCount} returned 0 events with cursor, this might indicate pagination issues`);
+          // Allow a few empty pages but not too many
+          if (pageCount > 5) {
+            console.warn('⚠️ Too many empty pages, stopping pagination');
+            break;
+          }
+        }
+
+        for (const event of response.data) {
+          if (!event.parsedJson) continue;
+          
+          const voteCast = event.parsedJson as VoteCastEvent;
+          
+          // Only process events for this vote
+          if (voteCast.vote_id !== voteId) continue;
+
+          relevantEvents++;
+          console.log(`🎯 Found relevant vote cast event ${relevantEvents} for voter:`, voteCast.voter);
+
+          // Get timestamp from event (convert string to number)
+          const timestamp = Number(event.timestampMs);
+          
+          let voterInfo = voterMap.get(voteCast.voter);
+          
+          if (!voterInfo) {
+            voterInfo = {
+              voter: voteCast.voter,
+              tokenBalance: Number(voteCast.token_balance) || 0,
+              voteWeight: Number(voteCast.vote_weight) || 0,
+              timestamp: timestamp, // Store timestamp
+              polls: []
+            };
+            voterMap.set(voteCast.voter, voterInfo);
+          }
+
+          voterInfo.polls.push({
+            pollId: voteCast.poll_id,
+            optionIndices: voteCast.option_indices
+          });
+        }
+
+        const newCursor = response.nextCursor as string | null;
+        hasNextPage = !!newCursor;
+        
+        console.log(`📊 Page ${pageCount} summary: ${response.data.length} events, ${relevantEvents} relevant so far, hasNextPage: ${hasNextPage}`);
+        
+        // Update cursor for next iteration
+        cursor = newCursor;
+        
+        // Add safety limit to prevent infinite loops
+         if (pageCount > 20) {
+           console.warn('⚠️ Reached maximum page limit (20), stopping pagination');
+           break;
+         }
+       }
+
+       console.log(`🏁 Pagination completed. Total pages: ${pageCount}, Total events: ${totalEvents}, Relevant events: ${relevantEvents}`);
+       const result = Array.from(voterMap.values());
+       console.log(`✅ Returning ${result.length} unique voters`);
+       return result;
+    } catch (error) {
+      console.error(`Failed to get voters for vote ${voteId}:`, error);
+      throw new Error(
+        `Failed to get voters: ${error instanceof Error ? error.message : String(error)}`
+      );
     }
   }
 

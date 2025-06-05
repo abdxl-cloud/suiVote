@@ -26,7 +26,8 @@ import {
   TrendingUp,
   Target,
   Award,
-  ChevronRight
+  ChevronRight,
+  Settings
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardFooter, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
@@ -175,21 +176,29 @@ export default function DashboardPage() {
                 if (v.id === updatedVoteDetails.id) {
                   let finalStatus = v.status
                   
+                  // Only update status if the vote is definitively closed or if we have a more specific status
                   if (updatedVoteDetails.status === "closed") {
                     finalStatus = "closed"
                   } else if (updatedVoteDetails.status === "voted") {
                     finalStatus = "voted"
                   } else if (v.status === "voted") {
+                    // Preserve voted status - user has already voted
                     finalStatus = "voted"
                   } else if (v.status === "pending") {
+                    // Preserve pending status unless vote is closed
                     if (updatedVoteDetails.status === "closed") {
                       finalStatus = "closed"
                     } else {
                       finalStatus = "pending"
                     }
-                  } else {
-                    finalStatus = updatedVoteDetails.status
+                  } else if (updatedVoteDetails.status === "upcoming") {
+                    // Update to upcoming if vote hasn't started yet
+                    finalStatus = "upcoming"
+                  } else if (updatedVoteDetails.status === "active" && (v.status === "upcoming" || v.status === "active")) {
+                    // Only update to active if current status allows it
+                    finalStatus = "active"
                   }
+                  // For all other cases, preserve the current status to prevent badge flickering
                   
                   return {
                     ...v,
@@ -214,21 +223,29 @@ export default function DashboardPage() {
                 if (v.id === updatedVoteDetails.id) {
                   let finalStatus = v.status
                   
+                  // Only update status if the vote is definitively closed or if we have a more specific status
                   if (updatedVoteDetails.status === "closed") {
                     finalStatus = "closed"
                   } else if (updatedVoteDetails.status === "voted") {
                     finalStatus = "voted"
                   } else if (v.status === "voted") {
+                    // Preserve voted status - user has already voted
                     finalStatus = "voted"
                   } else if (v.status === "pending") {
+                    // Preserve pending status unless vote is closed
                     if (updatedVoteDetails.status === "closed") {
                       finalStatus = "closed"
                     } else {
                       finalStatus = "pending"
                     }
-                  } else {
-                    finalStatus = updatedVoteDetails.status
+                  } else if (updatedVoteDetails.status === "upcoming") {
+                    // Update to upcoming if vote hasn't started yet
+                    finalStatus = "upcoming"
+                  } else if (updatedVoteDetails.status === "active" && (v.status === "upcoming" || v.status === "active")) {
+                    // Only update to active if current status allows it
+                    finalStatus = "active"
                   }
+                  // For all other cases, preserve the current status to prevent badge flickering
                   
                   return {
                     ...v,
@@ -1027,6 +1044,11 @@ export default function DashboardPage() {
                               <Button variant="outline" size="sm" className="w-full hover:bg-primary/5 hover:border-primary/20 transition-all duration-300">
                                 <BarChart2 className="h-4 w-4 mr-2" />
                                 View Details
+                              </Button>
+                            </Link>
+                            <Link href={`/manage/${vote.id}`}>
+                              <Button variant="outline" size="sm" className="hover:bg-primary/5 hover:border-primary/20 transition-all duration-300">
+                                <Settings className="h-4 w-4" />
                               </Button>
                             </Link>
                             <Button variant="outline" size="sm" className="hover:bg-primary/5 hover:border-primary/20 transition-all duration-300">
