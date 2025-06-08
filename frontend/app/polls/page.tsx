@@ -42,6 +42,7 @@ import Link from "next/link"
 import { useSuiVote } from "@/hooks/use-suivote"
 import { useWallet } from "@/contexts/wallet-context"
 import { format, formatDistance } from "date-fns"
+import { formatTokenAmount } from "@/utils/token-utils"
 import { ShareDialog } from "@/components/share-dialog"
 
 // Import dnd-kit components
@@ -91,6 +92,11 @@ interface SortablePollCardProps {
   renderFeatureBadges: (vote: any) => React.ReactNode;
   safeFormatDistanceToNow: (date: any) => string;
 }
+
+// All votes now use the same URL - the main vote page handles different states
+const getVoteDestination = (vote: any) => {
+  return `/vote/${vote.id}`;
+};
 
 const SortablePollCard: React.FC<SortablePollCardProps> = ({ vote, index, handleShare, wallet, isClient, now, formatTimeRemaining, calculatePercentage, renderStatusBadge, renderFeatureBadges, safeFormatDistanceToNow }) => {
   const {
@@ -217,7 +223,7 @@ const SortablePollCard: React.FC<SortablePollCardProps> = ({ vote, index, handle
           </div>
         </CardContent>
         <CardFooter className="flex justify-between p-4 mt-auto">
-          <Link href={`/vote/${vote.id}`} className="flex-1 mr-2">
+          <Link href={getVoteDestination(vote)} className="flex-1 mr-2">
             <Button 
               variant={"ghost"} 
               size="sm" 
@@ -475,7 +481,7 @@ export default function PollsPage() {
               </div>
             </TooltipTrigger>
             <TooltipContent>
-              Requires {vote.tokenAmount} {vote.tokenRequirement}
+              Requires {formatTokenAmount(vote.tokenAmount || 0, vote.tokenRequirement?.split("::").pop() || "", 2)}
             </TooltipContent>
           </Tooltip>
         </TooltipProvider>

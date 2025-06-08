@@ -26,7 +26,8 @@ import {
   TrendingUp,
   Target,
   Award,
-  ChevronRight
+  ChevronRight,
+  Settings
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardFooter, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
@@ -45,6 +46,7 @@ import Link from "next/link"
 import { useSuiVote } from "@/hooks/use-suivote"
 import { useWallet } from "@/contexts/wallet-context"
 import { formatDistanceToNow, format, subDays, differenceInDays, addDays } from "date-fns"
+import { formatTokenAmount } from "@/utils/token-utils"
 import { Progress } from "@/components/ui/progress"
 import { Separator } from "@/components/ui/separator"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
@@ -175,21 +177,29 @@ export default function DashboardPage() {
                 if (v.id === updatedVoteDetails.id) {
                   let finalStatus = v.status
                   
+                  // Only update status if the vote is definitively closed or if we have a more specific status
                   if (updatedVoteDetails.status === "closed") {
                     finalStatus = "closed"
                   } else if (updatedVoteDetails.status === "voted") {
                     finalStatus = "voted"
                   } else if (v.status === "voted") {
+                    // Preserve voted status - user has already voted
                     finalStatus = "voted"
                   } else if (v.status === "pending") {
+                    // Preserve pending status unless vote is closed
                     if (updatedVoteDetails.status === "closed") {
                       finalStatus = "closed"
                     } else {
                       finalStatus = "pending"
                     }
-                  } else {
-                    finalStatus = updatedVoteDetails.status
+                  } else if (updatedVoteDetails.status === "upcoming") {
+                    // Update to upcoming if vote hasn't started yet
+                    finalStatus = "upcoming"
+                  } else if (updatedVoteDetails.status === "active" && (v.status === "upcoming" || v.status === "active")) {
+                    // Only update to active if current status allows it
+                    finalStatus = "active"
                   }
+                  // For all other cases, preserve the current status to prevent badge flickering
                   
                   return {
                     ...v,
@@ -214,21 +224,29 @@ export default function DashboardPage() {
                 if (v.id === updatedVoteDetails.id) {
                   let finalStatus = v.status
                   
+                  // Only update status if the vote is definitively closed or if we have a more specific status
                   if (updatedVoteDetails.status === "closed") {
                     finalStatus = "closed"
                   } else if (updatedVoteDetails.status === "voted") {
                     finalStatus = "voted"
                   } else if (v.status === "voted") {
+                    // Preserve voted status - user has already voted
                     finalStatus = "voted"
                   } else if (v.status === "pending") {
+                    // Preserve pending status unless vote is closed
                     if (updatedVoteDetails.status === "closed") {
                       finalStatus = "closed"
                     } else {
                       finalStatus = "pending"
                     }
-                  } else {
-                    finalStatus = updatedVoteDetails.status
+                  } else if (updatedVoteDetails.status === "upcoming") {
+                    // Update to upcoming if vote hasn't started yet
+                    finalStatus = "upcoming"
+                  } else if (updatedVoteDetails.status === "active" && (v.status === "upcoming" || v.status === "active")) {
+                    // Only update to active if current status allows it
+                    finalStatus = "active"
                   }
+                  // For all other cases, preserve the current status to prevent badge flickering
                   
                   return {
                     ...v,
@@ -286,14 +304,12 @@ export default function DashboardPage() {
 
   // Memoized computations with dependency optimization
   const votesByStatus = useMemo(() => {
-    if (!votes.length) return { active: [], pending: [], upcoming: [], closed: [], voted: [] }
+    if (!votes.length) return { active: [], upcoming: [], closed: [] }
     
     return {
       active: votes.filter(vote => vote.status === "active"),
-      pending: votes.filter(vote => vote.status === "pending"),
       upcoming: votes.filter(vote => vote.status === "upcoming"),
-      closed: votes.filter(vote => vote.status === "closed"),
-      voted: votes.filter(vote => vote.status === "voted")
+      closed: votes.filter(vote => vote.status === "closed" || vote.status === "ended")
     }
   }, [votes])
 
@@ -343,9 +359,7 @@ export default function DashboardPage() {
     // Status distribution data
     const statusDistribution = [
       { name: "Active", value: votesByStatus.active.length, color: "#10B981" },
-      { name: "Pending", value: votesByStatus.pending.length, color: "#F59E0B" },
       { name: "Upcoming", value: votesByStatus.upcoming.length, color: "#3B82F6" },
-      { name: "Voted", value: votesByStatus.voted.length, color: "#8B5CF6" },
       { name: "Closed", value: votesByStatus.closed.length, color: "#6B7280" }
     ].filter(status => status.value > 0)
 
@@ -362,10 +376,8 @@ export default function DashboardPage() {
       upcomingDeadlines,
       tokenRequiredVotes,
       activeCount: votesByStatus.active.length,
-      pendingCount: votesByStatus.pending.length,
       upcomingCount: votesByStatus.upcoming.length,
-      closedCount: votesByStatus.closed.length,
-      votedCount: votesByStatus.voted.length,
+    closedCount: votesByStatus.closed.length,
       activityData,
       voteTypes,
       statusDistribution,
@@ -392,7 +404,7 @@ export default function DashboardPage() {
       })
   }, [createdVotes, searchQuery, filterStatus, filterDate, now])
 
-  // Helper function to render status badge
+  // Helper function to render status badge for creator view
   const renderStatusBadge = (status: string) => {
     switch (status) {
       case "active":
@@ -400,13 +412,6 @@ export default function DashboardPage() {
           <Badge variant="success" className="flex items-center gap-1">
             <Clock className="h-3 w-3" />
             <span>Active</span>
-          </Badge>
-        )
-      case "pending":
-        return (
-          <Badge variant="outline" className="flex items-center gap-1 bg-amber-100/50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400">
-            <Shield className="h-3 w-3" />
-            <span>Pending</span>
           </Badge>
         )
       case "upcoming":
@@ -417,17 +422,11 @@ export default function DashboardPage() {
           </Badge>
         )
       case "closed":
+      case "ended":
         return (
           <Badge variant="secondary" className="flex items-center gap-1">
             <CheckCircle className="h-3 w-3" />
             <span>Closed</span>
-          </Badge>
-        )
-      case "voted":
-        return (
-          <Badge variant="outline" className="flex items-center gap-1 bg-purple-100/50 dark:bg-purple-900/20 text-purple-700 dark:text-purple-400">
-            <CheckCircle className="h-3 w-3" />
-            <span>Voted</span>
           </Badge>
         )
       default:
@@ -466,7 +465,7 @@ export default function DashboardPage() {
               </div>
             </TooltipTrigger>
             <TooltipContent>
-              Requires {vote.tokenAmount} {vote.tokenRequirement}
+              Requires {formatTokenAmount(vote.tokenAmount || 0, vote.tokenRequirement?.split("::").pop() || "", 2)}
             </TooltipContent>
           </Tooltip>
         </TooltipProvider>
@@ -587,14 +586,11 @@ export default function DashboardPage() {
                         <Badge variant="outline" className="bg-green-100/50 dark:bg-green-900/20 text-green-700 dark:text-green-400">
                           {analytics?.activeCount || 0} Active
                         </Badge>
-                        <Badge variant="outline" className="bg-amber-100/50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400">
-                          {analytics?.pendingCount || 0} Pending
-                        </Badge>
                         <Badge variant="outline" className="bg-blue-100/50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400">
                           {analytics?.upcomingCount || 0} Upcoming
                         </Badge>
-                        <Badge variant="outline" className="bg-purple-100/50 dark:bg-purple-900/20 text-purple-700 dark:text-purple-400">
-                          {analytics?.votedCount || 0} Voted
+                        <Badge variant="outline" className="bg-gray-100/50 dark:bg-gray-900/20 text-gray-700 dark:text-gray-400">
+                          {analytics?.closedCount || 0} Closed
                         </Badge>
                       </div>
                     </CardContent>
@@ -681,13 +677,13 @@ export default function DashboardPage() {
                 <Card>
                   <CardHeader>
                     <CardTitle className="flex items-center gap-2">
-                      <Clock className="h-5 w-5 text-amber-500" />
-                      <span>Waiting For Your Vote</span>
+                      <BarChart2 className="h-5 w-5 text-blue-500" />
+                      <span>Recent Activity</span>
                     </CardTitle>
-                    <CardDescription>Votes you can participate in</CardDescription>
+                    <CardDescription>Your most recent polls</CardDescription>
                   </CardHeader>
                   <CardContent>
-                    {votesByStatus.active.length > 0 || votesByStatus.pending.length > 0 ? (
+                    {votesByStatus.active.length > 0 ? (
                       <div className="space-y-4">
                         {/* Show active votes first */}
                         {votesByStatus.active.slice(0, 2).map((vote) => (
@@ -709,27 +705,7 @@ export default function DashboardPage() {
                           </div>
                         ))}
                         
-                        {/* Then show pending votes */}
-                        {votesByStatus.pending.slice(0, Math.max(0, 3 - votesByStatus.active.length)).map((vote) => (
-                          <div key={vote.id} className="flex items-center justify-between border-b pb-3 last:border-0 last:pb-0">
-                            <div className="space-y-1">
-                              <div className="font-medium flex items-center gap-2">
-                                {vote.title || "Untitled Vote"}
-                                <Badge variant="outline" className="text-xs bg-amber-100/50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400">Pending</Badge>
-                              </div>
-                              <div className="text-xs text-muted-foreground flex items-center gap-1">
-                                <Timer className="h-3 w-3" />
-                                <span>{formatTimeRemaining(vote.endTimestamp)}</span>
-                              </div>
-                              {renderFeatureBadges(vote)}
-                            </div>
-                            <Link href={`/vote/${vote.id}`}>
-                              <Button size="sm" variant="outline">Vote Now</Button>
-                            </Link>
-                          </div>
-                        ))}
-                        
-                        {(votesByStatus.active.length > 2 || votesByStatus.pending.length > 3 - votesByStatus.active.length) && (
+                        {votesByStatus.active.length > 2 && (
                           <div className="text-center pt-2">
                             <Link href="/polls" className="inline-block">
                               <Button variant="link" size="sm" className="gap-1">
@@ -742,8 +718,8 @@ export default function DashboardPage() {
                       </div>
                     ) : (
                       <div className="text-center py-6 text-muted-foreground">
-                        <Clock className="h-12 w-12 mx-auto mb-2 opacity-20" />
-                        <p>No active or pending votes need your attention</p>
+                        <BarChart2 className="h-12 w-12 mx-auto mb-2 opacity-20" />
+                        <p>No active polls to display</p>
                       </div>
                     )}
                   </CardContent>
@@ -1038,7 +1014,7 @@ export default function DashboardPage() {
                               {vote.description || "No description provided"}
                             </CardDescription>
                           </div>
-                          {renderStatusBadge(vote.status)}
+                          {renderStatusBadge(vote.endTimestamp <= now.getTime() ? "closed" : "active")}
                         </div>
                         {renderFeatureBadges(vote)}
                       </CardHeader>
@@ -1056,19 +1032,24 @@ export default function DashboardPage() {
                               <div className="text-xs text-muted-foreground font-medium uppercase tracking-wide">Polls</div>
                             </div>
                           </div>
-                          {vote.status === "active" || vote.status === "pending" ? (
+                       
                             <div className="text-center p-3 rounded-xl bg-gradient-to-br from-amber-500/5 to-orange-500/5">
                               <div className="text-sm font-medium text-amber-600 mb-1">
                                 {formatTimeRemaining(vote.endTimestamp)}
                               </div>
-                              <div className="text-xs text-muted-foreground font-medium uppercase tracking-wide">Time Remaining</div>
+                              {vote.endTimestamp >= now.getTime() ? ( <div className="text-xs text-muted-foreground font-medium uppercase tracking-wide">Time Remaining</div>) : null}
                             </div>
-                          ) : null}
+                          
                           <div className="flex gap-2">
                             <Link href={`/vote/${vote.id}`} className="flex-1">
                               <Button variant="outline" size="sm" className="w-full hover:bg-primary/5 hover:border-primary/20 transition-all duration-300">
                                 <BarChart2 className="h-4 w-4 mr-2" />
                                 View Details
+                              </Button>
+                            </Link>
+                            <Link href={`/manage/${vote.id}`}>
+                              <Button variant="outline" size="sm" className="hover:bg-primary/5 hover:border-primary/20 transition-all duration-300">
+                                <Settings className="h-4 w-4" />
                               </Button>
                             </Link>
                             <Button variant="outline" size="sm" className="hover:bg-primary/5 hover:border-primary/20 transition-all duration-300">
@@ -1094,7 +1075,7 @@ export default function DashboardPage() {
                     </CardTitle>
                   </CardHeader>
                   <CardContent>
-                    <div className="grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-5 gap-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                       <div className="flex gap-2">
                         <div className="mt-0.5">
                           <Badge variant="success" className="flex items-center gap-1">
@@ -1103,18 +1084,7 @@ export default function DashboardPage() {
                           </Badge>
                         </div>
                         <div>
-                          <p className="text-sm">Votes that are currently open but you haven't voted in yet</p>
-                        </div>
-                      </div>
-                      <div className="flex gap-2">
-                        <div className="mt-0.5">
-                          <Badge variant="outline" className="flex items-center gap-1 bg-amber-100/50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400">
-                            <Shield className="h-3 w-3" />
-                            <span>Pending</span>
-                          </Badge>
-                        </div>
-                        <div>
-                          <p className="text-sm">Votes your wallet is whitelisted for, open but you haven't voted in yet</p>
+                          <p className="text-sm">Polls that are currently open and accepting votes</p>
                         </div>
                       </div>
                       <div className="flex gap-2">
@@ -1139,17 +1109,7 @@ export default function DashboardPage() {
                           <p className="text-sm">Votes that have ended and have final results available</p>
                         </div>
                       </div>
-                      <div className="flex gap-2">
-                        <div className="mt-0.5">
-                          <Badge variant="outline" className="flex items-center gap-1 bg-purple-100/50 dark:bg-purple-900/20 text-purple-700 dark:text-purple-400">
-                            <CheckCircle className="h-3 w-3" />
-                            <span>Voted</span>
-                          </Badge>
-                        </div>
-                        <div>
-                          <p className="text-sm">Any vote that you have already cast your vote in</p>
-                        </div>
-                      </div>
+
                     </div>
                   </CardContent>
                 </Card>
