@@ -617,7 +617,7 @@ export class SuiVoteService {
     if (cached && Date.now() - cached.timestamp < this.CACHE_TTL) {
       return cached.details
     }
-
+    console.log("Fetching vote details from Move function", cached)
     // Fetch the vote object with retry logic
     const { data } = await this.retryRequest(async () => {
       return await this.client.getObject({
@@ -645,7 +645,7 @@ export class SuiVoteService {
     }
 
     const fields = data.content.fields as Record<string, any>
-
+    console.log("Fields", fields)
     // Get current time to determine vote status
     const currentTime = Date.now()
     const startTimestamp = Number(fields.start_timestamp)
@@ -679,17 +679,28 @@ export class SuiVoteService {
     }
 
     // Convert token amounts from decimal units back to human-readable format
-    if (tokenRequirement && tokenAmount > 0) {
+    if (tokenRequirement && tokenAmount !== undefined && tokenAmount !== null) {
       try {
         const tokenInfo = await tokenService.getTokenInfo(tokenRequirement)
         if (tokenInfo && tokenInfo.decimals !== undefined) {
+          const originalTokenAmount = tokenAmount.toString()
+          console.log(`[DEBUG] Converting token amount - Original: ${originalTokenAmount}, Decimals: ${tokenInfo.decimals}, Token: ${tokenRequirement}`)
+          
+          // Always convert from decimal units - remove problematic < 1000 assumption
           tokenAmount = parseFloat(fromDecimalUnits(tokenAmount.toString(), tokenInfo.decimals))
+          console.log(`[DEBUG] Converted token amount: ${tokenAmount}`)
+          
           if (useTokenWeighting && tokensPerVote > 0) {
+            const originalTokensPerVote = tokensPerVote.toString()
+            console.log(`[DEBUG] Converting tokens per vote - Original: ${originalTokensPerVote}, Decimals: ${tokenInfo.decimals}`)
+            
+            // Always convert from decimal units - remove problematic < 1000 assumption
             tokensPerVote = parseFloat(fromDecimalUnits(tokensPerVote.toString(), tokenInfo.decimals))
+            console.log(`[DEBUG] Converted tokens per vote: ${tokensPerVote}`)
           }
         }
       } catch (error) {
-        console.warn('Failed to convert token amounts from decimal units:', error)
+        console.error('[DEBUG] Failed to convert token amounts from decimal units:', error)
         // Continue with original values if conversion fails
       }
     }
@@ -702,7 +713,22 @@ export class SuiVoteService {
       description: fields.description,
       startTimestamp,
       endTimestamp,
-      paymentAmount: Number(fields.payment_amount || 0) / Math.pow(10, tokenService.getSuiTokenInfo().decimals), // Convert MIST to SUI using token service
+      paymentAmount: (() => {
+        let paymentAmount = fields.payment_amount;
+        if (paymentAmount !== undefined && paymentAmount !== null) {
+          const originalPaymentAmount = paymentAmount.toString();
+          const suiDecimals = tokenService.getSuiTokenInfo().decimals;
+          console.log(`[DEBUG] Converting payment amount - Original: ${originalPaymentAmount} MIST, SUI Decimals: ${suiDecimals}`);
+          
+          // Always convert from MIST to SUI - remove problematic < 1000 assumption
+          const convertedAmount = parseFloat(fromDecimalUnits(paymentAmount.toString(), suiDecimals));
+          console.log(`[DEBUG] Converted payment amount: ${convertedAmount} SUI`);
+          
+          return convertedAmount;
+        }
+        console.log(`[DEBUG] No payment amount found, returning 0`);
+        return 0;
+      })(), // Convert MIST to SUI using utility function with proper logging
       requireAllPolls: !!fields.require_all_polls,
       pollsCount: Number(fields.polls_count || 0),
       totalVotes: Number(fields.total_votes || 0),
@@ -1015,12 +1041,48 @@ export class SuiVoteService {
         }
       }
 
-      // Convert token requirement to bytes
-      const tokenRequirementBytes = requiredToken
-        ? Array.from(new TextEncoder().encode(requiredToken))
-        : []
-
-
+      // Convert token amounts to decimal units before sending to contract
+      let convertedRequiredAmount = requiredAmount
+      let convertedTokensPerVote = tokensPerVote
+      
+      console.log(`[DEBUG] Vote creation - Original values:`, {
+        requiredToken,
+        requiredAmount,
+        tokensPerVote,
+        paymentAmount,
+        useTokenWeighting
+      })
+      
+      if (requiredToken && requiredAmount > 0) {
+        try {
+          const tokenInfo = await tokenService.getTokenInfo(requiredToken)
+          if (tokenInfo && tokenInfo.decimals !== undefined) {
+            console.log(`[DEBUG] Converting token amounts - Token: ${requiredToken}, Decimals: ${tokenInfo.decimals}`)
+            
+            convertedRequiredAmount = parseInt(toDecimalUnits(requiredAmount.toString(), tokenInfo.decimals))
+            console.log(`[DEBUG] Required amount conversion: ${requiredAmount} -> ${convertedRequiredAmount}`)
+            
+            if (useTokenWeighting && tokensPerVote > 0) {
+              convertedTokensPerVote = parseInt(toDecimalUnits(tokensPerVote.toString(), tokenInfo.decimals))
+              console.log(`[DEBUG] Tokens per vote conversion: ${tokensPerVote} -> ${convertedTokensPerVote}`)
+            }
+          }
+        } catch (error) {
+          console.error('[DEBUG] Failed to convert token amounts to decimal units:', error)
+          // Continue with original values if conversion fails
+        }
+      }
+      
+      // Convert payment amount from SUI to MIST
+      const suiDecimals = tokenService.getSuiTokenInfo().decimals
+      const convertedPaymentAmount = parseInt(toDecimalUnits(paymentAmount.toString(), suiDecimals))
+      console.log(`[DEBUG] Payment amount conversion: ${paymentAmount} SUI -> ${convertedPaymentAmount} MIST (decimals: ${suiDecimals})`)
+      
+      console.log(`[DEBUG] Final converted values for contract:`, {
+        convertedRequiredAmount,
+        convertedTokensPerVote,
+        convertedPaymentAmount
+      })
       
       // Build the transaction with proper arguments matching the contract
       tx.moveCall({
@@ -1031,13 +1093,13 @@ export class SuiVoteService {
           tx.pure.string(description),
           tx.pure.u64(startTimestamp),
           tx.pure.u64(endTimestamp),
-          tx.pure.u64(paymentAmount * Math.pow(10, tokenService.getSuiTokenInfo().decimals)), // Convert SUI to MIST using token service
+          tx.pure.u64(convertedPaymentAmount), // Use converted MIST amount
           tx.pure.bool(requireAllPolls),
           tx.pure.string(requiredToken),
-          tx.pure.u64(requiredAmount),               
+          tx.pure.u64(convertedRequiredAmount), // Use converted token amount              
           tx.pure.bool(showLiveStats),
           tx.pure.bool(useTokenWeighting),   
-          tx.pure.u64(tokensPerVote),        
+          tx.pure.u64(convertedTokensPerVote), // Use converted tokens per vote       
           tx.pure.vector("string", pollTitles),
           tx.pure.vector("string", pollDescriptions),
           tx.pure.vector("bool", pollIsMultiSelect),
@@ -1226,21 +1288,45 @@ export class SuiVoteService {
       let convertedRequiredAmount = requiredAmount
       let convertedTokensPerVote = tokensPerVote
       
+      console.log(`[DEBUG] Vote with media creation - Original values:`, {
+        requiredToken,
+        requiredAmount,
+        tokensPerVote,
+        paymentAmount,
+        useTokenWeighting
+      })
+      
       if (requiredToken && requiredAmount > 0) {
         try {
           // Get token info to determine decimals
           const tokenInfo = await tokenService.getTokenInfo(requiredToken)
           if (tokenInfo && tokenInfo.decimals !== undefined) {
+            console.log(`[DEBUG] Converting token amounts - Token: ${requiredToken}, Decimals: ${tokenInfo.decimals}`)
+            
             convertedRequiredAmount = parseInt(toDecimalUnits(requiredAmount.toString(), tokenInfo.decimals))
+            console.log(`[DEBUG] Required amount conversion: ${requiredAmount} -> ${convertedRequiredAmount}`)
+            
             if (useTokenWeighting && tokensPerVote > 0) {
               convertedTokensPerVote = parseInt(toDecimalUnits(tokensPerVote.toString(), tokenInfo.decimals))
+              console.log(`[DEBUG] Tokens per vote conversion: ${tokensPerVote} -> ${convertedTokensPerVote}`)
             }
           }
         } catch (error) {
-          console.warn('Failed to convert token amounts to decimal units:', error)
+          console.error('[DEBUG] Failed to convert token amounts to decimal units:', error)
           // Continue with original values if conversion fails
         }
       }
+      
+      // Convert payment amount from SUI to MIST
+      const suiDecimals = tokenService.getSuiTokenInfo().decimals
+      const convertedPaymentAmount = parseInt(toDecimalUnits(paymentAmount.toString(), suiDecimals))
+      console.log(`[DEBUG] Payment amount conversion: ${paymentAmount} SUI -> ${convertedPaymentAmount} MIST (decimals: ${suiDecimals})`)
+      
+      console.log(`[DEBUG] Final converted values for contract:`, {
+        convertedRequiredAmount,
+        convertedTokensPerVote,
+        convertedPaymentAmount
+      })
 
       // 3. Create the vote using the actual SuiVote package ID
       const voteObj = tx.moveCall({
@@ -1251,7 +1337,7 @@ export class SuiVoteService {
           tx.pure.string(description),
           tx.pure.u64(startTimestamp),
           tx.pure.u64(endTimestamp),
-          tx.pure.u64(paymentAmount * Math.pow(10, tokenService.getSuiTokenInfo().decimals)), // Convert SUI to MIST using token service
+          tx.pure.u64(convertedPaymentAmount), // Use converted MIST amount
           tx.pure.bool(requireAllPolls),
           tx.pure.string(requiredToken),  
           tx.pure.u64(convertedRequiredAmount),     
@@ -1525,31 +1611,33 @@ export class SuiVoteService {
         throw new Error("Payment amount must be non-negative")
       }
 
-      // Convert tokenBalance to decimal units if needed
+      // Token balance is already in base units from checkTokenBalance
       let convertedTokenBalance = tokenBalance
-      if (tokenBalance > 0) {
-        try {
-          // Get vote details to determine token requirement
-          const voteDetails = await this.getVoteDetails(voteId)
-          if (voteDetails && voteDetails.tokenRequirement) {
-            const tokenInfo = await tokenService.getTokenInfo(voteDetails.tokenRequirement)
-            if (tokenInfo && tokenInfo.decimals !== undefined) {
-              convertedTokenBalance = parseInt(toDecimalUnits(tokenBalance.toString(), tokenInfo.decimals))
-            }
-          }
-        } catch (error) {
-          console.warn('Failed to convert token balance to decimal units:', error)
-          // Continue with original value if conversion fails
-        }
+
+      console.log(`[Transaction Debug] castVoteTransaction inputs:`, {
+        voteId,
+        pollIndex,
+        optionIndices,
+        tokenBalance,
+        convertedTokenBalance,
+        payment
+      });
+
+      // Convert payment amount from SUI to MIST
+      let convertedPaymentAmount = 0
+      if (payment > 0) {
+        const suiDecimals = tokenService.getSuiTokenInfo().decimals
+        convertedPaymentAmount = parseInt(toDecimalUnits(payment.toString(), suiDecimals))
+        console.log(`[DEBUG] Payment amount conversion: ${payment} SUI -> ${convertedPaymentAmount} MIST (decimals: ${suiDecimals})`)
       }
 
       const tx = new Transaction()
 
       // Create payment coin if needed
       let paymentCoin
-      if (payment > 0) {
+      if (convertedPaymentAmount > 0) {
         // Split payment from gas coin
-        ;[paymentCoin] = tx.splitCoins(tx.gas, [tx.pure.u64(payment)])
+        ;[paymentCoin] = tx.splitCoins(tx.gas, [tx.pure.u64(convertedPaymentAmount)])
       } else {
         // Create an empty coin if no payment is required
         ;[paymentCoin] = tx.splitCoins(tx.gas, [tx.pure.u64(0)])
@@ -1557,6 +1645,15 @@ export class SuiVoteService {
 
       // Get the clock object
       const clockObj = tx.object(SUI_CLOCK_OBJECT_ID)
+
+      console.log(`[Transaction Debug] Move call arguments:`, {
+        voteId,
+        adminId: ADMIN_ID,
+        pollIndex,
+        tokenBalance: convertedTokenBalance,
+        optionIndices,
+        paymentAmount: convertedPaymentAmount
+      });
 
       tx.moveCall({
         target: `${PACKAGE_ID}::voting::cast_vote`,
@@ -1647,24 +1744,8 @@ async castMultipleVotesTransaction(
       throw new Error("Payment amount must be non-negative")
     }
 
-    // Convert tokenBalance to decimal units if needed
+    // Token balance is already in base units from checkTokenBalance
     let convertedTokenBalance = tokenBalance;
-    if (tokenBalance > 0) {
-      try {
-        // Get vote details to find the token requirement
-        const voteDetails = await this.getVoteDetails(voteId);
-        if (voteDetails && voteDetails.tokenRequirement) {
-          // Get token info to determine decimals
-          const tokenInfo = await tokenService.getTokenInfo(voteDetails.tokenRequirement);
-          if (tokenInfo) {
-            convertedTokenBalance = Number(toDecimalUnits(tokenBalance.toString(), tokenInfo.decimals));
-          }
-        }
-      } catch (error) {
-        console.warn('Failed to convert token balance to decimal units:', error);
-        // Use original value if conversion fails
-      }
-    }
 
     // Set a default token balance if none provided
     if (convertedTokenBalance <= 0) {
@@ -1672,13 +1753,21 @@ async castMultipleVotesTransaction(
       convertedTokenBalance = 1;
     }
 
+    // Convert payment amount from SUI to MIST
+    let convertedPaymentAmount = 0
+    if (payment > 0) {
+      const suiDecimals = tokenService.getSuiTokenInfo().decimals
+      convertedPaymentAmount = parseInt(toDecimalUnits(payment.toString(), suiDecimals))
+      console.log(`[DEBUG] Payment amount conversion: ${payment} SUI -> ${convertedPaymentAmount} MIST (decimals: ${suiDecimals})`)
+    }
+
     const tx = new Transaction()
 
     // Create payment coin if needed
     let paymentCoin
-    if (payment > 0) {
+    if (convertedPaymentAmount > 0) {
       // Split payment from gas coin
-      ;[paymentCoin] = tx.splitCoins(tx.gas, [tx.pure.u64(payment)])
+      ;[paymentCoin] = tx.splitCoins(tx.gas, [tx.pure.u64(convertedPaymentAmount)])
     } else {
       // Create an empty coin if no payment is required
       ;[paymentCoin] = tx.splitCoins(tx.gas, [tx.pure.u64(0)])
@@ -2185,11 +2274,26 @@ async castMultipleVotesTransaction(
     try {
       this.checkInitialization();
 
-      // Return default values if no token requirement or required amount is zero
-      if (!tokenType || requiredAmount === undefined) return { hasBalance: true, tokenBalance: 0 };
-      if (requiredAmount === "0") return { hasBalance: true, tokenBalance: 0 };
+      console.log("[Token Debug] checkTokenBalance called with:", {
+        userAddress,
+        tokenType,
+        requiredAmount
+      });
 
-      if (!userAddress) return { hasBalance: false, tokenBalance: 0 };
+      // Return default values if no token requirement or required amount is zero
+      if (!tokenType || requiredAmount === undefined) {
+        console.log("[Token Debug] No token requirement, returning default");
+        return { hasBalance: true, tokenBalance: 0 };
+      }
+      if (requiredAmount === "0") {
+        console.log("[Token Debug] Required amount is 0, returning default");
+        return { hasBalance: true, tokenBalance: 0 };
+      }
+
+      if (!userAddress) {
+        console.log("[Token Debug] No user address, returning false");
+        return { hasBalance: false, tokenBalance: 0 };
+      }
 
       // Fetch user's balance in base units
       const { totalBalance } = await this.client.getBalance({
@@ -2197,7 +2301,15 @@ async castMultipleVotesTransaction(
         coinType: tokenType,
       });
 
-      if (!totalBalance) return { hasBalance: false, tokenBalance: 0 };
+      console.log("[Token Debug] Raw balance from blockchain:", {
+        totalBalance,
+        type: typeof totalBalance
+      });
+
+      if (!totalBalance) {
+        console.log("[Token Debug] No balance found, returning false");
+        return { hasBalance: false, tokenBalance: 0 };
+      }
 
       // Get token decimals
       let decimals = 9; // Default for SUI
@@ -2208,15 +2320,35 @@ async castMultipleVotesTransaction(
         console.warn(`Using default decimals for ${tokenType}: ${decimals}`);
       }
 
-      // Parse required amount into base units
-      const requiredBase = this.parseToBaseUnits(requiredAmount, decimals);
+      console.log("[Token Debug] Token decimals:", decimals);
+
+      // Parse required amount into base units (ensure it's a string)
+      const requiredAmountStr = typeof requiredAmount === 'string' ? requiredAmount : requiredAmount.toString();
+      const requiredBase = this.parseToBaseUnits(requiredAmountStr, decimals);
       const userBalance = BigInt(totalBalance);
       
-      // Convert balance from decimal units to human-readable format
-      const tokenBalance = Number(fromDecimalUnits(userBalance.toString(), decimals));
+      console.log("[Token Debug] Balance comparison:", {
+         userBalanceString: totalBalance,
+         userBalanceBigInt: userBalance.toString(),
+         requiredAmountOriginal: requiredAmount,
+         requiredAmountString: requiredAmountStr,
+         requiredBaseBigInt: requiredBase.toString(),
+         hasBalance: userBalance >= requiredBase
+       });
+      
+      const finalTokenBalance = Number(userBalance.toString());
+      
+      console.log("[Token Debug] Final result:", {
+        hasBalance: userBalance >= requiredBase,
+        tokenBalance: finalTokenBalance,
+        tokenBalanceType: typeof finalTokenBalance
+      });
+      
+      // Return balance in base units (not human-readable format)
+      // This ensures the contract receives the expected integer value
       return { 
         hasBalance: userBalance >= requiredBase,
-        tokenBalance: tokenBalance
+        tokenBalance: finalTokenBalance
       };
     } catch (error) {
       console.error("checkTokenBalance error:", error instanceof Error ? error.message : String(error));

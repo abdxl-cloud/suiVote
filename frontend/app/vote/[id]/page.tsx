@@ -12,6 +12,8 @@ import Link from "next/link"
 import { TransactionStatusDialog, TransactionStatus } from "@/components/transaction-status-dialog"
 import { formatTokenAmount } from "@/utils/token-utils"
 import { VoteDetails, PollDetails, PollOptionDetails } from "@/services/suivote-service"
+import { VoteSuccess } from "@/components/vote-success"
+import { VoteClosed } from "@/components/vote-closed"
 
 // UI Components
 import {
@@ -96,6 +98,15 @@ export default function VotePage() {
   // Smart validation states
   const [touchedPolls, setTouchedPolls] = useState<{ [key: string]: boolean }>({})
   const [attemptedSubmit, setAttemptedSubmit] = useState(false)
+
+  // Debug effect to track state changes
+  useEffect(() => {
+    console.log("=== COMPONENT RENDER DEBUG ===");
+    console.log("hasVoted:", hasVoted);
+    console.log("vote.showLiveStats:", vote?.showLiveStats);
+    console.log("vote.status:", vote?.status);
+    console.log("==============================");
+  }, [hasVoted, vote?.showLiveStats, vote?.status]);
 
   // Helper function to toggle badge expansion
   const toggleBadgeExpansion = (badgeKey: string) => {
@@ -201,21 +212,56 @@ export default function VotePage() {
         throw new Error("Vote not found")
       }
 
+      // Check whitelist access - if vote has whitelist and user is connected, verify access
+      if (voteDetails.hasWhitelist && wallet.connected && wallet.address) {
+        const isWhitelisted = await suivote.isVoterWhitelisted(params.id, wallet.address)
+        if (!isWhitelisted) {
+          throw new Error("Access denied: You are not authorized to view this whitelisted vote")
+        }
+      } else if (voteDetails.hasWhitelist && !wallet.connected) {
+        // If vote has whitelist but wallet is not connected, deny access
+        throw new Error("Access denied: Please connect your wallet to view this whitelisted vote")
+      }
+
       // Note: Routing logic moved to polls page - users are now directed to appropriate pages from there
 
-      // Check if vote is upcoming but start time has passed
+      // Check if vote is upcoming but start time has passed - automatically start it
       const currentTime = Date.now()
       if (voteDetails.status === "upcoming" && currentTime >= voteDetails.startTimestamp) {
         if (wallet.connected) {
-          // Show a toast notification that the vote can be started
-          toast.info("This vote's start time has passed and can now be activated", {
-            description: "Click 'Start Vote' to begin the voting period",
-            duration: 5000,
-          })
+          try {
+            // Automatically start the vote
+            const transaction = suivote.startVoteTransaction(params.id)
+            const response = await suivote.executeTransaction(transaction)
+            
+            toast.success("Vote automatically started!", {
+              description: "The vote is now active and ready to receive votes.",
+              duration: 5000,
+            })
+            
+            // Store transaction digest
+            if (response && response.digest) {
+              localStorage.setItem(`vote_${params.id}_txDigest`, response.digest)
+            }
+            
+            // Refresh vote data to get updated status
+            setTimeout(() => {
+              fetchVoteData()
+            }, 1000)
+            
+          } catch (error) {
+            console.error("Error auto-starting vote:", error)
+            // Fall back to manual activation if auto-start fails
+            toast.warning("Vote ready to start", {
+              description: "Auto-start failed. Please start the vote manually.",
+              duration: 5000,
+            })
+            voteDetails.canBeStarted = true;
+          }
+        } else {
+          // If wallet not connected, just mark as ready to start
+          voteDetails.canBeStarted = true;
         }
-
-        // Update the UI to show that the vote can be started
-        voteDetails.canBeStarted = true;
       }
 
       setVote(voteDetails)
@@ -260,10 +306,19 @@ export default function VotePage() {
 
       // Check if user has already voted and meets requirements
       if (wallet.connected && wallet.address) {
-        // Check voting status
-        votedStatus = await suivote.hasVoted(wallet.address, params.id)
-        setHasVoted(votedStatus)
-        setSubmitted(votedStatus)
+        // Check voting status - but preserve local state if user just voted
+        // This prevents blockchain propagation delays from overriding correct state
+        if (!hasVoted) {
+          console.log("Checking blockchain for hasVoted status");
+          votedStatus = await suivote.hasVoted(wallet.address, params.id)
+          console.log("Blockchain hasVoted result:", votedStatus);
+          setHasVoted(votedStatus)
+          setSubmitted(votedStatus)
+        } else {
+          // User has already voted according to local state, keep it
+          console.log("Preserving local hasVoted state:", hasVoted);
+          votedStatus = hasVoted
+        }
 
         // Note: Routing logic moved to polls page - users are now directed to appropriate pages from there
 
@@ -277,7 +332,7 @@ export default function VotePage() {
           const tokenResult = await suivote.checkTokenBalance(
             wallet.address,
             voteDetails.tokenRequirement,
-            voteDetails.tokenAmount
+            voteDetails.tokenAmount?.toString() || "0"
           );
           hasRequiredTokens = tokenResult.hasBalance;
           // Store token balance for later use
@@ -352,6 +407,12 @@ export default function VotePage() {
   useEffect(() => {
     // Initial data fetch
     fetchVoteData()
+    
+    // Load transaction digest from localStorage if available
+    const storedDigest = localStorage.getItem(`vote_${params.id}_txDigest`)
+    if (storedDigest) {
+      setTxDigest(storedDigest)
+    }
 
     // Set up real-time updates subscription if we have a vote ID
     if (params.id) {
@@ -402,6 +463,50 @@ export default function VotePage() {
       }
     }
   }, [params.id, wallet.connected, wallet.address])
+
+  // Auto-start timer effect - check every 30 seconds if vote should be auto-started
+  useEffect(() => {
+    if (!vote || !wallet.connected) return
+
+    const checkAutoStart = async () => {
+      const currentTime = Date.now()
+      if (vote.status === "upcoming" && currentTime >= vote.startTimestamp && !vote.canBeStarted) {
+        try {
+          // Automatically start the vote
+          const transaction = suivote.startVoteTransaction(params.id as string)
+          const response = await suivote.executeTransaction(transaction)
+          
+          toast.success("Vote automatically started!", {
+            description: "The vote is now active and ready to receive votes.",
+            duration: 5000,
+          })
+          
+          // Store transaction digest
+          if (response && response.digest) {
+            localStorage.setItem(`vote_${params.id}_txDigest`, response.digest)
+          }
+          
+          // Refresh vote data to get updated status
+          setTimeout(() => {
+            fetchVoteData()
+          }, 1000)
+          
+        } catch (error) {
+          console.error("Error auto-starting vote:", error)
+          // Update vote to show manual start option
+          setVote(prev => prev ? { ...prev, canBeStarted: true } : null)
+        }
+      }
+    }
+
+    // Check immediately
+    checkAutoStart()
+
+    // Set up interval to check every 30 seconds
+    const interval = setInterval(checkAutoStart, 30000)
+
+    return () => clearInterval(interval)
+  }, [vote, wallet.connected, params.id, suivote])
 
   // Function to handle starting a vote
   const handleStartVote = async () => {
@@ -689,7 +794,7 @@ export default function VotePage() {
 
     // Check if user has required tokens
     if (!userHasRequiredTokens && vote.tokenRequirement) {
-      newErrors.tokens = `You need at least ${vote.tokenAmount} ${vote.tokenRequirement.split("::").pop()} to vote`
+      newErrors.tokens = `You need at least ${formatTokenAmount(vote.tokenAmount || 0, vote.tokenRequirement.split("::").pop() || "", 2)} to vote`
       isValid = false
     }
 
@@ -780,7 +885,7 @@ export default function VotePage() {
       // STEP 3: Token balance verification for weighted voting
       setTxProgress(30);
       if (vote.tokenRequirement && !userHasRequiredTokens) {
-        throw new Error(`You need at least ${vote.tokenAmount} ${vote.tokenRequirement.split("::").pop()} to vote`);
+        throw new Error(`You need at least ${formatTokenAmount(vote.tokenAmount || 0, vote.tokenRequirement.split("::").pop() || "", 2)} to vote`);
       }
       // STEP 4: Prepare transaction data
       setTxProgress(40);
@@ -824,21 +929,48 @@ export default function VotePage() {
       let tokenBalance = 0;
       if (vote.tokenRequirement) {
         try {
+          console.log("[Vote Debug] Checking token balance for:", {
+            address: wallet.address,
+            tokenRequirement: vote.tokenRequirement,
+            tokenAmount: vote.tokenAmount
+          });
+          
           const tokenResult = await suivote.checkTokenBalance(
             wallet.address,
             vote.tokenRequirement,
             vote.tokenAmount
           );
+          
+          console.log("[Vote Debug] Token balance result:", tokenResult);
+          
           tokenBalance = Math.floor(Number(tokenResult.tokenBalance));
+          
+          console.log("[Vote Debug] Final tokenBalance for transaction:", {
+            original: tokenResult.tokenBalance,
+            processed: tokenBalance,
+            type: typeof tokenBalance
+          });
+          
         } catch (tokenError) {
           console.warn("[Vote Debug] Error checking token balance:", tokenError);
           // Continue with 0 balance for non-weighted voting
         }
+      } else {
+        console.log("[Vote Debug] No token requirement, using tokenBalance = 0");
       }
 
       // STEP 6: Create and execute transaction
       setTxStatus(TransactionStatus.BUILDING);
       setTxProgress(60);
+
+      console.log("[Vote Debug] Creating transaction with:", {
+        voteId: params.id,
+        pollIndices,
+        optionIndicesPerPoll,
+        tokenBalance,
+        paymentAmount: vote.paymentAmount || 0,
+        singleVote: pollIndices.length === 1
+      });
 
       let transaction;
       if (pollIndices.length === 1) {
@@ -903,8 +1035,10 @@ export default function VotePage() {
       setTxProgress(100);
 
       // Update local state immediately
+      console.log("Setting hasVoted to true after successful vote");
       setSubmitted(true);
       setHasVoted(true);
+      console.log("hasVoted state updated to true");
 
       // Store transaction data
       if (response?.digest) {
@@ -927,11 +1061,13 @@ export default function VotePage() {
         if (vote?.showLiveStats) {
           // Show live results on the same page
           setShowingResults(true);
-          fetchVoteData(); // Refresh to show updated results
-        } else {
-          // Redirect to success page after successful vote submission
-          router.push(`/vote/${params.id}/success?digest=${response.digest}`);
         }
+        
+        // Refresh vote data to update the component state after a longer delay
+        // This allows blockchain propagation while preserving the correct hasVoted state
+        setTimeout(() => {
+          fetchVoteData();
+        }, 5000); // Wait 5 seconds for blockchain propagation
       }, 2000);
 
     } catch (error) {
@@ -1265,13 +1401,13 @@ export default function VotePage() {
                 </div>
               </div>
 
-              {Date.now() >= vote.startTimestamp && wallet.connected ? (
+              {Date.now() >= vote.startTimestamp && vote.canBeStarted && wallet.connected ? (
                 <div className="space-y-4">
                   <Alert className="bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800">
                     <Info className="h-4 w-4 text-amber-600 dark:text-amber-400" />
                     <AlertTitle>Vote Ready to Start</AlertTitle>
                     <AlertDescription>
-                      This vote's scheduled start time has passed and it can now be activated.
+                      Auto-start failed. Please start the vote manually or refresh the page.
                     </AlertDescription>
                   </Alert>
 
@@ -1284,6 +1420,14 @@ export default function VotePage() {
                     Start Vote
                   </Button>
                 </div>
+              ) : Date.now() >= vote.startTimestamp && !wallet.connected ? (
+                <Alert className="bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800">
+                  <CheckCircle2 className="h-4 w-4 text-green-600 dark:text-green-400" />
+                  <AlertTitle>Vote Starting Automatically</AlertTitle>
+                  <AlertDescription>
+                    This vote will start automatically when a connected wallet visits this page.
+                  </AlertDescription>
+                </Alert>
               ) : (
                 <Alert className="bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800">
                   <Calendar className="h-4 w-4 text-blue-600 dark:text-blue-400" />
@@ -1368,7 +1512,7 @@ export default function VotePage() {
                     <div>
                       <p className="text-sm font-medium">Token Requirement</p>
                       <p className="text-xs text-muted-foreground">
-                        Minimum {vote.tokenAmount} {vote.tokenRequirement.split("::").pop()}
+                        Minimum {formatTokenAmount(vote.tokenAmount || 0, vote.tokenRequirement.split("::").pop() || "", 2)}
                       </p>
                     </div>
                   </div>
@@ -1381,7 +1525,7 @@ export default function VotePage() {
                     </div>
                     <div>
                       <p className="text-sm font-medium">Payment Required</p>
-                      <p className="text-xs text-muted-foreground">{formatTokenAmount(vote.paymentAmount, 9)} SUI to vote</p>
+                      <p className="text-xs text-muted-foreground">{formatTokenAmount(vote.paymentAmount, "SUI")} to vote</p>
                     </div>
                   </div>
                 )}
@@ -1553,10 +1697,111 @@ export default function VotePage() {
     )
   }
 
+
+
+  // Check if we should show success state
+  // Note: vote.status can be 'voted' when user has voted, not just 'active'
+  const shouldShowSuccess = hasVoted && !vote.showLiveStats && (vote.status === "active" || vote.status === "voted")
+  
+  // Check if we should show closed state
+  const shouldShowClosed = vote.status === "closed"
+
+  // Show success component
+  if (shouldShowSuccess) {
+    return (
+      <div className="container max-w-4xl py-6 md:py-10 px-4 md:px-6 mx-auto">
+        {/* Back button */}
+        <motion.div
+          initial={{ opacity: 0, x: -10 }}
+          animate={{ opacity: 1, x: 0 }}
+          transition={{ duration: 0.3 }}
+          className="mb-8"
+        >
+          <Button asChild variant="outline" size="sm" className="group transition-all duration-200 hover:shadow-md hover:translate-x-[-2px]">
+            <Link href="/polls">
+              <ArrowLeft className="mr-2 h-4 w-4 group-hover:-translate-x-0.5 transition-transform" />
+              Back to Polls
+            </Link>
+          </Button>
+        </motion.div>
+
+        <VoteSuccess 
+          vote={vote} 
+          txDigest={txDigest}
+          onShare={handleShare}
+        />
+
+        {/* Share dialog */}
+        <ShareDialog
+          open={shareDialogOpen}
+          onOpenChange={setShareDialogOpen}
+          title={vote.title}
+          url={typeof window !== "undefined" ? window.location.href : ""}
+        />
+
+        {/* Transaction Status Dialog */}
+        <TransactionStatusDialog
+          open={txStatusDialogOpen}
+          onOpenChange={(open) => {
+            if (!open) {
+              handleDialogClose();
+            } else {
+              setTxStatusDialogOpen(open);
+            }
+          }}
+          txStatus={txStatus}
+          transactionError={transactionError}
+          txDigest={txDigest}
+          failedStep={failedStep}
+          onRetry={() => {
+            setFailedStep(undefined);
+            handleTryAgain();
+          }}
+          explorerUrl={SUI_CONFIG.explorerUrl}
+        />
+      </div>
+    )
+  }
+
+  // Show closed component
+  if (shouldShowClosed) {
+    return (
+      <div className="container max-w-4xl py-6 md:py-10 px-4 md:px-6 mx-auto">
+        {/* Back button */}
+        <motion.div
+          initial={{ opacity: 0, x: -10 }}
+          animate={{ opacity: 1, x: 0 }}
+          transition={{ duration: 0.3 }}
+          className="mb-8"
+        >
+          <Button asChild variant="outline" size="sm" className="group transition-all duration-200 hover:shadow-md hover:translate-x-[-2px]">
+            <Link href="/polls">
+              <ArrowLeft className="mr-2 h-4 w-4 group-hover:-translate-x-0.5 transition-transform" />
+              Back to Polls
+            </Link>
+          </Button>
+        </motion.div>
+
+        <VoteClosed 
+          vote={vote} 
+          polls={polls}
+          onShare={handleShare}
+        />
+
+        {/* Share dialog */}
+        <ShareDialog
+          open={shareDialogOpen}
+          onOpenChange={setShareDialogOpen}
+          title={vote.title}
+          url={typeof window !== "undefined" ? window.location.href : ""}
+        />
+      </div>
+    )
+  }
+
   // Main vote page - handles cases:
   // 1. Vote is open and user has not voted
   // 2. Vote is open, user has voted, and live stats are enabled
-  // 4. Vote is closed and live stats are enabled
   return (
     <div className="container max-w-4xl py-6 md:py-10 px-4 md:px-6 mx-auto">
       {/* Back button */}
@@ -1691,7 +1936,7 @@ export default function VotePage() {
                                 onClick={() => toggleBadgeExpansion('tokenRequirement')}
                               >
                                 <Wallet className="h-3 w-3" />
-                                {vote.tokenAmount} {vote.tokenRequirement.split("::").pop()}
+                                {formatTokenAmount(vote.tokenAmount || 0, vote.tokenRequirement.split("::").pop() || "", 2)}
                                 {wallet.connected && (
                                   userHasRequiredTokens ?
                                     <CheckCircle2 className="h-3 w-3" /> :
@@ -1711,8 +1956,8 @@ export default function VotePage() {
                                     {userHasRequiredTokens && wallet.connected
                                       ? `✅ You have enough ${vote.tokenRequirement.split("::").pop()} tokens to vote`
                                       : wallet.connected
-                                        ? `❌ You need at least ${vote.tokenAmount} ${vote.tokenRequirement.split("::").pop()} tokens in your wallet to participate`
-                                        : `You must hold at least ${vote.tokenAmount} ${vote.tokenRequirement.split("::").pop()} tokens to vote. Connect your wallet to check your balance.`
+                                        ? `❌ You need at least ${formatTokenAmount(vote.tokenAmount || 0, vote.tokenRequirement.split("::").pop() || "", 2)} in your wallet to participate`
+                                        : `You must hold at least ${formatTokenAmount(vote.tokenAmount || 0, vote.tokenRequirement.split("::").pop() || "", 2)} to vote. Connect your wallet to check your balance.`
                                     }
                                   </motion.div>
                                 )}
@@ -1729,7 +1974,7 @@ export default function VotePage() {
                                 onClick={() => toggleBadgeExpansion('paymentRequirement')}
                               >
                                 <Wallet className="h-3 w-3" />
-                                {formatTokenAmount(vote.paymentAmount, 9)} SUI
+                                {formatTokenAmount(vote.paymentAmount, "SUI")} 
                                 <Info className="h-3 w-3" />
                               </Badge>
                               <AnimatePresence>
@@ -1741,7 +1986,7 @@ export default function VotePage() {
                                     transition={{ duration: 0.2 }}
                                     className="text-xs text-muted-foreground bg-muted/50 p-2 rounded border"
                                   >
-                                    💰 A payment of {formatTokenAmount(vote.paymentAmount, 9)} SUI is required to submit your vote. This fee helps prevent spam and supports the voting system.
+                                    💰 A payment of {formatTokenAmount(vote.paymentAmount, "SUI")}  is required to submit your vote. This fee helps prevent spam and supports the voting system.
                                   </motion.div>
                                 )}
                               </AnimatePresence>

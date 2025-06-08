@@ -42,6 +42,7 @@ import Link from "next/link"
 import { useSuiVote } from "@/hooks/use-suivote"
 import { useWallet } from "@/contexts/wallet-context"
 import { format, formatDistance } from "date-fns"
+import { formatTokenAmount } from "@/utils/token-utils"
 import { ShareDialog } from "@/components/share-dialog"
 
 // Import dnd-kit components
@@ -92,19 +93,8 @@ interface SortablePollCardProps {
   safeFormatDistanceToNow: (date: any) => string;
 }
 
-// Function to determine the correct destination based on vote state
+// All votes now use the same URL - the main vote page handles different states
 const getVoteDestination = (vote: any) => {
-  // If vote is closed/ended, redirect to closed page
-  if (vote.status === "closed" || vote.status === "ended") {
-    return `/vote/${vote.id}/closed`;
-  }
-  
-  // If user has already voted and live stats are disabled, redirect to success page
-  if (vote.status === "voted" && !vote.showLiveStats) {
-    return `/vote/${vote.id}/success`;
-  }
-  
-  // Default: go to the main voting page
   return `/vote/${vote.id}`;
 };
 
@@ -491,7 +481,7 @@ export default function PollsPage() {
               </div>
             </TooltipTrigger>
             <TooltipContent>
-              Requires {vote.tokenAmount} {vote.tokenRequirement}
+              Requires {formatTokenAmount(vote.tokenAmount || 0, vote.tokenRequirement?.split("::").pop() || "", 2)}
             </TooltipContent>
           </Tooltip>
         </TooltipProvider>

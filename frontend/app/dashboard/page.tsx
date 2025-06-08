@@ -46,6 +46,7 @@ import Link from "next/link"
 import { useSuiVote } from "@/hooks/use-suivote"
 import { useWallet } from "@/contexts/wallet-context"
 import { formatDistanceToNow, format, subDays, differenceInDays, addDays } from "date-fns"
+import { formatTokenAmount } from "@/utils/token-utils"
 import { Progress } from "@/components/ui/progress"
 import { Separator } from "@/components/ui/separator"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
@@ -464,7 +465,7 @@ export default function DashboardPage() {
               </div>
             </TooltipTrigger>
             <TooltipContent>
-              Requires {vote.tokenAmount} {vote.tokenRequirement}
+              Requires {formatTokenAmount(vote.tokenAmount || 0, vote.tokenRequirement?.split("::").pop() || "", 2)}
             </TooltipContent>
           </Tooltip>
         </TooltipProvider>
@@ -1013,7 +1014,7 @@ export default function DashboardPage() {
                               {vote.description || "No description provided"}
                             </CardDescription>
                           </div>
-                          {renderStatusBadge(vote.status)}
+                          {renderStatusBadge(vote.endTimestamp <= now.getTime() ? "closed" : "active")}
                         </div>
                         {renderFeatureBadges(vote)}
                       </CardHeader>
@@ -1031,14 +1032,14 @@ export default function DashboardPage() {
                               <div className="text-xs text-muted-foreground font-medium uppercase tracking-wide">Polls</div>
                             </div>
                           </div>
-                          {vote.status === "active" || vote.status === "pending" ? (
+                       
                             <div className="text-center p-3 rounded-xl bg-gradient-to-br from-amber-500/5 to-orange-500/5">
                               <div className="text-sm font-medium text-amber-600 mb-1">
                                 {formatTimeRemaining(vote.endTimestamp)}
                               </div>
-                              <div className="text-xs text-muted-foreground font-medium uppercase tracking-wide">Time Remaining</div>
+                              {vote.endTimestamp >= now.getTime() ? ( <div className="text-xs text-muted-foreground font-medium uppercase tracking-wide">Time Remaining</div>) : null}
                             </div>
-                          ) : null}
+                          
                           <div className="flex gap-2">
                             <Link href={`/vote/${vote.id}`} className="flex-1">
                               <Button variant="outline" size="sm" className="w-full hover:bg-primary/5 hover:border-primary/20 transition-all duration-300">

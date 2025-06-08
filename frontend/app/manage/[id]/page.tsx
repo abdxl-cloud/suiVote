@@ -83,6 +83,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert'
 import { useWallet } from '@/contexts/wallet-context'
 import { useSuiVote } from '@/hooks/use-suivote'
 import { useToast } from '@/hooks/use-toast'
+import { formatTokenAmount, fromDecimalUnits } from '@/utils/token-utils'
 import { ShareDialog } from '@/components/share-dialog'
 import { 
   VoteDetails, 
@@ -138,6 +139,12 @@ interface VoteAnalytics {
   participationRate: number
   averageTokenBalance: number
   totalVoteWeight: number
+  whitelistStats?: {
+    totalWhitelisted: number
+    whitelistedVoted: number
+    whitelistedRemaining: number
+    whitelistParticipationRate: number
+  }
   votingTrend: {
     date: string
     votes: number
@@ -176,13 +183,7 @@ const truncateAddress = (address: string): string => {
   return `${address.substring(0, 6)}...${address.substring(address.length - 4)}`
 }
 
-const formatTokenAmount = (amount: number | string): string => {
-  const numAmount = Number(amount) || 0
-  if (numAmount >= 1e9) return `${(numAmount / 1e9).toFixed(2)}B`
-  if (numAmount >= 1e6) return `${(numAmount / 1e6).toFixed(2)}M`
-  if (numAmount >= 1e3) return `${(numAmount / 1e3).toFixed(2)}K`
-  return numAmount.toFixed(2)
-}
+
 
 const getVoteStatus = (voteDetails: VoteDetails): {
   status: string
@@ -224,22 +225,40 @@ const getVoteStatus = (voteDetails: VoteDetails): {
   }
 }
 
-const convertVoterInfo = (voterInfo: VoterInfo): VoterDisplayData => ({
-  address: voterInfo.voter,
-  shortAddress: truncateAddress(voterInfo.voter),
-  timestamp: voterInfo.timestamp,
-  tokenBalance: voterInfo.tokenBalance,
-  voteWeight: voterInfo.voteWeight,
-  pollResponses: voterInfo.polls.map(poll => ({
-    pollId: poll.pollId,
-    selectedOptions: poll.optionIndices
-  }))
-})
+const convertVoterInfo = (voterInfo: VoterInfo, voteDetails: VoteDetails): VoterDisplayData => {
+  // For payment-free votes, token balance should be 0
+  // For weighted votes, convert from MIST to SUI (9 decimals)
+  console.log(voterInfo, "Converting to voter info")
+  let tokenBalanceInSui = 0
+  let voteWeightValue = 1 // Default weight for non-weighted votes
+  
+  if (voteDetails.paymentAmount > 0 || voteDetails.useTokenWeighting) {
+    tokenBalanceInSui = parseFloat(fromDecimalUnits(voterInfo.tokenBalance.toString(), 9))
+  }
+  
+  if (voteDetails.useTokenWeighting) {
+    // For weighted votes, keep vote weight as integer (not converted from MIST)
+    voteWeightValue = voterInfo.voteWeight
+  }
+  
+  return {
+    address: voterInfo.voter,
+    shortAddress: truncateAddress(voterInfo.voter),
+    timestamp: voterInfo.timestamp,
+    tokenBalance: tokenBalanceInSui,
+    voteWeight: voteWeightValue,
+    pollResponses: voterInfo.polls.map(poll => ({
+      pollId: poll.pollId,
+      selectedOptions: poll.optionIndices
+    }))
+  }
+}
 
 const calculateAnalytics = (
   voters: VoterDisplayData[],
   polls: PollDetails[],
-  voteDetails: VoteDetails
+  voteDetails: VoteDetails,
+  whitelistedAddresses: string[] = []
 ): VoteAnalytics => {
   const totalVoters = voters.length
   const totalVoteWeight = voters.reduce((sum, voter) => sum + voter.voteWeight, 0)
@@ -247,9 +266,25 @@ const calculateAnalytics = (
     ? voters.reduce((sum, voter) => sum + voter.tokenBalance, 0) / totalVoters
     : 0
 
+  // Calculate whitelist statistics
+  let whitelistStats = undefined
+  if (voteDetails.hasWhitelist && whitelistedAddresses.length > 0) {
+    const voterAddresses = new Set(voters.map(voter => voter.address))
+    const whitelistedVoted = whitelistedAddresses.filter(addr => voterAddresses.has(addr)).length
+    const whitelistedRemaining = whitelistedAddresses.length - whitelistedVoted
+    const whitelistParticipationRate = (whitelistedVoted / whitelistedAddresses.length) * 100
+    
+    whitelistStats = {
+      totalWhitelisted: whitelistedAddresses.length,
+      whitelistedVoted,
+      whitelistedRemaining,
+      whitelistParticipationRate
+    }
+  }
+
   // Calculate participation rate
-  const participationRate = voteDetails.hasWhitelist 
-    ? Math.min((totalVoters / Math.max(totalVoters, 1)) * 100, 100)
+  const participationRate = voteDetails.hasWhitelist && whitelistStats
+    ? whitelistStats.whitelistParticipationRate
     : 100
 
   // Generate voting trend over time
@@ -335,6 +370,7 @@ const calculateAnalytics = (
     participationRate,
     averageTokenBalance,
     totalVoteWeight,
+    whitelistStats,
     votingTrend,
     pollAnalytics,
     topVoters,
@@ -395,6 +431,83 @@ const exportData = {
     document.body.appendChild(link)
     link.click()
     document.body.removeChild(link)
+  },
+  
+  chartAsImage: (chartElement: HTMLElement, filename: string) => {
+    const svgElement = chartElement.querySelector('svg')
+    if (svgElement) {
+      const svgData = new XMLSerializer().serializeToString(svgElement)
+      const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' })
+      const url = URL.createObjectURL(svgBlob)
+      
+      const canvas = document.createElement('canvas')
+      const ctx = canvas.getContext('2d')
+      if (!ctx) return
+      
+      const img = new Image()
+      img.onload = () => {
+        const rect = svgElement.getBoundingClientRect()
+        canvas.width = rect.width * 2
+        canvas.height = rect.height * 2
+        ctx.scale(2, 2)
+        ctx.drawImage(img, 0, 0, rect.width, rect.height)
+        
+        canvas.toBlob((blob) => {
+          if (blob) {
+            const link = document.createElement('a')
+            const url = URL.createObjectURL(blob)
+            link.setAttribute('href', url)
+            link.setAttribute('download', filename)
+            link.style.visibility = 'hidden'
+            document.body.appendChild(link)
+            link.click()
+            document.body.removeChild(link)
+          }
+        }, 'image/png')
+        
+        URL.revokeObjectURL(url)
+      }
+      img.src = url
+    }
+  },
+  
+  chartAsPDF: async (chartElement: HTMLElement, filename: string) => {
+    const svgElement = chartElement.querySelector('svg')
+    if (svgElement) {
+      // Import jsPDF dynamically to avoid SSR issues
+      const { jsPDF } = await import('jspdf')
+      
+      const svgData = new XMLSerializer().serializeToString(svgElement)
+      const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' })
+      const url = URL.createObjectURL(svgBlob)
+      
+      const canvas = document.createElement('canvas')
+      const ctx = canvas.getContext('2d')
+      if (!ctx) return
+      
+      const img = new Image()
+      img.onload = () => {
+        const rect = svgElement.getBoundingClientRect()
+        canvas.width = rect.width * 2
+        canvas.height = rect.height * 2
+        ctx.scale(2, 2)
+        ctx.drawImage(img, 0, 0, rect.width, rect.height)
+        
+        // Create PDF
+        const pdf = new jsPDF({
+          orientation: rect.width > rect.height ? 'landscape' : 'portrait',
+          unit: 'px',
+          format: [rect.width, rect.height]
+        })
+        
+        const imgData = canvas.toDataURL('image/png')
+        pdf.addImage(imgData, 'PNG', 0, 0, rect.width, rect.height)
+        pdf.save(filename)
+        
+        URL.revokeObjectURL(url)
+      }
+      img.src = url
+    }
   }
 }
 
@@ -473,40 +586,68 @@ const StatsCards = ({ analytics, voteDetails }: {
       color: 'text-green-600',
       bgColor: 'bg-green-50'
     },
-    {
+    ...(voteDetails.paymentAmount > 0 || voteDetails.useTokenWeighting ? [{
       title: 'Avg Token Balance',
-      value: formatTokenAmount(analytics.averageTokenBalance),
+      value: formatTokenAmount(analytics.averageTokenBalance, "SUI"),
       icon: <Wallet className="h-4 w-4 sm:h-5 sm:w-5" />,
       color: 'text-purple-600',
       bgColor: 'bg-purple-50'
-    },
-    {
+    }] : []),
+    ...(voteDetails.useTokenWeighting ? [{
       title: 'Total Vote Weight',
-      value: formatTokenAmount(analytics.totalVoteWeight),
+      value: analytics.totalVoteWeight.toLocaleString(),
       icon: <Vote className="h-4 w-4 sm:h-5 sm:w-5" />,
       color: 'text-orange-600',
       bgColor: 'bg-orange-50'
-    }
+    }] : [])
   ]
 
+  // Add whitelist stats if available
+  const whitelistStats = analytics.whitelistStats ? [
+    {
+      title: 'Whitelisted Voted',
+      value: `${analytics.whitelistStats.whitelistedVoted}/${analytics.whitelistStats.totalWhitelisted}`,
+      icon: <CheckCircle className="h-4 w-4 sm:h-5 sm:w-5" />,
+      color: 'text-emerald-600',
+      bgColor: 'bg-emerald-50'
+    },
+    {
+      title: 'Whitelist Remaining',
+      value: analytics.whitelistStats.whitelistedRemaining.toLocaleString(),
+      icon: <Timer className="h-4 w-4 sm:h-5 sm:w-5" />,
+      color: 'text-amber-600',
+      bgColor: 'bg-amber-50'
+    }
+  ] : []
+
   // Add payment stats if payment is required
-  const stats = voteDetails.paymentAmount > 0 
-    ? [
-        ...baseStats,
-        {
-          title: 'Total Payments',
-          value: `${formatTokenAmount(totalPaymentsReceived)} SUI`,
-          icon: <Activity className="h-4 w-4 sm:h-5 sm:w-5" />,
-          color: 'text-emerald-600',
-          bgColor: 'bg-emerald-50'
-        }
-      ]
-    : baseStats
+  const paymentStats = voteDetails.paymentAmount > 0 ? [
+    {
+      title: 'Total Payments',
+      value: formatTokenAmount(totalPaymentsReceived, "SUI"),
+      icon: <Activity className="h-4 w-4 sm:h-5 sm:w-5" />,
+      color: 'text-emerald-600',
+      bgColor: 'bg-emerald-50'
+    }
+  ] : []
+
+  // Combine all stats
+  const stats = [...baseStats, ...whitelistStats, ...paymentStats]
+
+  // Determine grid layout based on number of stats
+  const getGridClass = () => {
+    const count = stats.length
+    if (count <= 2) return "grid gap-3 grid-cols-1 sm:grid-cols-2 sm:gap-4"
+    if (count === 3) return "grid gap-3 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 sm:gap-4"
+    if (count === 4) return "grid gap-3 grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 sm:gap-4"
+    if (count === 5) return "grid gap-3 grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 sm:gap-4"
+    return "grid gap-3 grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 sm:gap-4"
+  }
 
   return (
-    <div className="grid gap-3 grid-cols-2 sm:gap-4 md:grid-cols-2 lg:grid-cols-4">
+    <div className={getGridClass()}>
       {stats.map((stat, index) => (
-        <Card key={index} className="relative overflow-hidden">
+        <Card key={index} className="relative overflow-hidden hover:shadow-md transition-shadow">
           <CardContent className="p-3 sm:p-4 lg:p-6">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <div className="space-y-1 min-w-0">
@@ -626,12 +767,14 @@ const VotersTable = ({
   voters, 
   polls, 
   filters, 
-  onFiltersChange 
+  onFiltersChange,
+  voteDetails 
 }: {
   voters: VoterDisplayData[]
   polls: PollDetails[]
   filters: FilterOptions
   onFiltersChange: (filters: FilterOptions) => void
+  voteDetails: VoteDetails
 }) => {
   const [currentPage, setCurrentPage] = useState(1)
   
@@ -922,16 +1065,20 @@ const VotersTable = ({
               >
                 Sort by Time
               </DropdownMenuItem>
-              <DropdownMenuItem 
-                onClick={() => onFiltersChange({ ...filters, sortBy: 'tokenBalance' })}
-              >
-                Sort by Token Balance
-              </DropdownMenuItem>
-              <DropdownMenuItem 
-                onClick={() => onFiltersChange({ ...filters, sortBy: 'voteWeight' })}
-              >
-                Sort by Vote Weight
-              </DropdownMenuItem>
+              {(voteDetails?.paymentAmount > 0 || voteDetails?.useTokenWeighting) && (
+                <DropdownMenuItem 
+                  onClick={() => onFiltersChange({ ...filters, sortBy: 'tokenBalance' })}
+                >
+                  Sort by Token Balance
+                </DropdownMenuItem>
+              )}
+              {voteDetails?.useTokenWeighting && (
+                <DropdownMenuItem 
+                  onClick={() => onFiltersChange({ ...filters, sortBy: 'voteWeight' })}
+                >
+                  Sort by Vote Weight
+                </DropdownMenuItem>
+              )}
               <DropdownMenuItem 
                 onClick={() => onFiltersChange({ ...filters, sortBy: 'address' })}
               >
@@ -958,15 +1105,48 @@ const VotersTable = ({
               <TableRow>
                 <TableHead className="min-w-[200px]">Voter</TableHead>
                 <TableHead className="hidden sm:table-cell min-w-[120px]">Vote Time</TableHead>
-                <TableHead className="text-right min-w-[100px]">Balance</TableHead>
-                <TableHead className="text-right min-w-[100px]">Weight</TableHead>
+                {(voteDetails?.paymentAmount > 0 || voteDetails?.useTokenWeighting) && (
+                  <TableHead className="text-right min-w-[100px]">Balance</TableHead>
+                )}
+                {voteDetails?.useTokenWeighting && (
+                  <TableHead className="text-right min-w-[100px]">Weight</TableHead>
+                )}
                 <TableHead className="hidden md:table-cell min-w-[150px]">Poll Responses</TableHead>
                 <TableHead className="w-[50px]"></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {paginatedVoters.map((voter) => (
-                <TableRow key={voter.address}>
+              {paginatedVoters.length === 0 ? (
+                <TableRow>
+                  <TableCell 
+                    colSpan={4 + (voteDetails?.paymentAmount > 0 || voteDetails?.useTokenWeighting ? 1 : 0) + (voteDetails?.useTokenWeighting ? 1 : 0)} 
+                    className="text-center py-8"
+                  >
+                    <div className="flex flex-col items-center gap-2 text-muted-foreground">
+                      <Users className="h-8 w-8 opacity-50" />
+                      <div className="text-sm">
+                        {filteredVoters.length === 0 && voters.length === 0 ? (
+                          "No voters have participated yet"
+                        ) : (
+                          "No voters match the current filters"
+                        )}
+                      </div>
+                      {filteredVoters.length === 0 && voters.length > 0 && (
+                        <Button 
+                          variant="outline" 
+                          size="sm" 
+                          onClick={() => onFiltersChange({ search: '', selectedOptions: [], sortBy: 'timestamp', sortOrder: 'desc' })}
+                          className="mt-2"
+                        >
+                          Clear Filters
+                        </Button>
+                      )}
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ) : (
+                paginatedVoters.map((voter) => (
+                  <TableRow key={voter.address}>
                   <TableCell>
                     <div className="space-y-1">
                       <div className="font-mono text-sm">{voter.shortAddress}</div>
@@ -990,17 +1170,21 @@ const VotersTable = ({
                     </div>
                   </TableCell>
                   
-                  <TableCell className="text-right">
-                    <div className="font-mono text-sm">
-                      {formatTokenAmount(voter.tokenBalance)}
-                    </div>
-                  </TableCell>
+                  {(voteDetails?.paymentAmount > 0 || voteDetails?.useTokenWeighting) && (
+                    <TableCell className="text-right">
+                      <div className="font-mono text-sm">
+                        {formatTokenAmount(voter.tokenBalance, "SUI")}
+                      </div>
+                    </TableCell>
+                  )}
                   
-                  <TableCell className="text-right">
-                    <div className="font-mono font-semibold text-sm">
-                      {formatTokenAmount(voter.voteWeight)}
-                    </div>
-                  </TableCell>
+                  {voteDetails?.useTokenWeighting && (
+                    <TableCell className="text-right">
+                      <div className="font-mono font-semibold text-sm">
+                        {voter.voteWeight}
+                      </div>
+                    </TableCell>
+                  )}
                   
                   <TableCell className="hidden md:table-cell">
                     <div className="flex flex-wrap gap-1">
@@ -1058,8 +1242,9 @@ const VotersTable = ({
                       </DropdownMenuContent>
                     </DropdownMenu>
                   </TableCell>
-                </TableRow>
-              ))}
+                  </TableRow>
+                ))
+              )}
             </TableBody>
           </Table>
         </div>
@@ -1224,7 +1409,7 @@ const AnalyticsCharts = ({ analytics }: { analytics: VoteAnalytics }) => {
 
 // Poll Results Component
 const PollResults = ({ analytics }: { analytics: VoteAnalytics }) => {
-  const handlePollExport = (poll: PollAnalytics, format: 'csv' | 'json') => {
+  const handlePollExport = (poll: PollAnalytics, format: 'csv' | 'json' | 'chart-image' | 'chart-pdf') => {
     const timestamp = new Date().toISOString().slice(0,16).replace(/[-:]/g, '')
     const pollName = poll.title.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase()
     
@@ -1251,13 +1436,27 @@ const PollResults = ({ analytics }: { analytics: VoteAnalytics }) => {
         }
         exportData.json(jsonData, `poll-${pollName}-results-${timestamp}.json`)
         break
+        
+      case 'chart-image':
+        const chartElement = document.querySelector(`[data-poll-id="${poll.pollId}"] .recharts-wrapper`)
+        if (chartElement) {
+          exportData.chartAsImage(chartElement as HTMLElement, `poll-${pollName}-chart-${timestamp}.png`)
+        }
+        break
+        
+      case 'chart-pdf':
+        const chartElementPDF = document.querySelector(`[data-poll-id="${poll.pollId}"] .recharts-wrapper`)
+        if (chartElementPDF) {
+          exportData.chartAsPDF(chartElementPDF as HTMLElement, `poll-${pollName}-chart-${timestamp}.pdf`)
+        }
+        break
     }
   }
   
-  const handleAllPollsExport = (format: 'csv' | 'json') => {
+  const handleAllPollsExport = (exportFormat: 'csv' | 'json' | 'charts-image' | 'charts-pdf') => {
     const timestamp = format(new Date(), 'yyyy-MM-dd-HHmm')
     
-    switch (format) {
+    switch (exportFormat) {
       case 'csv':
         const csvData = analytics.pollAnalytics.flatMap(poll => 
           poll.options.map(option => ({
@@ -1280,6 +1479,30 @@ const PollResults = ({ analytics }: { analytics: VoteAnalytics }) => {
           polls: analytics.pollAnalytics
         }
         exportData.json(jsonData, `all-polls-results-${timestamp}.json`)
+        break
+        
+      case 'charts-image':
+        analytics.pollAnalytics.forEach((poll, index) => {
+          setTimeout(() => {
+            const chartElement = document.querySelector(`[data-poll-id="${poll.pollId}"] .recharts-wrapper`)
+            if (chartElement) {
+              const pollName = poll.title.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase()
+              exportData.chartAsImage(chartElement as HTMLElement, `poll-${pollName}-chart-${timestamp}.png`)
+            }
+          }, index * 500) // Stagger exports to avoid conflicts
+        })
+        break
+        
+      case 'charts-pdf':
+        analytics.pollAnalytics.forEach((poll, index) => {
+          setTimeout(() => {
+            const chartElement = document.querySelector(`[data-poll-id="${poll.pollId}"] .recharts-wrapper`)
+            if (chartElement) {
+              const pollName = poll.title.replace(/[^a-zA-Z0-9]/g, '-').toLowerCase()
+              exportData.chartAsPDF(chartElement as HTMLElement, `poll-${pollName}-chart-${timestamp}.pdf`)
+            }
+          }, index * 500) // Stagger exports to avoid conflicts
+        })
         break
     }
   }
@@ -1309,10 +1532,17 @@ const PollResults = ({ analytics }: { analytics: VoteAnalytics }) => {
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
                 <DropdownMenuItem onClick={() => handleAllPollsExport('csv')}>
-                  Export All as CSV
+                  Export All Data as CSV
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => handleAllPollsExport('json')}>
-                  Export All as JSON
+                  Export All Data as JSON
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={() => handleAllPollsExport('charts-image')}>
+                  Export All Charts as Images
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => handleAllPollsExport('charts-pdf')}>
+                  Export All Charts as PDFs
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -1321,7 +1551,7 @@ const PollResults = ({ analytics }: { analytics: VoteAnalytics }) => {
       </Card>
       
       {analytics.pollAnalytics.map((poll, index) => (
-        <Card key={poll.pollId}>
+        <Card key={poll.pollId} data-poll-id={poll.pollId}>
           <CardHeader>
             <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
               <div className="min-w-0 flex-1">
@@ -1342,11 +1572,11 @@ const PollResults = ({ analytics }: { analytics: VoteAnalytics }) => {
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
-                  <DropdownMenuItem onClick={() => handlePollExport(poll, 'csv')}>
-                    Export as CSV
+                  <DropdownMenuItem onClick={() => handlePollExport(poll, 'chart-image')}>
+                    Export Chart as Image
                   </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => handlePollExport(poll, 'json')}>
-                    Export as JSON
+                  <DropdownMenuItem onClick={() => handlePollExport(poll, 'chart-pdf')}>
+                    Export Chart as PDF
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
@@ -1434,13 +1664,14 @@ export default function VoteManagePage() {
   const router = useRouter()
   const { toast } = useToast()
   const wallet = useWallet()
-  const { getVoteDetails, getVotePolls, getVotersForVote, getPollOptions } = useSuiVote()
+  const { getVoteDetails, getVotePolls, getVotersForVote, getPollOptions, getWhitelistedVoters } = useSuiVote()
   
   // State
   const [voteDetails, setVoteDetails] = useState<VoteDetails | null>(null)
   const [polls, setPolls] = useState<PollDetails[]>([])
   const [voters, setVoters] = useState<VoterDisplayData[]>([])
   const [analytics, setAnalytics] = useState<VoteAnalytics | null>(null)
+  const [whitelistedAddresses, setWhitelistedAddresses] = useState<string[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -1481,6 +1712,20 @@ export default function VoteManagePage() {
       }
       setVoteDetails(details)
       
+      // Fetch whitelist data if vote has whitelist
+      let whitelistData: string[] = []
+      if (details.hasWhitelist) {
+        try {
+          whitelistData = await getWhitelistedVoters(voteId)
+          setWhitelistedAddresses(whitelistData)
+        } catch (error) {
+          console.error('Failed to fetch whitelist data:', error)
+          setWhitelistedAddresses([])
+        }
+      } else {
+        setWhitelistedAddresses([])
+      }
+      
       // Fetch polls
       const pollsData = await getVotePolls(voteId)
       
@@ -1507,11 +1752,12 @@ export default function VoteManagePage() {
         })
         
         const votersData = await Promise.race([votersPromise, timeoutPromise])
-        const convertedVoters = votersData.map(convertVoterInfo)
+        const convertedVoters = votersData.map(voter => convertVoterInfo(voter, details))
+        console.log("Voters[0]: ", votersPromise)
         setVoters(convertedVoters)
         
         // Calculate analytics
-        const analyticsData = calculateAnalytics(convertedVoters, pollsWithOptions, details)
+        const analyticsData = calculateAnalytics(convertedVoters, pollsWithOptions, details, whitelistData)
         setAnalytics(analyticsData)
       } catch (voterError) {
         console.error('⚠️ Error fetching voters:', voterError)
@@ -1519,7 +1765,7 @@ export default function VoteManagePage() {
         setVoters([])
         
         // Still generate analytics with available data
-        const analyticsData = calculateAnalytics([], pollsWithOptions, details)
+        const analyticsData = calculateAnalytics([], pollsWithOptions, details, whitelistData)
         setAnalytics(analyticsData)
         
         // Set a warning but don't fail the entire operation
@@ -1550,7 +1796,7 @@ export default function VoteManagePage() {
       setIsLoading(false)
       setIsRefreshing(false)
     }
-  }, [voteId, wallet.connected, wallet.address, getVoteDetails, getVotePolls, getVotersForVote, getPollOptions, toast])
+  }, [voteId, wallet.connected, wallet.address, getVoteDetails, getVotePolls, getVotersForVote, getPollOptions, getWhitelistedVoters, toast])
   
   // Initial data fetch
   useEffect(() => {
@@ -1658,70 +1904,87 @@ export default function VoteManagePage() {
         </TabsList>
         
         <TabsContent value="overview" className="space-y-6">
-          <div className="grid gap-6 lg:grid-cols-2">
+          <div className="grid gap-4 sm:gap-6 md:grid-cols-1 lg:grid-cols-2">
             {/* Quick Stats */}
             <Card>
               <CardHeader>
                 <CardTitle>Vote Summary</CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <div className="text-2xl font-bold">{analytics.totalVoters}</div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="text-center sm:text-left">
+                    <div className="text-xl sm:text-2xl font-bold">{analytics.totalVoters}</div>
                     <div className="text-sm text-muted-foreground">Total Voters</div>
                   </div>
-                  <div>
-                    <div className="text-2xl font-bold">{voteDetails.pollsCount}</div>
+                  <div className="text-center sm:text-left">
+                    <div className="text-xl sm:text-2xl font-bold">{voteDetails.pollsCount}</div>
                     <div className="text-sm text-muted-foreground">Polls</div>
                   </div>
+                  {(voteDetails.paymentAmount > 0 || voteDetails.useTokenWeighting) && (
+                    <div className="col-span-1 sm:col-span-2 text-center sm:text-left">
+                      <div className="text-xl sm:text-2xl font-bold">{formatTokenAmount(analytics.averageTokenBalance, "SUI")}</div>
+                      <div className="text-sm text-muted-foreground">Average Token Balance</div>
+                    </div>
+                  )}
+                  {voteDetails.useTokenWeighting && (
+                    <div className="col-span-1 sm:col-span-2 text-center sm:text-left">
+                      <div className="text-xl sm:text-2xl font-bold">{analytics.totalVoteWeight.toLocaleString()}</div>
+                      <div className="text-sm text-muted-foreground">Total Vote Weight</div>
+                    </div>
+                  )}
                 </div>
                 
                 <div className="space-y-2">
-                  <div className="flex justify-between text-sm">
-                    <span>Participation Rate</span>
-                    <span>{analytics.participationRate.toFixed(1)}%</span>
+                  <div className="flex flex-col sm:flex-row sm:justify-between gap-1 sm:gap-0">
+                    <span className="text-sm font-medium">Participation Rate</span>
+                    <span className="text-sm font-bold text-primary">{analytics.participationRate.toFixed(1)}%</span>
                   </div>
-                  <Progress value={analytics.participationRate} />
+                  <Progress value={analytics.participationRate} className="h-2" />
                 </div>
                 
                 {lastUpdated && (
-                  <div className="text-xs text-muted-foreground">
+                  <div className="text-xs text-muted-foreground text-center sm:text-left">
                     Last updated: {format(lastUpdated, 'MMM dd, HH:mm:ss')}
                   </div>
                 )}
               </CardContent>
             </Card>
             
-            {/* Top Voters */}
-            <Card>
-              <CardHeader>
-                <CardTitle>Top Voters by Weight</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-3">
-                  {analytics.topVoters.slice(0, 5).map((voter, index) => (
-                    <div key={voter.address} className="flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <div>
-                          <div className="font-mono text-sm">{voter.shortAddress}</div>
+            {/* Top Voters - only show for weighted votes */}
+            {voteDetails?.useTokenWeighting && (
+              <Card>
+                <CardHeader>
+                  <CardTitle>Top Voters by Weight</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-3">
+                    {analytics.topVoters.slice(0, 5).map((voter, index) => (
+                      <div key={voter.address} className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 sm:gap-3 p-2 rounded-lg bg-muted/30">
+                        <div className="flex items-center gap-3 min-w-0 flex-1">
+                          <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
+                            <span className="text-xs font-bold text-primary">#{index + 1}</span>
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="font-mono text-sm truncate">{voter.shortAddress}</div>
+                            <div className="text-xs text-muted-foreground">
+                              {format(new Date(voter.timestamp), 'MMM dd, HH:mm')}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="text-left sm:text-right flex-shrink-0">
+                          <div className="font-semibold text-sm sm:text-base">
+                            {voter.voteWeight} weight
+                          </div>
                           <div className="text-xs text-muted-foreground">
-                            {format(new Date(voter.timestamp), 'MMM dd, HH:mm')}
+                            {formatTokenAmount(voter.tokenBalance, "SUI")} tokens
                           </div>
                         </div>
                       </div>
-                      <div className="text-right">
-                        <div className="font-semibold">
-                          {formatTokenAmount(voter.voteWeight)}
-                        </div>
-                        <div className="text-xs text-muted-foreground">
-                          {formatTokenAmount(voter.tokenBalance)} tokens
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
           </div>
           
           {/* Recent Activity */}
@@ -1735,22 +1998,24 @@ export default function VoteManagePage() {
                   .sort((a, b) => b.timestamp - a.timestamp)
                   .slice(0, 10)
                   .map((voter) => (
-                    <div key={voter.address} className="flex items-center justify-between py-2 border-b last:border-b-0">
-                      <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
+                    <div key={voter.address} className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 sm:gap-3 py-2 border-b last:border-b-0">
+                      <div className="flex items-center gap-3 min-w-0 flex-1">
+                        <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
                           <Vote className="h-4 w-4" />
                         </div>
-                        <div>
-                          <div className="font-mono text-sm">{voter.shortAddress}</div>
+                        <div className="min-w-0 flex-1">
+                          <div className="font-mono text-sm truncate">{voter.shortAddress}</div>
                           <div className="text-xs text-muted-foreground">
                             Voted {formatDistanceToNow(new Date(voter.timestamp), { addSuffix: true })}
                           </div>
                         </div>
                       </div>
-                      <div className="text-right">
-                        <div className="text-sm font-semibold">
-                          Weight: {formatTokenAmount(voter.voteWeight)}
-                        </div>
+                      <div className="text-left sm:text-right flex-shrink-0">
+                        {voteDetails?.useTokenWeighting && (
+                          <div className="text-sm font-semibold">
+                            Weight: {voter.voteWeight}
+                          </div>
+                        )}
                         <div className="text-xs text-muted-foreground">
                           {voter.pollResponses.length} poll{voter.pollResponses.length !== 1 ? 's' : ''}
                         </div>
@@ -1782,6 +2047,7 @@ export default function VoteManagePage() {
             polls={polls}
             filters={filters}
             onFiltersChange={setFilters}
+            voteDetails={voteDetails}
           />
         </TabsContent>
         
@@ -1801,7 +2067,7 @@ export default function VoteManagePage() {
         title={voteDetails.title}
         url={`${window.location.origin}/vote/${voteId}`}
         description={voteDetails.description}
-        endDate={voteDetails.endTime}
+        endDate={voteDetails.endTimestamp}
         participantCount={voters.length}
       />
     </div>

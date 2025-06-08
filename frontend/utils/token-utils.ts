@@ -34,7 +34,8 @@ export function toDecimalUnits(amount: string | number, decimals: number): strin
  * @returns Human-readable amount as string
  */
 export function fromDecimalUnits(decimalAmount: string | number, decimals: number): string {
-  if (!decimalAmount || decimalAmount === "" || decimalAmount === "0") {
+  console.log(decimalAmount, decimals)
+  if (!decimalAmount || decimalAmount === "" || decimalAmount === "0" || decimalAmount === 0) {
     return "0"
   }
 
@@ -48,8 +49,10 @@ export function fromDecimalUnits(decimalAmount: string | number, decimals: numbe
   // Convert from decimal units by dividing by 10^decimals
   const humanAmount = numDecimalAmount / Math.pow(10, decimals)
   
-  // Return with appropriate precision, removing trailing zeros
-  return humanAmount.toString()
+  // Return with appropriate precision, avoiding scientific notation
+  // Use toFixed to ensure proper decimal representation, then remove trailing zeros
+  const fixed = humanAmount.toFixed(decimals)
+  return parseFloat(fixed).toString()
 }
 
 /**

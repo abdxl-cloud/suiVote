@@ -250,8 +250,8 @@ export function VoteMediaHandler({ children }: { children: (handlers: MediaHandl
       const startTimestamp = params.startDate ? params.startDate.getTime() : Date.now()
       const endTimestamp = params.endDate ? params.endDate.getTime() : Date.now() + 7 * 24 * 60 * 60 * 1000
       const requiredToken = params.requiredToken !== "none" ? params.requiredToken : ""
-      const requiredAmount = parseInt(params.requiredAmount || "0", 10)
-      const paymentAmount = parseInt(params.paymentAmount || "0", 10)
+      const requiredAmount = parseFloat(params.requiredAmount || "0")
+      const paymentAmount = parseFloat(params.paymentAmount || "0")
       const requireAllPolls = params.requireAllPolls !== undefined ? params.requireAllPolls : true
       const showLiveStats = params.showLiveStats !== undefined ? params.showLiveStats : false
 
