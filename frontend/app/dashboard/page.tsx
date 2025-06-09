@@ -318,8 +318,8 @@ export default function DashboardPage() {
     if (!dataLoaded || !votes.length) return null
 
     // Cache expensive calculations
-    const totalVotes = votes.reduce((sum, vote) => sum + vote.totalVotes, 0)
-    const totalPolls = createdVotes.reduce((sum, vote) => sum + vote.pollsCount, 0)
+    const totalVotes = createdVotes.reduce((sum, vote) => sum + (vote.totalVotes || 0), 0)
+    const totalPolls = createdVotes.reduce((sum, vote) => sum + (vote.pollsCount || 0), 0)
     const whitelistedVotes = votes.filter(vote => vote.hasWhitelist && vote.isWhitelisted).length
     
     // Calculate deadlines for active and pending votes
@@ -369,6 +369,32 @@ export default function DashboardPage() {
       .sort((a, b) => b.votes - a.votes)
       .slice(0, 5)
 
+    // Calculate poll count vs participation data
+    const pollCountData = createdVotes.length > 0 ? (() => {
+      // Group votes by poll count
+      const pollGroups = createdVotes.reduce((acc, vote) => {
+        const pollCount = vote.pollsCount || 1
+        if (!acc[pollCount]) {
+          acc[pollCount] = []
+        }
+        acc[pollCount].push(vote)
+        return acc
+      }, {} as Record<number, any[]>)
+
+      // Calculate average participation for each poll count group
+      return Object.entries(pollGroups).map(([pollCount, votesInGroup]) => {
+        const avgParticipation = votesInGroup.reduce((sum, vote) => sum + (vote.totalVotes || 0), 0) / votesInGroup.length
+        const totalVotesInGroup = votesInGroup.reduce((sum, vote) => sum + (vote.totalVotes || 0), 0)
+        
+        return {
+          pollCount: parseInt(pollCount),
+          avgParticipation: Math.round(avgParticipation * 100) / 100,
+          votes: totalVotesInGroup,
+          voteCount: votesInGroup.length
+        }
+      }).sort((a, b) => a.pollCount - b.pollCount)
+    })() : []
+
     return {
       totalVotes,
       totalPolls,
@@ -382,6 +408,7 @@ export default function DashboardPage() {
       voteTypes,
       statusDistribution,
       popularVotes,
+      pollCountData,
       engagementRate: createdVotes.length > 0 ? Math.round((createdVotes.filter(vote => vote.totalVotes > 0).length / createdVotes.length) * 100) : 0
     }
   }, [votes, createdVotes, votesByStatus, now, dataLoaded])

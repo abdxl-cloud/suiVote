@@ -308,16 +308,26 @@ export default function VotePage() {
       if (wallet.connected && wallet.address) {
         // Check voting status - but preserve local state if user just voted
         // This prevents blockchain propagation delays from overriding correct state
-        if (!hasVoted) {
+        // Also check localStorage for persistent voted state
+        const localVotedState = localStorage.getItem(`hasVoted_${params.id}_${wallet.address}`)
+        const persistentHasVoted = localVotedState === 'true' || hasVoted
+        
+        if (!persistentHasVoted) {
           console.log("Checking blockchain for hasVoted status");
           votedStatus = await suivote.hasVoted(wallet.address, params.id)
           console.log("Blockchain hasVoted result:", votedStatus);
           setHasVoted(votedStatus)
           setSubmitted(votedStatus)
+          // Store in localStorage for persistence
+          if (votedStatus) {
+            localStorage.setItem(`hasVoted_${params.id}_${wallet.address}`, 'true')
+          }
         } else {
-          // User has already voted according to local state, keep it
-          console.log("Preserving local hasVoted state:", hasVoted);
-          votedStatus = hasVoted
+          // User has already voted according to local state or localStorage, keep it
+          console.log("Preserving local hasVoted state:", persistentHasVoted);
+          votedStatus = true
+          setHasVoted(true)
+          setSubmitted(true)
         }
 
         // Note: Routing logic moved to polls page - users are now directed to appropriate pages from there
@@ -1053,6 +1063,11 @@ export default function VotePage() {
         duration: 5000,
       });
 
+      // Immediately store voted state in localStorage for persistence
+      if (wallet.address) {
+        localStorage.setItem(`hasVoted_${params.id}_${wallet.address}`, 'true')
+      }
+
       // Handle post-submission flow
       setTimeout(() => {
         setTxStatus(TransactionStatus.IDLE);
@@ -1401,6 +1416,7 @@ export default function VotePage() {
                 </div>
               </div>
 
+
               {Date.now() >= vote.startTimestamp && vote.canBeStarted && wallet.connected ? (
                 <div className="space-y-4">
                   <Alert className="bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800">
@@ -1436,6 +1452,104 @@ export default function VotePage() {
                     This vote will be available for participation starting on {formatDate(vote.startTimestamp)} at{" "}
                     {formatTime(vote.startTimestamp)}.
                   </AlertDescription>
+                  <div className="mb-6">
+                  <div className="flex items-center gap-2 mb-3">
+                    <div className="bg-purple-100 dark:bg-purple-900/30 p-2 rounded-full">
+                      <Timer className="h-4 w-4 text-purple-600 dark:text-purple-400" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium">Set Reminder</p>
+                      <p className="text-xs text-muted-foreground">Add this vote to your calendar</p>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="gap-2 text-xs"
+                      onClick={() => {
+                        const startDate = new Date(vote.startTimestamp)
+                        const endDate = new Date(vote.endTimestamp)
+                        const title = encodeURIComponent(`Vote: ${vote.title}`)
+                        const details = encodeURIComponent(`Participate in the vote: ${vote.title}${vote.description ? `\n\n${vote.description}` : ''}\n\nVote URL: ${window.location.href}`)
+                        const startTime = startDate.toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z'
+                        const endTime = endDate.toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z'
+                        
+                        const googleUrl = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${title}&dates=${startTime}/${endTime}&details=${details}&location=${encodeURIComponent(window.location.href)}`
+                        window.open(googleUrl, '_blank')
+                      }}
+                    >
+                      <Calendar className="h-3 w-3" />
+                      Google Calendar
+                    </Button>
+                    
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="gap-2 text-xs"
+                      onClick={() => {
+                        const startDate = new Date(vote.startTimestamp)
+                        const endDate = new Date(vote.endTimestamp)
+                        const title = encodeURIComponent(`Vote: ${vote.title}`)
+                        const details = encodeURIComponent(`Participate in the vote: ${vote.title}${vote.description ? `\n\n${vote.description}` : ''}\n\nVote URL: ${window.location.href}`)
+                        const startTime = startDate.toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z'
+                        const endTime = endDate.toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z'
+                        
+                        const outlookUrl = `https://outlook.live.com/calendar/0/deeplink/compose?subject=${title}&startdt=${startTime}&enddt=${endTime}&body=${details}&location=${encodeURIComponent(window.location.href)}`
+                        window.open(outlookUrl, '_blank')
+                      }}
+                    >
+                      <Calendar className="h-3 w-3" />
+                      Outlook
+                    </Button>
+                    
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="gap-2 text-xs"
+                      onClick={() => {
+                        const startDate = new Date(vote.startTimestamp)
+                        const endDate = new Date(vote.endTimestamp)
+                        const title = `Vote: ${vote.title}`
+                        const details = `Participate in the vote: ${vote.title}${vote.description ? `\n\n${vote.description}` : ''}\n\nVote URL: ${window.location.href}`
+                        
+                        // Create ICS file content
+                        const icsContent = [
+                          'BEGIN:VCALENDAR',
+                          'VERSION:2.0',
+                          'PRODID:-//SuiVote//Vote Reminder//EN',
+                          'BEGIN:VEVENT',
+                          `UID:${Date.now()}@suivote.com`,
+                          `DTSTART:${startDate.toISOString().replace(/[-:]/g, '').split('.')[0]}Z`,
+                          `DTEND:${endDate.toISOString().replace(/[-:]/g, '').split('.')[0]}Z`,
+                          `SUMMARY:${title}`,
+                          `DESCRIPTION:${details.replace(/\n/g, '\\n')}`,
+                          `URL:${window.location.href}`,
+                          'END:VEVENT',
+                          'END:VCALENDAR'
+                        ].join('\r\n')
+                        
+                        // Create and download ICS file
+                        const blob = new Blob([icsContent], { type: 'text/calendar;charset=utf-8' })
+                        const url = window.URL.createObjectURL(blob)
+                        const link = document.createElement('a')
+                        link.href = url
+                        link.download = `vote-reminder-${vote.title.replace(/[^a-zA-Z0-9]/g, '-')}.ics`
+                        document.body.appendChild(link)
+                        link.click()
+                        document.body.removeChild(link)
+                        window.URL.revokeObjectURL(url)
+                        
+                        toast.success('Calendar file downloaded!', {
+                          description: 'Open the file to add the reminder to your calendar app.'
+                        })
+                      }}
+                    >
+                      <Calendar className="h-3 w-3" />
+                      Download .ics
+                    </Button>
+                  </div>
+                </div>
                 </Alert>
               )}
             </CardContent>
@@ -2092,11 +2206,107 @@ export default function VotePage() {
                 <Alert className="bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800 shadow-sm rounded-lg">
                   <CheckCircle2 className="h-4 w-4" />
                   <AlertTitle className="text-sm font-medium">Thank you for voting!</AlertTitle>
-                  <AlertDescription className="text-sm">
-                    {vote.showLiveStats ?
-                      "Your vote has been recorded. Live results are shown below." :
-                      "Your vote has been recorded. Results will be available when voting ends."
-                    }
+                  <AlertDescription className="text-sm space-y-3">
+                    <div>
+                      {vote.showLiveStats ?
+                        "Your vote has been recorded. Live results are shown below." :
+                        "Your vote has been recorded. Results will be available when voting ends."
+                      }
+                    </div>                 
+                      <div className="pt-2 border-t border-green-200 dark:border-green-700">
+                        <div className="flex items-center gap-2 mb-2">
+                          <Timer className="h-3 w-3 text-green-600 dark:text-green-400" />
+                          <span className="text-xs font-medium">Set closing reminder:</span>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="gap-2 text-xs h-7 bg-white dark:bg-green-900/30 border-green-300 dark:border-green-600 hover:bg-green-50 dark:hover:bg-green-900/50"
+                            onClick={() => {
+                              const endDate = new Date(vote.endTimestamp)
+                              const reminderDate = new Date(vote.endTimestamp + 5 * 60 * 1000) // 5 minutes after voting ends
+                              const title = encodeURIComponent(`Vote Results: ${vote.title}`)
+                              const details = encodeURIComponent(`Voting has ended for: ${vote.title}${vote.description ? `\n\n${vote.description}` : ''}\n\nCheck results at: ${window.location.href}`)
+                              const reminderTime = reminderDate.toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z'
+                              const endTime = new Date(reminderDate.getTime() + 30 * 60 * 1000).toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z' // 30 min duration
+                              
+                              const googleUrl = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${title}&dates=${reminderTime}/${endTime}&details=${details}&location=${encodeURIComponent(window.location.href)}`
+                              window.open(googleUrl, '_blank')
+                            }}
+                          >
+                            <Calendar className="h-3 w-3" />
+                            Google
+                          </Button>
+                          
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="gap-2 text-xs h-7 bg-white dark:bg-green-900/30 border-green-300 dark:border-green-600 hover:bg-green-50 dark:hover:bg-green-900/50"
+                            onClick={() => {
+                              const endDate = new Date(vote.endTimestamp)
+                              const reminderDate = new Date(vote.endTimestamp + 5 * 60 * 1000) // 5 minutes after voting ends
+                              const title = encodeURIComponent(`Vote Results: ${vote.title}`)
+                              const details = encodeURIComponent(`Voting has ended for: ${vote.title}${vote.description ? `\n\n${vote.description}` : ''}\n\nCheck results at: ${window.location.href}`)
+                              const reminderTime = reminderDate.toISOString()
+                              const endTime = new Date(reminderDate.getTime() + 30 * 60 * 1000).toISOString() // 30 min duration
+                              
+                              const outlookUrl = `https://outlook.live.com/calendar/0/deeplink/compose?subject=${title}&startdt=${reminderTime}&enddt=${endTime}&body=${details}&location=${encodeURIComponent(window.location.href)}`
+                              window.open(outlookUrl, '_blank')
+                            }}
+                          >
+                            <Calendar className="h-3 w-3" />
+                            Outlook
+                          </Button>
+                          
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="gap-2 text-xs h-7 bg-white dark:bg-green-900/30 border-green-300 dark:border-green-600 hover:bg-green-50 dark:hover:bg-green-900/50"
+                            onClick={() => {
+                              const endDate = new Date(vote.endTimestamp)
+                              const reminderDate = new Date(vote.endTimestamp + 5 * 60 * 1000) // 5 minutes after voting ends
+                              const title = `Vote Results: ${vote.title}`
+                              const details = `Voting has ended for: ${vote.title}${vote.description ? `\n\n${vote.description}` : ''}\n\nCheck results at: ${window.location.href}`
+                              
+                              // Create ICS file content
+                              const icsContent = [
+                                'BEGIN:VCALENDAR',
+                                'VERSION:2.0',
+                                'PRODID:-//SuiVote//Vote Results Reminder//EN',
+                                'BEGIN:VEVENT',
+                                `UID:${Date.now()}-results@suivote.com`,
+                                `DTSTART:${reminderDate.toISOString().replace(/[-:]/g, '').split('.')[0]}Z`,
+                                `DTEND:${new Date(reminderDate.getTime() + 30 * 60 * 1000).toISOString().replace(/[-:]/g, '').split('.')[0]}Z`,
+                                `SUMMARY:${title}`,
+                                `DESCRIPTION:${details.replace(/\n/g, '\\n')}`,
+                                `URL:${window.location.href}`,
+                                'END:VEVENT',
+                                'END:VCALENDAR'
+                              ].join('\r\n')
+                              
+                              // Create and download ICS file
+                              const blob = new Blob([icsContent], { type: 'text/calendar;charset=utf-8' })
+                              const url = window.URL.createObjectURL(blob)
+                              const link = document.createElement('a')
+                              link.href = url
+                              link.download = `vote-results-reminder-${vote.title.replace(/[^a-zA-Z0-9]/g, '-')}.ics`
+                              document.body.appendChild(link)
+                              link.click()
+                              document.body.removeChild(link)
+                              window.URL.revokeObjectURL(url)
+                              
+                              toast.success('Calendar reminder downloaded!', {
+                                description: 'You\'ll be reminded when vote results are available.'
+                              })
+                            }}
+                          >
+                            <Calendar className="h-3 w-3" />
+                            .ics
+                          </Button>
+                        </div>
+                      </div>
+                    
                   </AlertDescription>
                 </Alert>
               ) : (

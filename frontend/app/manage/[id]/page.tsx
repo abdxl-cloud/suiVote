@@ -723,6 +723,70 @@ const VoteHeader = ({
             <span className="hidden sm:inline">Share</span>
           </Button>
           
+          {/* Reminder functionality for upcoming votes */}
+          {status.status === 'Upcoming' && voteDetails.startTimestamp - Date.now() > 5 * 60 * 1000 && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="sm" className="flex-1 sm:flex-none">
+                  <Calendar className="h-4 w-4 sm:mr-2" />
+                  <span className="hidden sm:inline">Set Reminder</span>
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem 
+                  onClick={() => {
+                    const startDate = new Date(voteDetails.startTimestamp)
+                    const endDate = new Date(voteDetails.endTimestamp)
+                    const googleUrl = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(voteDetails.title)}&dates=${startDate.toISOString().replace(/[-:]/g, '').split('.')[0]}Z/${endDate.toISOString().replace(/[-:]/g, '').split('.')[0]}Z&details=${encodeURIComponent(`Vote on: ${voteDetails.description}\n\nVote ID: ${voteDetails.id}`)}&location=${encodeURIComponent(window.location.origin + '/vote/' + voteDetails.id)}`
+                    window.open(googleUrl, '_blank')
+                  }}
+                >
+                  Add to Google Calendar
+                </DropdownMenuItem>
+                <DropdownMenuItem 
+                  onClick={() => {
+                    const startDate = new Date(voteDetails.startTimestamp)
+                    const endDate = new Date(voteDetails.endTimestamp)
+                    const outlookUrl = `https://outlook.live.com/calendar/0/deeplink/compose?subject=${encodeURIComponent(voteDetails.title)}&startdt=${startDate.toISOString()}&enddt=${endDate.toISOString()}&body=${encodeURIComponent(`Vote on: ${voteDetails.description}\n\nVote ID: ${voteDetails.id}\n\nVote Link: ${window.location.origin}/vote/${voteDetails.id}`)}&location=${encodeURIComponent(window.location.origin + '/vote/' + voteDetails.id)}`
+                    window.open(outlookUrl, '_blank')
+                  }}
+                >
+                  Add to Outlook
+                </DropdownMenuItem>
+                <DropdownMenuItem 
+                  onClick={() => {
+                    const startDate = new Date(voteDetails.startTimestamp)
+                    const endDate = new Date(voteDetails.endTimestamp)
+                    const icsContent = [
+                      'BEGIN:VCALENDAR',
+                      'VERSION:2.0',
+                      'PRODID:-//SuiVote//EN',
+                      'BEGIN:VEVENT',
+                      `UID:${voteDetails.id}@suivote.com`,
+                      `DTSTART:${startDate.toISOString().replace(/[-:]/g, '').split('.')[0]}Z`,
+                      `DTEND:${endDate.toISOString().replace(/[-:]/g, '').split('.')[0]}Z`,
+                      `SUMMARY:${voteDetails.title}`,
+                      `DESCRIPTION:Vote on: ${voteDetails.description}\n\nVote ID: ${voteDetails.id}\n\nVote Link: ${window.location.origin}/vote/${voteDetails.id}`,
+                      `LOCATION:${window.location.origin}/vote/${voteDetails.id}`,
+                      'END:VEVENT',
+                      'END:VCALENDAR'
+                    ].join('\r\n')
+                    
+                    const blob = new Blob([icsContent], { type: 'text/calendar;charset=utf-8' })
+                    const link = document.createElement('a')
+                    link.href = URL.createObjectURL(blob)
+                    link.download = `${voteDetails.title.replace(/[^a-z0-9]/gi, '_').toLowerCase()}_reminder.ics`
+                    document.body.appendChild(link)
+                    link.click()
+                    document.body.removeChild(link)
+                  }}
+                >
+                  Download .ics file
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
+          
 
         </div>
       </div>
