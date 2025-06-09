@@ -225,43 +225,16 @@ export default function VotePage() {
 
       // Note: Routing logic moved to polls page - users are now directed to appropriate pages from there
 
-      // Check if vote is upcoming but start time has passed - automatically start it
       const currentTime = Date.now()
       if (voteDetails.status === "upcoming" && currentTime >= voteDetails.startTimestamp) {
-        if (wallet.connected) {
-          try {
-            // Automatically start the vote
-            const transaction = suivote.startVoteTransaction(params.id)
-            const response = await suivote.executeTransaction(transaction)
-            
-            toast.success("Vote automatically started!", {
-              description: "The vote is now active and ready to receive votes.",
-              duration: 5000,
-            })
-            
-            // Store transaction digest
-            if (response && response.digest) {
-              localStorage.setItem(`vote_${params.id}_txDigest`, response.digest)
-            }
-            
-            // Refresh vote data to get updated status
-            setTimeout(() => {
-              fetchVoteData()
-            }, 1000)
-            
-          } catch (error) {
-            console.error("Error auto-starting vote:", error)
-            // Fall back to manual activation if auto-start fails
-            toast.warning("Vote ready to start", {
-              description: "Auto-start failed. Please start the vote manually.",
-              duration: 5000,
-            })
-            voteDetails.canBeStarted = true;
-          }
-        } else {
-          // If wallet not connected, just mark as ready to start
-          voteDetails.canBeStarted = true;
-        }
+        toast.info("Vote has started!", {
+          description: "Refreshing to show the active vote.",
+          duration: 3000,
+        })
+        
+        setTimeout(() => {
+          fetchVoteData()
+        }, 1000)
       }
 
       setVote(voteDetails)
@@ -310,9 +283,9 @@ export default function VotePage() {
         // This prevents blockchain propagation delays from overriding correct state
         // Also check localStorage for persistent voted state
         const localVotedState = localStorage.getItem(`hasVoted_${params.id}_${wallet.address}`)
-        const persistentHasVoted = localVotedState === 'true' || hasVoted
+        const persistentHasVoted = localVotedState === 'true'
         
-        if (!persistentHasVoted) {
+        if (!persistentHasVoted && !hasVoted) {
           console.log("Checking blockchain for hasVoted status");
           votedStatus = await suivote.hasVoted(wallet.address, params.id)
           console.log("Blockchain hasVoted result:", votedStatus);
@@ -324,7 +297,7 @@ export default function VotePage() {
           }
         } else {
           // User has already voted according to local state or localStorage, keep it
-          console.log("Preserving local hasVoted state:", persistentHasVoted);
+          console.log("Preserving local hasVoted state - localStorage:", persistentHasVoted, "current state:", hasVoted);
           votedStatus = true
           setHasVoted(true)
           setSubmitted(true)
