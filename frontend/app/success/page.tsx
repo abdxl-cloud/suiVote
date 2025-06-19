@@ -21,7 +21,8 @@ import {
   QrCode,
   ClipboardCopy,
   Link as LinkIcon,
-  ArrowRight,
+  AlertTriangle,
+  Shield,
   Users,
   ChevronRight,
   AlertCircle, // Added missing import
@@ -29,6 +30,8 @@ import {
   Info, // Added missing import
   Wallet, // Added missing import
   ListChecks, // Added missing import
+  UserCheck, // Added missing import
+  Coins, // Added missing import
   Plus // Moved from the bottom to the top imports
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -78,6 +81,13 @@ export default function SuccessPage() {
   const [qrVisible, setQrVisible] = useState(false)
   const [activeTab, setActiveTab] = useState<string>("share")
   const [confettiLaunched, setConfettiLaunched] = useState(false)
+  
+  // Wallet info state
+  const [walletInfo, setWalletInfo] = useState({
+    loading: true,
+    balance: null as number | null,
+    whitelistWeight: null as number | null
+  })
 
   // Convenience references for components
   const loading = fetchState.loading;
@@ -252,6 +262,48 @@ export default function SuccessPage() {
     };
   }, [fetchState.voteId, fetchState.attemptCount, searchParams]);
 
+  // Fetch wallet info when wallet is connected and vote details are available
+  useEffect(() => {
+    const fetchWalletInfo = async () => {
+      if (!wallet.address || !voteDetails) {
+        setWalletInfo({
+          loading: false,
+          balance: null,
+          whitelistWeight: null
+        });
+        return;
+      }
+
+      setWalletInfo(prev => ({ ...prev, loading: true }));
+
+      try {
+        // Fetch SUI balance
+        const balance = await suivote.getSuiBalance(wallet.address);
+        
+        // Fetch whitelist weight if vote has whitelist
+        let whitelistWeight = null;
+        if (voteDetails.hasWhitelist) {
+          whitelistWeight = await suivote.getWhitelistWeight(voteDetails.id, wallet.address);
+        }
+
+        setWalletInfo({
+          loading: false,
+          balance,
+          whitelistWeight
+        });
+      } catch (error) {
+        console.error('Error fetching wallet info:', error);
+        setWalletInfo({
+          loading: false,
+          balance: null,
+          whitelistWeight: null
+        });
+      }
+    };
+
+    fetchWalletInfo();
+  }, [wallet.address, voteDetails]);
+
   // Format date
   const formatDate = (timestamp: number) => {
     try {
@@ -294,6 +346,32 @@ export default function SuccessPage() {
   const truncateAddress = (address: string | null | undefined) => {
     if (!address) return ""
     return `${address.substring(0, 6)}...${address.substring(address.length - 4)}`
+  }
+
+  // Check if user can participate in the vote
+  const canParticipateInVote = () => {
+    if (!wallet.connected || !wallet.address || !voteDetails) {
+      return false;
+    }
+
+    // Check if vote is active
+    if (voteDetails.status !== "active") {
+      return false;
+    }
+
+    // If vote has whitelist, check whitelist weight
+    if (voteDetails.hasWhitelist && walletInfo.whitelistWeight !== null) {
+      return walletInfo.whitelistWeight > 0;
+    }
+
+    // If vote has token requirements, check if user has sufficient balance
+    if (voteDetails.tokenRequirement && voteDetails.tokenAmount) {
+      // This would need actual token balance check, but for now assume true if wallet is connected
+      return true;
+    }
+
+    // Default: if wallet is connected and vote is active, user can participate
+    return true;
   }
 
   // Get transaction explorer URL
@@ -699,6 +777,97 @@ export default function SuccessPage() {
               </AlertDescription>
             </Alert>
 
+            {/* Enhanced wallet status section */}
+            {wallet.connected && (
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.3 }}
+                className="bg-muted/30 p-4 rounded-lg border border-border"
+              >
+                <h3 className="text-sm font-medium text-muted-foreground mb-3 flex items-center gap-2">
+                  <UserCheck className="h-4 w-4" />
+                  Your Participation Status
+                </h3>
+                
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {/* Wallet Balance */}
+                  <div className="flex items-center justify-between p-3 bg-background rounded-lg border">
+                    <div className="flex items-center gap-2">
+                      <Coins className="h-4 w-4 text-blue-500" />
+                      <span className="text-sm font-medium">SUI Balance</span>
+                    </div>
+                    <div className="text-right">
+                      {walletInfo.loading ? (
+                        <Skeleton className="h-4 w-16" />
+                      ) : walletInfo.balance !== null ? (
+                        <Badge variant="outline" className="gap-1">
+                          {(walletInfo.balance / 1e9).toFixed(4)} SUI
+                        </Badge>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">N/A</span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Whitelist Status */}
+                  {voteDetails?.hasWhitelist && (
+                    <div className="flex items-center justify-between p-3 bg-background rounded-lg border">
+                      <div className="flex items-center gap-2">
+                        <Shield className="h-4 w-4 text-purple-500" />
+                        <span className="text-sm font-medium">Whitelist Weight</span>
+                      </div>
+                      <div className="text-right">
+                        {walletInfo.loading ? (
+                          <Skeleton className="h-4 w-16" />
+                        ) : walletInfo.whitelistWeight !== null ? (
+                          <Badge 
+                            variant={walletInfo.whitelistWeight > 0 ? "default" : "destructive"}
+                            className="gap-1"
+                          >
+                            {walletInfo.whitelistWeight > 0 ? (
+                              <>
+                                <CheckCircle2 className="h-3 w-3" />
+                                Weight: {walletInfo.whitelistWeight}
+                              </>
+                            ) : (
+                              <>
+                                <AlertTriangle className="h-3 w-3" />
+                                Not Whitelisted
+                              </>
+                            )}
+                          </Badge>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">Checking...</span>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Participation eligibility */}
+                <div className="mt-3 pt-3 border-t border-border">
+                  <div className="flex items-center gap-2">
+                    {canParticipateInVote() ? (
+                      <>
+                        <CheckCircle2 className="h-4 w-4 text-green-500" />
+                        <span className="text-sm text-green-700 dark:text-green-400 font-medium">
+                          You can participate in this vote
+                        </span>
+                      </>
+                    ) : (
+                      <>
+                        <AlertTriangle className="h-4 w-4 text-amber-500" />
+                        <span className="text-sm text-amber-700 dark:text-amber-400 font-medium">
+                          You may not be eligible to participate
+                        </span>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </motion.div>
+            )}
+
             {/* Tabs for different actions */}
             <Tabs defaultValue="share" value={activeTab} onValueChange={setActiveTab} className="w-full">
               <TabsList className="grid grid-cols-3 mb-4">
@@ -886,6 +1055,19 @@ export default function SuccessPage() {
                             {voteDetails.requiredAmount} {voteDetails.requiredToken.split("::").pop()}
                           </Badge>
                           <span className="text-sm text-muted-foreground">required to vote</span>
+                        </div>
+                      </div>
+                    )}
+
+                    {voteDetails.hasWhitelist && (
+                      <div className="bg-purple-50 dark:bg-purple-900/10 p-4 rounded-lg border border-purple-200 dark:border-purple-800">
+                        <h3 className="text-sm font-medium text-muted-foreground mb-1">Whitelist Enabled</h3>
+                        <div className="flex items-center gap-2">
+                          <Badge className="gap-1.5 bg-purple-100 dark:bg-purple-800/80 text-purple-800 dark:text-purple-200 border-purple-200 dark:border-purple-700">
+                            <Shield className="h-3.5 w-3.5" />
+                            Restricted Access
+                          </Badge>
+                          <span className="text-sm text-muted-foreground">Only whitelisted addresses can vote</span>
                         </div>
                       </div>
                     )}

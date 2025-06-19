@@ -7,10 +7,11 @@
 export const SUI_CONFIG = {
   // Network configuration
   NETWORK: process.env.NEXT_PUBLIC_SUI_NETWORK || "testnet",
+  explorerUrl: process.env.NEXT_PUBLIC_SUI_EXPLORER_URL || "https://testnet.suivision.xyz",
 
   // Contract configuration
-  PACKAGE_ID: process.env.NEXT_PUBLIC_SUIVOTE_PACKAGE_ID || "0xbdac727e5cc414447972208250748eeb28290ade37aea7ca6f824e3e98723ba9",
-  ADMIN_ID: process.env.NEXT_PUBLIC_SUIVOTE_ADMIN_ID || "0x0c043dbfbc21ecb4426af4853d51264695a1c42c80c388c11d1ca703ab75c879",
+  PACKAGE_ID: process.env.NEXT_PUBLIC_SUIVOTE_PACKAGE_ID || "0x8be15953dd10056899242f2758739d4fa38b06f13589a3ea82a002673b90ae95",
+  ADMIN_ID: process.env.NEXT_PUBLIC_SUIVOTE_ADMIN_ID || "0xeb0a953ae7db98619da9a2ddce05efc13f2865de860d9aacee5bb1406b222679",
 
   // Feature flags
   ENABLE_LIVE_RESULTS: process.env.NEXT_PUBLIC_ENABLE_LIVE_RESULTS === "true",

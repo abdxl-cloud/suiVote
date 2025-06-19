@@ -27,7 +27,11 @@ import {
   Target,
   Award,
   ChevronRight,
-  Settings
+  Settings,
+  ShieldCheck,
+  Lock,
+  CheckCircle2,
+  AlertTriangle
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardFooter, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
@@ -395,6 +399,31 @@ export default function DashboardPage() {
       }).sort((a, b) => a.pollCount - b.pollCount)
     })() : []
 
+    // Security analytics
+    const securityAnalytics = (() => {
+      const securityLevels = createdVotes.reduce((acc, vote) => {
+        const level = vote.securityLevel || 'basic'
+        acc[level] = (acc[level] || 0) + 1
+        return acc
+      }, {} as Record<string, number>)
+
+      const securityFeatures = {
+        reentrancyProtection: createdVotes.filter(v => v.hasReentrancyProtection).length,
+        inputValidation: createdVotes.filter(v => v.hasInputValidation).length,
+        latestVersion: createdVotes.filter(v => v.version >= 2).length,
+        whitelist: createdVotes.filter(v => v.hasWhitelist).length,
+        tokenGated: createdVotes.filter(v => v.tokenRequirement).length
+      }
+
+      return {
+        levels: securityLevels,
+        features: securityFeatures,
+        averageVersion: createdVotes.length > 0 
+          ? (createdVotes.reduce((sum, v) => sum + (v.version || 1), 0) / createdVotes.length).toFixed(1)
+          : '1.0'
+      }
+    })()
+
     return {
       totalVotes,
       totalPolls,
@@ -403,12 +432,13 @@ export default function DashboardPage() {
       tokenRequiredVotes,
       activeCount: votesByStatus.active.length,
       upcomingCount: votesByStatus.upcoming.length,
-    closedCount: votesByStatus.closed.length,
+      closedCount: votesByStatus.closed.length,
       activityData,
       voteTypes,
       statusDistribution,
       popularVotes,
       pollCountData,
+      securityAnalytics,
       engagementRate: createdVotes.length > 0 ? Math.round((createdVotes.filter(vote => vote.totalVotes > 0).length / createdVotes.length) * 100) : 0
     }
   }, [votes, createdVotes, votesByStatus, now, dataLoaded])
@@ -461,9 +491,82 @@ export default function DashboardPage() {
     }
   }
 
+  // Helper function to render security badge
+  const renderSecurityBadge = (vote: any) => {
+    if (!vote.securityLevel) return null
+    
+    const securityConfig = {
+      basic: {
+        color: 'bg-gray-100 dark:bg-gray-900/30 text-gray-700 dark:text-gray-400',
+        icon: Shield,
+        label: 'Basic Security'
+      },
+      enhanced: {
+        color: 'bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-400',
+        icon: ShieldCheck,
+        label: 'Enhanced Security'
+      },
+      maximum: {
+        color: 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400',
+        icon: ShieldCheck,
+        label: 'Maximum Security'
+      }
+    }
+    
+    const config = securityConfig[vote.securityLevel]
+    const IconComponent = config.icon
+    
+    return (
+      <TooltipProvider>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <div className={`flex items-center text-xs rounded-full px-2 py-0.5 ${config.color}`}>
+              <IconComponent className="h-3 w-3 mr-1" />
+              {config.label}
+            </div>
+          </TooltipTrigger>
+          <TooltipContent>
+            <div className="space-y-1">
+              <div className="font-medium">{config.label}</div>
+              <div className="text-xs space-y-0.5">
+                {vote.hasReentrancyProtection && (
+                  <div className="flex items-center gap-1">
+                    <CheckCircle2 className="h-3 w-3 text-green-500" />
+                    <span>Reentrancy Protection</span>
+                  </div>
+                )}
+                {vote.hasInputValidation && (
+                  <div className="flex items-center gap-1">
+                    <CheckCircle2 className="h-3 w-3 text-green-500" />
+                    <span>Input Validation</span>
+                  </div>
+                )}
+                {vote.version >= 2 && (
+                  <div className="flex items-center gap-1">
+                    <CheckCircle2 className="h-3 w-3 text-green-500" />
+                    <span>Latest Version (v{vote.version})</span>
+                  </div>
+                )}
+                {vote.isLocked && (
+                  <div className="flex items-center gap-1">
+                    <Lock className="h-3 w-3 text-blue-500" />
+                    <span>Transaction Locked</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          </TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+    )
+  }
+
   // Render helper for feature badges
   const renderFeatureBadges = (vote: any) => (
     <div className="flex flex-wrap gap-1.5 mt-2">
+      {/* Security Badge - Always show first */}
+      {renderSecurityBadge(vote)}
+      
       {vote.hasWhitelist && (
         <TooltipProvider>
           <Tooltip>
@@ -696,6 +799,135 @@ export default function DashboardPage() {
               )}
             </section>
             
+            {/* Security Overview Section */}
+            {analytics?.securityAnalytics && createdVotes.length > 0 && (
+              <section className="space-y-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h2 className="text-2xl font-bold bg-gradient-to-r from-foreground to-foreground/80 bg-clip-text text-transparent">
+                      Security Overview
+                    </h2>
+                    <p className="text-muted-foreground mt-1">
+                      Security features and protection levels across your votes
+                    </p>
+                  </div>
+                </div>
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                  {/* Security Level Distribution */}
+                  <Card className="border-0 bg-gradient-to-br from-background/80 to-green-500/5 backdrop-blur-sm">
+                    <CardHeader className="pb-3">
+                      <CardTitle className="text-sm font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-2">
+                        <ShieldCheck className="h-4 w-4" />
+                        Security Levels
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="space-y-2">
+                        {Object.entries(analytics.securityAnalytics.levels).map(([level, count]) => {
+                          const percentage = Math.round((count / createdVotes.length) * 100)
+                          const colors = {
+                            basic: 'bg-gray-200 dark:bg-gray-700',
+                            enhanced: 'bg-orange-200 dark:bg-orange-700',
+                            maximum: 'bg-green-200 dark:bg-green-700'
+                          }
+                          return (
+                            <div key={level} className="flex items-center justify-between text-sm">
+                              <div className="flex items-center gap-2">
+                                <div className={`w-2 h-2 rounded-full ${colors[level as keyof typeof colors]}`} />
+                                <span className="capitalize">{level}</span>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <span className="font-medium">{count}</span>
+                                <span className="text-xs text-muted-foreground">({percentage}%)</span>
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  {/* Security Features */}
+                  <Card className="border-0 bg-gradient-to-br from-background/80 to-blue-500/5 backdrop-blur-sm">
+                    <CardHeader className="pb-3">
+                      <CardTitle className="text-sm font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-2">
+                        <CheckCircle2 className="h-4 w-4" />
+                        Protection Features
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between text-sm">
+                          <span>Reentrancy Protection</span>
+                          <span className="font-medium">{analytics.securityAnalytics.features.reentrancyProtection}</span>
+                        </div>
+                        <div className="flex items-center justify-between text-sm">
+                          <span>Input Validation</span>
+                          <span className="font-medium">{analytics.securityAnalytics.features.inputValidation}</span>
+                        </div>
+                        <div className="flex items-center justify-between text-sm">
+                          <span>Latest Version</span>
+                          <span className="font-medium">{analytics.securityAnalytics.features.latestVersion}</span>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  {/* Access Control */}
+                  <Card className="border-0 bg-gradient-to-br from-background/80 to-purple-500/5 backdrop-blur-sm">
+                    <CardHeader className="pb-3">
+                      <CardTitle className="text-sm font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-2">
+                        <Lock className="h-4 w-4" />
+                        Access Control
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between text-sm">
+                          <span>Whitelisted</span>
+                          <span className="font-medium">{analytics.securityAnalytics.features.whitelist}</span>
+                        </div>
+                        <div className="flex items-center justify-between text-sm">
+                          <span>Token-gated</span>
+                          <span className="font-medium">{analytics.securityAnalytics.features.tokenGated}</span>
+                        </div>
+                        <div className="flex items-center justify-between text-sm">
+                          <span>Open Access</span>
+                          <span className="font-medium">
+                            {createdVotes.length - analytics.securityAnalytics.features.whitelist - analytics.securityAnalytics.features.tokenGated}
+                          </span>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  {/* Version Info */}
+                  <Card className="border-0 bg-gradient-to-br from-background/80 to-amber-500/5 backdrop-blur-sm">
+                    <CardHeader className="pb-3">
+                      <CardTitle className="text-sm font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-2">
+                        <Info className="h-4 w-4" />
+                        Version Info
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="space-y-2">
+                        <div className="text-center">
+                          <div className="text-2xl font-bold text-amber-600">
+                            v{analytics.securityAnalytics.averageVersion}
+                          </div>
+                          <div className="text-xs text-muted-foreground">Average Version</div>
+                        </div>
+                        <div className="text-xs text-center text-muted-foreground">
+                          {analytics.securityAnalytics.features.latestVersion} of {createdVotes.length} votes use latest security features
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </div>
+              </section>
+            )}
+
             {/* Action Required Section & Charts */}
             <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
               {/* Left column - Action Required */}

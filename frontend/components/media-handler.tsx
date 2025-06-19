@@ -42,8 +42,12 @@ interface MediaHandlersContextType {
     showLiveStats?: boolean,
     isTokenWeighted?: boolean
     tokenWeight?: string
+    enableWeightedPayment?: boolean
+    paymentTokenWeight?: string
     enableWhitelist?: boolean
     whitelistAddresses?: string[]
+    whitelistWeights?: { [address: string]: number }
+    whitelistWeightsEnabled?: boolean
     polls: any[]
     onSuccess?: (voteId: string) => void
   }) => Promise<{ transaction: Transaction, execute: () => Promise<any> }>
@@ -185,11 +189,14 @@ export function VoteMediaHandler({ children }: { children: (handlers: MediaHandl
     showLiveStats?: boolean
     isTokenWeighted?: boolean       
     tokenWeight?: string            
+    enableWeightedPayment?: boolean
+    paymentTokenWeight?: string
     enableWhitelist?: boolean        
     whitelistAddresses?: string[]
+    whitelistWeights?: { [address: string]: number }
+    whitelistWeightsEnabled?: boolean
     polls: any[]
-    onSuccess?: (voteId: string) => void
-  }) => {
+    onSuccess?: (voteId: string) => void }) => {
     try {
       setLoading(true)
       
@@ -257,7 +264,24 @@ export function VoteMediaHandler({ children }: { children: (handlers: MediaHandl
 
 
       // Create a transaction using the SuiVoteService
-      
+      // Always assign default weights when whitelist addresses exist to ensure whitelist weighting priority
+      const whitelistAddresses = params.whitelistAddresses || []
+       
+       // Generate voter weights for whitelist
+       let voterWeights: number[] = []
+       if (whitelistAddresses && whitelistAddresses.length > 0 && params.whitelistWeightsEnabled && params.whitelistWeights) {
+         // Only assign weights when whitelist weighting is explicitly enabled
+         voterWeights = whitelistAddresses.map(address => {
+           const weight = params.whitelistWeights![address]
+           if (weight === undefined || weight === null || isNaN(weight)) {
+             console.warn(`Invalid weight for address ${address}, using default weight of 1`)
+             return 1
+           }
+           // Convert percentage to decimal (e.g., 50% -> 0.5)
+           return weight / 100
+         })
+       }
+       // When whitelist weighting is not enabled, pass empty array for voter weights     
       const transaction = await createCompleteVoteTransaction(
         params.voteTitle,
         params.voteDescription,
@@ -270,8 +294,11 @@ export function VoteMediaHandler({ children }: { children: (handlers: MediaHandl
         showLiveStats,
         pollData,
         params.isTokenWeighted || false,
-        params.tokenWeight || "1",
-        params.whitelistAddresses || []
+        parseFloat(params.tokenWeight || "1"),
+        params.enableWeightedPayment || false,
+        whitelistAddresses,
+        voterWeights,
+        parseFloat(params.paymentTokenWeight || "0.1")
       )
       
       // Wrap transaction for execution

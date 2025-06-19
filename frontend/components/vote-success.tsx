@@ -39,7 +39,7 @@ interface VoteDetails {
   id: string
   title: string
   description?: string
-  status: 'active' | 'upcoming' | 'ended'
+  status: 'active' | 'upcoming' | 'ended' | 'pending' | 'closed' | 'voted'
   totalVotes: number
   pollsCount?: number
   endTimestamp?: number
@@ -49,7 +49,7 @@ interface VoteDetails {
 
 interface VoteSuccessProps {
   vote: VoteDetails
-  txDigest?: string
+  txDigest?: string | null
   onShare: () => void
 }
 

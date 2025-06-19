@@ -33,7 +33,7 @@ interface VoteDetails {
   id: string
   title: string
   description?: string
-  status: 'active' | 'upcoming' | 'ended' | 'closed'
+  status: 'active' | 'upcoming' | 'ended' | 'closed' | 'pending' | 'voted'
   totalVotes: number
   pollsCount?: number
   endTimestamp?: number

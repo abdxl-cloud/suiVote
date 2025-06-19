@@ -77,11 +77,6 @@ interface TokenSelectorProps {
   error?: string
   required?: boolean
   className?: string
-  // Props for token-weighted voting
-  enableTokenWeighted?: boolean
-  onTokenWeightedChange?: (enabled: boolean) => void
-  tokenWeight?: string
-  onTokenWeightChange?: (weight: string) => void
 }
 
 export function TokenSelector({
@@ -92,11 +87,6 @@ export function TokenSelector({
   error,
   required,
   className,
-  // Token weighted props with defaults
-  enableTokenWeighted = false,
-  onTokenWeightedChange,
-  tokenWeight = "1",
-  onTokenWeightChange,
 }: TokenSelectorProps) {
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState("")
@@ -162,7 +152,9 @@ export function TokenSelector({
           setSelectedToken(fallbackToken)
         }
       } else {
-  
+        if (onAmountChange) {
+          onAmountChange("")
+        }
         setSelectedToken(null)
       }
     }
@@ -286,6 +278,7 @@ export function TokenSelector({
     } else {
       setSelectedToken(null)
       onValueChange("none")
+      
     }
     setIsDialogOpen(false)
   }
@@ -591,52 +584,7 @@ export function TokenSelector({
             </div>
           </div>
           
-          {/* Token-weighted voting section */}
-          {onTokenWeightedChange && onTokenWeightChange && (
-            <div className="space-y-3 pt-1">
-              <div className="flex items-center justify-between">
-                <Label htmlFor="token-weighted" className="text-sm cursor-pointer">
-                  Enable token-weighted voting
-                </Label>
-                <div className="flex items-center space-x-2">
-                  <Label htmlFor="token-weighted" className="text-sm cursor-pointer">
-                    {enableTokenWeighted ? "On" : "Off"}
-                  </Label>
-                  <Switch
-                    id="token-weighted"
-                    checked={enableTokenWeighted}
-                    onCheckedChange={onTokenWeightedChange}
-                  />
-                </div>
-              </div>
-              
-              {enableTokenWeighted && (
-                <div className="space-y-2 pt-1">
-                  <Label htmlFor="token-weight" className="text-sm">
-                    Tokens per vote <span className="text-red-500">*</span>
-                  </Label>
-                  <div className="flex items-center gap-2">
-                    <Input
-                      id="token-weight"
-                      type="number"
-                      min="1"
-                      step="any"
-                      placeholder="1"
-                      value={tokenWeight}
-                      onChange={(e) => onTokenWeightChange(e.target.value)}
-                      className="flex-1"
-                    />
-                    <div className="flex-shrink-0 text-sm font-medium text-muted-foreground w-16 text-center">
-                      {selectedToken.symbol}
-                    </div>
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    Each {tokenWeight} {selectedToken.symbol} equals 1 vote
-                  </p>
-                </div>
-              )}
-            </div>
-          )}
+
         </div>
       )}
 
@@ -735,7 +683,10 @@ export function TokenSelector({
                   "p-4 cursor-pointer transition-colors border-b bg-gradient-to-r from-background to-muted/10 hover:bg-muted/30",
                   value === "none" && "bg-primary/5 border-l-4 border-l-primary"
                 )}
-                onClick={() => handleSelectToken(null)}
+                onClick={() => {
+                  handleSelectToken(null);
+                  }
+                  }
               >
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">

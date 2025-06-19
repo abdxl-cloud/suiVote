@@ -4,14 +4,52 @@ import { useState, useEffect, useCallback, ReactNode } from "react"
 import { useParams, useRouter } from "next/navigation"
 import { useWallet } from "@/contexts/wallet-context"
 import { useSuiVote } from "@/hooks/use-suivote"
-import { SUI_CONFIG } from "@/config/sui-config"
 import { motion, AnimatePresence } from "framer-motion"
 import { toast } from "sonner"
 import { format, formatDistanceToNow } from "date-fns"
 import Link from "next/link"
 import { TransactionStatusDialog, TransactionStatus } from "@/components/transaction-status-dialog"
-import { formatTokenAmount } from "@/utils/token-utils"
+import { formatTokenAmount, fromDecimalUnits, toDecimalUnits } from "@/utils/token-utils"
 import { VoteDetails, PollDetails, PollOptionDetails } from "@/services/suivote-service"
+import { SUI_CONFIG } from "@/config/sui-config"
+
+// Local interfaces for component props
+interface LocalVoteDetails {
+  id: string
+  title: string
+  description?: string
+  status: 'active' | 'upcoming' | 'ended' | 'closed'
+  totalVotes: number
+  pollsCount?: number
+  endTimestamp?: number
+  showLiveStats?: boolean
+  creator?: string
+  creatorName?: string
+}
+
+interface LocalPollOption {
+  id: string
+  text: string
+  votes: number
+  percentage: number
+}
+
+interface LocalPoll {
+  id: string
+  title: string
+  description?: string
+  options: LocalPollOption[]
+  totalVotes: number
+  isRequired: boolean
+  isMultiSelect: boolean
+  maxSelections?: number
+  minSelections?: number
+}
+
+type ExtendedPollDetails = PollDetails & {
+  options: (PollOptionDetails & { percentage: number })[]
+  totalVotes: number
+}
 import { VoteSuccess } from "@/components/vote-success"
 import { VoteClosed } from "@/components/vote-closed"
 
@@ -41,11 +79,12 @@ import {
   ChevronRight,
   Check,
   Circle,
-  Play,
+
   HelpCircle,
   Wifi,
   X,
-  RefreshCw
+  RefreshCw,
+  Coins
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { LoadingButton } from "@/components/ui/loading-button"
@@ -54,6 +93,7 @@ import { Separator } from "@/components/ui/separator"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Label } from "@/components/ui/label"
+import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Progress } from "@/components/ui/progress"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -78,7 +118,7 @@ export default function VotePage() {
 
   // State
   const [vote, setVote] = useState<VoteDetails | null>(null)
-  const [polls, setPolls] = useState<(PollDetails & { options: (PollOptionDetails & { percentage: number })[] })[]>([])
+  const [polls, setPolls] = useState<ExtendedPollDetails[]>([])
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [submitted, setSubmitted] = useState(false)
@@ -89,24 +129,134 @@ export default function VotePage() {
   const [shareDialogOpen, setShareDialogOpen] = useState(false)
   const [validationErrors, setValidationErrors] = useState<{ [key: string]: string }>({})
   const [userCanVote, setUserCanVote] = useState(false)
-  const [userHasRequiredTokens, setUserHasRequiredTokens] = useState(true)
-  const [tokenBalance, setTokenBalance] = useState(0)
+  const [userHasRequiredTokens, setUserHasRequiredTokens] = useState(false)
+  const [tokenBalance, setTokenBalance] = useState<number | null>(null)
+  const [isWhitelisted, setIsWhitelisted] = useState<boolean>(false)
   const [hasUserInteracted, setHasUserInteracted] = useState(false) // Track if user has made any selections
   const [loadingError, setLoadingError] = useState<string | null>(null) // Separate loading errors from validation errors
   const [expandedBadges, setExpandedBadges] = useState<{ [key: string]: boolean }>({}) // Track which badge info is expanded
+  const [walletStateStable, setWalletStateStable] = useState(false) // Track if wallet state is stable
 
   // Smart validation states
   const [touchedPolls, setTouchedPolls] = useState<{ [key: string]: boolean }>({})
   const [attemptedSubmit, setAttemptedSubmit] = useState(false)
 
-  // Debug effect to track state changes
+  // Payment weighting states
+  const [paymentAmount, setPaymentAmount] = useState<number>(0)
+  const [userBalance, setUserBalance] = useState<number>(0)
+  const [calculatedVoteWeight, setCalculatedVoteWeight] = useState<number>(1)
+  const [paymentError, setPaymentError] = useState<string | null>(null)
+  const [balanceLoading, setBalanceLoading] = useState(false)
+
+  // Whitelist weighting states
+  const [userWhitelistWeight, setUserWhitelistWeight] = useState<number>(1)
+
+  // Fetch user balance when wallet is connected
   useEffect(() => {
-    console.log("=== COMPONENT RENDER DEBUG ===");
-    console.log("hasVoted:", hasVoted);
-    console.log("vote.showLiveStats:", vote?.showLiveStats);
-    console.log("vote.status:", vote?.status);
-    console.log("==============================");
-  }, [hasVoted, vote?.showLiveStats, vote?.status]);
+    const fetchBalance = async () => {
+      if (!wallet.address || !wallet.connected) {
+        setUserBalance(0);
+        return;
+      }
+
+      setBalanceLoading(true);
+      try {
+        const balance = await suivote.getSuiBalance(wallet.address);
+        setUserBalance(balance);
+      } catch (error) {
+        setUserBalance(0);
+      } finally {
+        setBalanceLoading(false);
+      }
+    };
+
+    fetchBalance();
+  }, [wallet.address, wallet.connected]);
+
+  // Fetch user whitelist weight when wallet is connected and vote has whitelist
+  useEffect(() => {
+    const fetchWhitelistWeight = async () => {
+      if (wallet.address && vote?.id && vote?.hasWhitelist) {
+        try {
+          const weight = await suivote.getWhitelistWeight(vote.id, wallet.address);
+          setUserWhitelistWeight(weight);
+        } catch (error) {
+          console.error('Error fetching whitelist weight:', error);
+          setUserWhitelistWeight(0);
+        }
+      } else {
+        setUserWhitelistWeight(0);
+      }
+    };
+
+    fetchWhitelistWeight();
+  }, [wallet.address, vote?.id, vote?.hasWhitelist]);
+
+  // Calculate vote weight and validate payment with improved consistency
+  useEffect(() => {
+    if (!vote) return;
+    let weight = 1;
+    let error: string | null = null;
+
+    // Whitelist weighting (if applicable)
+    if (vote.hasWhitelist && userWhitelistWeight > 1) {
+      weight = weight * userWhitelistWeight;
+    }
+
+    // Enhanced payment validation with consistent decimal handling
+    if (vote.usePaymentWeighting) {
+      const paymentAmountNum = parseFloat(paymentAmount.toString());
+      const userBalanceSui = Number(fromDecimalUnits(userBalance, 9));
+      const minPaymentSui = (vote.tokensPerVote && Number(vote.tokensPerVote) > 0) ? Number(fromDecimalUnits(vote.tokensPerVote, 9)) : 0;
+
+      const paymentAmountMist = parseFloat(paymentAmount.toString()) * 1000000000; // Convert SUI to MIST
+      const paymentTokenWeight = Number(vote.paymentTokenWeight || 0);
+      weight = (vote.paymentTokenWeight && paymentTokenWeight > 0) ? Math.floor(paymentAmountMist / Number(toDecimalUnits(paymentTokenWeight, 9))) : 1;
+      console.log("calculating weight", tokenBalance, vote.tokensPerVote || 0, "payment in MIST:", paymentAmountMist);
+
+      // Add fallback for minimum weight
+      if (weight === 0 && tokenBalance && tokenBalance >= Number(paymentTokenWeight)) {
+        weight = 1;
+      }
+
+      if (isNaN(paymentAmountNum) || paymentAmountNum <= 0) {
+        error = "Please enter a valid payment amount greater than 0";
+      } else if (paymentAmountNum > userBalanceSui) {
+        error = `Insufficient balance. You have ${userBalanceSui.toFixed(3)} SUI available`;
+      } else if (vote.tokensPerVote && Number(vote.tokensPerVote) > 0 && paymentAmountNum < minPaymentSui) {
+        error = `Minimum payment is ${minPaymentSui.toFixed(3)} SUI for 1x vote weight`;
+      } else if (paymentAmountNum > 1000) {
+        // For payment weighting, use a practical maximum limit instead of paymentAmount
+        error = `Maximum payment is 1000 SUI (practical limit)`;
+      }
+    } else if (vote.paymentAmount && Number(vote.paymentAmount) > 0) {
+      // Fixed payment validation with consistent decimal handling
+      const requiredPaymentSui = Number(fromDecimalUnits(vote.paymentAmount, 9));
+      const userBalanceSui = Number(fromDecimalUnits(userBalance, 9));
+
+      if (userBalanceSui < requiredPaymentSui) {
+        error = `Insufficient balance. Required: ${requiredPaymentSui.toFixed(3)} SUI, Available: ${userBalanceSui.toFixed(3)} SUI`;
+      }
+    }
+
+    setCalculatedVoteWeight(weight);
+    setPaymentError(error);
+  }, [vote, paymentAmount, userBalance, tokenBalance, userWhitelistWeight]);
+
+  // Initialize payment amount when vote loads with consistent decimal handling
+  useEffect(() => {
+    if (!vote) return;
+
+    if (vote.usePaymentWeighting && vote.paymentTokenWeight) {
+      // Set default payment to minimum for 1 vote weight (convert from MIST to SUI)
+      const minPaymentSui = Number(vote.paymentTokenWeight);
+      setPaymentAmount(minPaymentSui);
+    } else if (vote.paymentAmount && Number(vote.paymentAmount) > 0) {
+      // Set to required fixed payment (convert from MIST to SUI)
+      const requiredPaymentSui = Number(fromDecimalUnits(vote.paymentAmount, 9));
+      setPaymentAmount(requiredPaymentSui);
+    }
+  }, [vote]);
 
   // Helper function to toggle badge expansion
   const toggleBadgeExpansion = (badgeKey: string) => {
@@ -129,7 +279,7 @@ export default function VotePage() {
     const difference = startTimestamp - now;
 
     if (difference <= 0) {
-      return { hasStarted: true };
+      return { days: 0, hours: 0, minutes: 0, seconds: 0, hasStarted: true };
     }
 
     return {
@@ -145,34 +295,35 @@ export default function VotePage() {
     if (!vote || vote.status !== 'upcoming') return;
 
     const timer = setInterval(() => {
-      const newTime = calculateTimeRemaining(vote.startTimestamp);
+      const newTime = calculateTimeRemaining(vote.startTimestamp || 0);
 
       if (newTime.hasStarted) {
-        // If time has come, refresh the vote status
+        // If time has come, clear the timer and update time remaining
         clearInterval(timer);
-        fetchVoteData();
-        toast.success("Vote has started!");
+        setTimeRemaining(newTime);
+        
+        // The auto-transition effect will handle the status update and toast
       } else {
         setTimeRemaining(newTime);
       }
-    }, 5000); // Update every 5 seconds instead of 1 second to reduce load
+    }, 1000); // Update every second for accurate countdown
 
     return () => clearInterval(timer);
   }, [vote?.status, vote?.startTimestamp]);
 
 
   // Transaction state
-  const [txStatus, setTxStatus] = useState(TransactionStatus.IDLE)
-  const [txDigest, setTxDigest] = useState<string | null>(null)
-  const [txProgress, setTxProgress] = useState(0)
-  const [failedStep, setFailedStep] = useState<TransactionStatus | undefined>(undefined)
+  const [txStatus, setTxStatus] = useState(TransactionStatus.IDLE);
+  const [txDigest, setTxDigest] = useState<string | null>(null);
+  const [txProgress, setTxProgress] = useState(0);
+  const [failedStep, setFailedStep] = useState<TransactionStatus | undefined>(undefined);
 
   // State to track selections for each poll
-  const [selections, setSelections] = useState<{ [key: string]: string[] }>({})
+  const [selections, setSelections] = useState<{ [key: string]: string[] }>({});
 
   // Transaction dialog state
-  const [txStatusDialogOpen, setTxStatusDialogOpen] = useState(false)
-  const [transactionError, setTransactionError] = useState<string | null>(null)
+  const [txStatusDialogOpen, setTxStatusDialogOpen] = useState(false);
+  const [transactionError, setTransactionError] = useState<string | null>(null);
 
   // Using the reusable TransactionStatusDialog component
   const handleDialogClose = () => {
@@ -182,154 +333,202 @@ export default function VotePage() {
       setTxStatus(TransactionStatus.IDLE);
       // Explicitly close the dialog
       setTxStatusDialogOpen(false);
-      // If transaction was successful, refresh the page data
+      // If transaction was successful, refresh the vote data
       if (txStatus === TransactionStatus.SUCCESS) {
-        router.refresh();
+        // Only fetch if wallet state is stable to prevent race conditions
+        if (walletStateStable) {
+          fetchVoteData();
+        }
+      }
+    }
+  };
+
+  const handleCloseTxStatusDialog = () => {
+    setTxStatusDialogOpen(false);
+    if (txStatus === TransactionStatus.SUCCESS) {
+      setTxStatus(TransactionStatus.IDLE);
+      if (walletStateStable) {
         fetchVoteData();
       }
     }
-  }
+  };
 
   const handleTryAgain = () => {
     setTxStatus(TransactionStatus.IDLE);
     setTransactionError(null);
     setTxProgress(0);
     handleSubmitVote();
-  }
+  };
+
+  // Add debouncing to prevent rapid successive calls
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   const fetchVoteData = async () => {
-    try {
-      setLoading(true)
-      setLoadingError(null) // Clear any previous loading errors
+    // Prevent multiple simultaneous calls
+    if (isRefreshing) {
+      console.log('fetchVoteData already in progress, skipping...');
+      return;
+    }
 
+    setIsRefreshing(true);
+    try {
+      console.log(walletStateStable)
+      setLoading(true);
+      setLoadingError(null);
       if (!params.id) {
-        throw new Error("Vote ID is required")
+        throw new Error("Vote ID is required");
       }
 
       // Get vote details
-      const voteDetails = await suivote.getVoteDetails(params.id)
+      const voteDetails = await suivote.getVoteDetails(Array.isArray(params.id) ? params.id[0] : params.id);
       if (!voteDetails) {
-        throw new Error("Vote not found")
+        throw new Error("Vote not found");
       }
 
       // Check whitelist access - if vote has whitelist and user is connected, verify access
-      if (voteDetails.hasWhitelist && wallet.connected && wallet.address) {
-        const isWhitelisted = await suivote.isVoterWhitelisted(params.id, wallet.address)
-        if (!isWhitelisted) {
-          throw new Error("Access denied: You are not authorized to view this whitelisted vote")
+      if (voteDetails.hasWhitelist) {
+        // Ensure wallet state is stable before checking whitelist
+        if (wallet.connected && wallet.address && walletStateStable) {
+          try {
+            const isWhitelisted = await suivote.isVoterWhitelisted(Array.isArray(params.id) ? params.id[0] : params.id, wallet.address);
+            if (!isWhitelisted) {
+              throw new Error("Access denied: You are not authorized to view this whitelisted vote");
+            }
+          } catch (whitelistError) {
+            // If whitelist check fails due to network issues, allow retry
+            console.warn("Whitelist check failed:", whitelistError);
+            // Only throw access denied if it's a definitive authorization failure
+            if (whitelistError instanceof Error && whitelistError.message.includes("not authorized")) {
+              throw whitelistError;
+            }
+            // For other errors (network, etc.), log but don't block access immediately
+            console.error("Whitelist verification error:", whitelistError);
+          }
+        } else if (!wallet.connected && walletStateStable) {
+          // Only deny access if wallet state is stable and definitely not connected
+          throw new Error("Access denied: Please connect your wallet to view this whitelisted vote");
+        } else if (!walletStateStable) {
+          // If wallet state is not stable, skip whitelist check for now
+          // This prevents race condition errors during wallet connection/disconnection
+          console.log("Skipping whitelist check - wallet state not stable");
+          return; // Exit early, will retry when wallet state stabilizes
         }
-      } else if (voteDetails.hasWhitelist && !wallet.connected) {
-        // If vote has whitelist but wallet is not connected, deny access
-        throw new Error("Access denied: Please connect your wallet to view this whitelisted vote")
+        // If wallet.connected is true but wallet.address is null/undefined, 
+        // this might be a temporary state during connection - don't throw error yet
       }
 
       // Note: Routing logic moved to polls page - users are now directed to appropriate pages from there
 
-      const currentTime = Date.now()
-      if (voteDetails.status === "upcoming" && currentTime >= voteDetails.startTimestamp) {
-        toast.info("Vote has started!", {
-          description: "Refreshing to show the active vote.",
-          duration: 3000,
-        })
+      // Handle automatic status transition for votes that should have started
+      const currentTime = Date.now();
+      if (voteDetails.status === "upcoming" && voteDetails.startTimestamp && currentTime >= voteDetails.startTimestamp) {
+        // Update the vote status locally to 'active' since the start time has passed
+        voteDetails.status = "active";
         
-        setTimeout(() => {
-          fetchVoteData()
-        }, 1000)
+        toast.info("Vote has started!", {
+          description: "The vote is now active and ready for participation.",
+          duration: 3000,
+        });
       }
 
-      setVote(voteDetails)
+      setVote(voteDetails);
 
       // Get polls for the vote
-      const pollsData = await suivote.getVotePolls(params.id)
+      const pollsData = await suivote.getVotePolls(Array.isArray(params.id) ? params.id[0] : params.id);
 
       // Fetch options for each poll
       const pollsWithOptions = await Promise.all(
         pollsData.map(async (poll, index) => {
           // Get options for this poll (index + 1 because poll indices are 1-based)
-          const options = await suivote.getPollOptions(params.id, index + 1)
+          const voteId = Array.isArray(params.id) ? params.id[0] : params.id;
+          if (!voteId) throw new Error('Vote ID is required');
+          const options = await suivote.getPollOptions(voteId, index + 1);
 
           // Calculate percentage for each option based on votes
-          const totalVotesForPoll = options.reduce((sum, option) => sum + option.votes, 0)
+          const totalVotesForPoll = options.reduce((sum, option) => sum + option.votes, 0);
           const optionsWithPercentage = options.map(option => ({
             ...option,
             percentage: totalVotesForPoll > 0 ? (option.votes / totalVotesForPoll) * 100 : 0
-          }))
+          }));
 
           return {
             ...poll,
-            options: optionsWithPercentage || []
-          }
+            options: optionsWithPercentage || [],
+            totalVotes: totalVotesForPoll
+          };
         })
-      )
+      );
 
-      setPolls(pollsWithOptions || [])
+      setPolls(pollsWithOptions || []);
 
       // Initialize selections
-      const initialSelections = {}
+      const initialSelections: Record<string, string[]> = {};
       pollsWithOptions.forEach((poll) => {
-        initialSelections[poll.id] = []
-      })
-      setSelections(initialSelections)
+        initialSelections[poll.id] = [];
+      });
+      setSelections(initialSelections);
 
       // Default values if wallet is not connected
-      let votedStatus = false
-      let hasRequiredTokens = !voteDetails.tokenRequirement // True if no token required
-      let isWhitelisted = !voteDetails.hasWhitelist // True if no whitelist
-      let calculatedTokenBalance = 0
+      let votedStatus = false;
+      let hasRequiredTokens = !voteDetails.tokenRequirement;
+      let isWhitelisted = !voteDetails.hasWhitelist;
 
       // Check if user has already voted and meets requirements
-      if (wallet.connected && wallet.address) {
+      if (wallet.connected && wallet.address && walletStateStable) {
         // Check voting status - but preserve local state if user just voted
-        // This prevents blockchain propagation delays from overriding correct state
-        // Also check localStorage for persistent voted state
-        const localVotedState = localStorage.getItem(`hasVoted_${params.id}_${wallet.address}`)
-        const persistentHasVoted = localVotedState === 'true'
-        
+        const localVotedState = localStorage.getItem(`hasVoted_${Array.isArray(params.id) ? params.id[0] : params.id}_${wallet.address}`);
+        const persistentHasVoted = localVotedState === 'true';
         if (!persistentHasVoted && !hasVoted) {
-          console.log("Checking blockchain for hasVoted status");
-          votedStatus = await suivote.hasVoted(wallet.address, params.id)
+          votedStatus = await suivote.hasVoted(wallet.address, Array.isArray(params.id) ? params.id[0] : params.id);
           console.log("Blockchain hasVoted result:", votedStatus);
-          setHasVoted(votedStatus)
-          setSubmitted(votedStatus)
+          setHasVoted(votedStatus);
+          setSubmitted(votedStatus);
           // Store in localStorage for persistence
           if (votedStatus) {
-            localStorage.setItem(`hasVoted_${params.id}_${wallet.address}`, 'true')
+            localStorage.setItem(`hasVoted_${Array.isArray(params.id) ? params.id[0] : params.id}_${wallet.address}`, 'true');
           }
         } else {
           // User has already voted according to local state or localStorage, keep it
           console.log("Preserving local hasVoted state - localStorage:", persistentHasVoted, "current state:", hasVoted);
-          votedStatus = true
-          setHasVoted(true)
-          setSubmitted(true)
+          votedStatus = true;
+          setHasVoted(true);
+          setSubmitted(true);
         }
-
-        // Note: Routing logic moved to polls page - users are now directed to appropriate pages from there
-
-        // If vote is open, user has voted, and live stats are enabled, show results
         if (votedStatus && voteDetails?.showLiveStats) {
-          setShowingResults(true)
+          setShowingResults(true);
         }
-
-        // Check token requirements and get actual token balance for weighted voting
         if (voteDetails.tokenRequirement) {
+          console.log("tokenRequirement:", voteDetails.tokenRequirement, "tokenAmount:", voteDetails.tokenAmount);
           const tokenResult = await suivote.checkTokenBalance(
             wallet.address,
             voteDetails.tokenRequirement,
-            voteDetails.tokenAmount?.toString() || "0"
+            Number(voteDetails.tokenAmount || 0)
           );
           hasRequiredTokens = tokenResult.hasBalance;
-          // Store token balance for later use
-          setTokenBalance(tokenResult.tokenBalance);
+          console.log("checking token:", tokenResult.hasBalance, tokenResult.tokenBalance);
+          // Store token balance for later use - convert to number
+          setTokenBalance(Number(fromDecimalUnits(tokenResult.tokenBalance, 9)));
+        } else {
+          // No token requirement, so user has required tokens
+          hasRequiredTokens = true;
         }
 
-        // Check whitelist
         if (voteDetails.hasWhitelist) {
-          isWhitelisted = await suivote.isVoterWhitelisted(params.id, wallet.address)
+          isWhitelisted = await suivote.isVoterWhitelisted(Array.isArray(params.id) ? params.id[0] : params.id, wallet.address);
+          setIsWhitelisted(isWhitelisted);
+        } else {
+          // No whitelist requirement, so user is whitelisted
+          isWhitelisted = true;
+          setIsWhitelisted(true);
         }
+      } else {
+        // Wallet not connected - set default states
+        setTokenBalance(null);
+        setIsWhitelisted(!voteDetails.hasWhitelist);
       }
 
-      // Update state with the fetched values
-      setUserHasRequiredTokens(hasRequiredTokens)
+      // Update state with current token requirement status
+      setUserHasRequiredTokens(hasRequiredTokens);
 
       // Set whether user can vote based on all conditions
       const canVote = wallet.connected &&
@@ -337,64 +536,69 @@ export default function VotePage() {
         voteDetails.status === "active" &&
         !votedStatus &&
         isWhitelisted &&
-        hasRequiredTokens
+        hasRequiredTokens;
 
-      setUserCanVote(canVote)
+      setUserCanVote(Boolean(canVote));
 
       // Update document title and metadata
-      document.title = `${voteDetails.title} - SuiVote`
+      document.title = `${voteDetails.title} - SuiVote`;
 
       // Create meta description
-      const metaDescription = document.querySelector('meta[name="description"]')
+      const metaDescription = document.querySelector('meta[name="description"]');
       if (metaDescription) {
-        metaDescription.setAttribute("content", voteDetails.description || `Vote on ${voteDetails.title}`)
+        metaDescription.setAttribute("content", voteDetails.description || `Vote on ${voteDetails.title}`);
       } else {
-        const meta = document.createElement("meta")
-        meta.name = "description"
-        meta.content = voteDetails.description || `Vote on ${voteDetails.title}`
-        document.head.appendChild(meta)
+        const meta = document.createElement("meta");
+        meta.name = "description";
+        meta.content = voteDetails.description || `Vote on ${voteDetails.title}`;
+        document.head.appendChild(meta);
       }
 
       // Create meta for social sharing
-      const ogTitle = document.querySelector('meta[property="og:title"]')
+      const ogTitle = document.querySelector('meta[property="og:title"]');
       if (ogTitle) {
-        ogTitle.setAttribute("content", `${voteDetails.title} - SuiVote`)
+        ogTitle.setAttribute("content", `${voteDetails.title} - SuiVote`);
       } else {
-        const meta = document.createElement("meta")
-        meta.setAttribute("property", "og:title")
-        meta.content = `${voteDetails.title} - SuiVote`
-        document.head.appendChild(meta)
+        const meta = document.createElement("meta");
+        meta.setAttribute("property", "og:title");
+        meta.content = `${voteDetails.title} - SuiVote`;
+        document.head.appendChild(meta);
       }
 
-      const ogDescription = document.querySelector('meta[property="og:description"]')
+      const ogDescription = document.querySelector('meta[property="og:description"]');
       if (ogDescription) {
-        ogDescription.setAttribute("content", voteDetails.description || `Vote on ${voteDetails.title}`)
+        ogDescription.setAttribute("content", voteDetails.description || `Vote on ${voteDetails.title}`);
       } else {
-        const meta = document.createElement("meta")
-        meta.setAttribute("property", "og:description")
-        meta.content = voteDetails.description || `Vote on ${voteDetails.title}`
-        document.head.appendChild(meta)
+        const meta = document.createElement("meta");
+        meta.setAttribute("property", "og:description");
+        meta.content = voteDetails.description || `Vote on ${voteDetails.title}`;
+        document.head.appendChild(meta);
       }
     } catch (error) {
-      console.error("Error fetching vote data:", error)
+      console.error("Error fetching vote data:", error);
       toast.error("Error loading vote", {
         description: error instanceof Error ? error.message : "Failed to load vote data"
-      })
+      });
 
-      setLoadingError(error instanceof Error ? error.message : "Failed to load vote data")
+      setLoadingError(error instanceof Error ? error.message : "Failed to load vote data");
     } finally {
-      setLoading(false)
+      setLoading(false);
+      setIsRefreshing(false);
     }
-  }
+  };
 
   useEffect(() => {
-    // Initial data fetch
-    fetchVoteData()
-    
     // Load transaction digest from localStorage if available
-    const storedDigest = localStorage.getItem(`vote_${params.id}_txDigest`)
+    const storedDigest = localStorage.getItem(`vote_${params.id}_txDigest`);
     if (storedDigest) {
-      setTxDigest(storedDigest)
+      setTxDigest(storedDigest);
+    }
+
+    // Only fetch data when wallet state is stable
+    // This prevents race conditions and premature validation errors
+    if (walletStateStable) {
+      // Initial data fetch
+      fetchVoteData();
     }
 
     // Set up real-time updates subscription if we have a vote ID
@@ -402,192 +606,134 @@ export default function VotePage() {
       // Subscribe to vote updates
       const unsubscribe = suivote.subscribeToVoteUpdates(params.id as string, async (updatedVoteDetails) => {
         // Update the vote state with the latest data
-        setVote(updatedVoteDetails)
+        setVote(updatedVoteDetails);
 
         // If showing results, update the UI accordingly
         if (showingResults || (updatedVoteDetails.showLiveStats)) {
-          setShowingResults(true)
+          setShowingResults(true);
 
           try {
             // Get polls for the vote to update the UI with latest vote counts
-            const pollsData = await suivote.getVotePolls(params.id as string)
+            const pollsData = await suivote.getVotePolls(params.id as string);
 
             // Fetch options for each poll
             const pollsWithOptions = await Promise.all(
               pollsData.map(async (poll, index) => {
                 // Get options for this poll (index + 1 because poll indices are 1-based)
-                const options = await suivote.getPollOptions(params.id as string, index + 1)
+                const options = await suivote.getPollOptions(params.id as string, index + 1);
 
                 // Calculate percentage for each option based on votes
-                const totalVotesForPoll = options.reduce((sum, option) => sum + option.votes, 0)
+                const totalVotesForPoll = options.reduce((sum, option) => sum + option.votes, 0);
                 const optionsWithPercentage = options.map(option => ({
                   ...option,
                   percentage: totalVotesForPoll > 0 ? (option.votes / totalVotesForPoll) * 100 : 0
-                }))
+                }));
 
                 return {
                   ...poll,
-                  options: optionsWithPercentage || []
-                }
+                  options: optionsWithPercentage || [],
+                  totalVotes: totalVotesForPoll
+                };
               })
-            )
+            );
 
             // Update the polls state with the latest data
-            setPolls(pollsWithOptions || [])
+            setPolls(pollsWithOptions || []);
           } catch (error) {
-            console.error("Error updating polls data:", error)
+            console.error("Error updating polls data:", error);
           }
         }
-      })
+      });
 
       // Clean up subscription when component unmounts or params change
       return () => {
-        unsubscribe()
-      }
+        unsubscribe();
+      };
     }
-  }, [params.id, wallet.connected, wallet.address])
+  }, [params.id, walletStateStable]);
 
-  // Auto-start timer effect - check every 30 seconds if vote should be auto-started
+  // Track wallet state stability to prevent race conditions
   useEffect(() => {
-    if (!vote || !wallet.connected) return
+    setWalletStateStable(false);
+    const timeoutId = setTimeout(() => {
+      setWalletStateStable(true);
+    }, 200);
 
-    const checkAutoStart = async () => {
-      const currentTime = Date.now()
-      if (vote.status === "upcoming" && currentTime >= vote.startTimestamp && !vote.canBeStarted) {
-        try {
-          // Automatically start the vote
-          const transaction = suivote.startVoteTransaction(params.id as string)
-          const response = await suivote.executeTransaction(transaction)
-          
-          toast.success("Vote automatically started!", {
-            description: "The vote is now active and ready to receive votes.",
-            duration: 5000,
-          })
-          
-          // Store transaction digest
-          if (response && response.digest) {
-            localStorage.setItem(`vote_${params.id}_txDigest`, response.digest)
+    return () => clearTimeout(timeoutId);
+  }, [wallet.connected, wallet.address]);
+
+  // Separate effect for wallet state changes with debouncing to prevent race conditions
+  useEffect(() => {
+    // Only refetch when wallet state is stable
+    if (!walletStateStable) return;
+
+    // Add a small delay to allow wallet state to stabilize
+    const timeoutId = setTimeout(() => {
+      // Only refetch if we have a vote ID, component is not loading, and we have initial vote data
+      if (params.id && !loading && vote) {
+        fetchVoteData();
+      }
+    }, 100); // 100ms delay to allow wallet state to stabilize
+
+    return () => clearTimeout(timeoutId);
+  }, [wallet.connected, wallet.address, walletStateStable]);
+
+  // Auto-transition effect - check if vote status should transition
+  useEffect(() => {
+    if (!vote || vote.status !== 'upcoming') return;
+
+    let hasTransitioned = false;
+
+    const checkStatusTransition = () => {
+      if (hasTransitioned) return; // Prevent multiple transitions
+
+      const currentTime = Date.now();
+      if (vote.startTimestamp && currentTime >= vote.startTimestamp) {
+        hasTransitioned = true;
+
+        // Update the vote status locally
+        setVote(prevVote => {
+          if (prevVote && prevVote.status === 'upcoming') {
+            return { ...prevVote, status: 'active' };
           }
-          
-          // Refresh vote data to get updated status
-          setTimeout(() => {
-            fetchVoteData()
-          }, 1000)
-          
-        } catch (error) {
-          console.error("Error auto-starting vote:", error)
-          // Update vote to show manual start option
-          setVote(prev => prev ? { ...prev, canBeStarted: true } : null)
+          return prevVote;
+        });
+
+        toast.success("Vote has started!", {
+          description: "The vote is now active and ready for participation.",
+          duration: 4000,
+        });
+
+        // Refresh vote data to ensure consistency with backend
+        // Only fetch if wallet state is stable to prevent race conditions
+        if (walletStateStable) {
+          fetchVoteData();
         }
       }
-    }
+    };
 
     // Check immediately
-    checkAutoStart()
+    checkStatusTransition();
 
-    // Set up interval to check every 30 seconds
-    const interval = setInterval(checkAutoStart, 30000)
+    // Set up interval to check every 5 seconds for better responsiveness
+    const interval = setInterval(checkStatusTransition, 5000);
 
-    return () => clearInterval(interval)
-  }, [vote, wallet.connected, params.id, suivote])
-
-  // Function to handle starting a vote
-  const handleStartVote = async () => {
-    if (!vote || !wallet.connected) return
-
-    try {
-      setTxStatusDialogOpen(true)
-      setTransactionError(null)
-      setTxStatus(TransactionStatus.BUILDING)
-      setTxProgress(20)
-
-      // Create the transaction
-      let transaction;
-      try {
-        transaction = suivote.startVoteTransaction(params.id as string)
-      } catch (buildError) {
-        setFailedStep(TransactionStatus.BUILDING);
-        throw buildError;
-      }
-
-      // Update progress
-      setTxStatus(TransactionStatus.SIGNING)
-      setTxProgress(40)
-
-      // Execute the transaction
-      let response;
-      try {
-        response = await suivote.executeTransaction(transaction)
-      } catch (signingError) {
-        setFailedStep(TransactionStatus.SIGNING);
-        throw signingError;
-      }
-
-      // Update progress
-      setTxStatus(TransactionStatus.EXECUTING)
-      setTxProgress(60)
-      setTxDigest(response.digest)
-
-      // Wait for confirmation
-      setTxStatus(TransactionStatus.CONFIRMING)
-      setTxProgress(80)
-
-      try {
-        // Simulate confirmation wait
-        await new Promise((resolve) => setTimeout(resolve, 1000))
-      } catch (confirmError) {
-        setFailedStep(TransactionStatus.CONFIRMING);
-        throw confirmError;
-      }
-
-      // Transaction successful
-      setTxStatus(TransactionStatus.SUCCESS)
-      setTxProgress(100)
-
-      toast.success("Vote started successfully!", {
-        description: "The vote is now active and ready to receive votes."
-      })
-
-      // Store transaction digest in localStorage
-      if (response && response.digest) {
-        localStorage.setItem(`vote_${params.id}_txDigest`, response.digest)
-      }
-
-      // Refresh the page after a short delay
-      setTimeout(() => {
-        // Reset transaction status to prevent reopening
-        setTxStatus(TransactionStatus.IDLE);
-        // Explicitly close the dialog
-        setTxStatusDialogOpen(false)
-        // Use router.refresh() to completely refresh the page data
-        router.refresh()
-        // Then reload the vote data
-        fetchVoteData()
-      }, 2000)
-
-    } catch (error) {
-      console.error("Error starting vote:", error)
-      setTxStatus(TransactionStatus.ERROR)
-      setTransactionError(error instanceof Error ? error.message : String(error))
-
-      toast.error("Failed to start vote", {
-        description: error instanceof Error ? error.message : "An unknown error occurred"
-      })
-    }
-  }
+    // Cleanup interval on unmount or when vote status changes
+    return () => clearInterval(interval);
+  }, [vote?.status, vote?.startTimestamp, walletStateStable]);
 
   // Update progress bar based on transaction status
   useEffect(() => {
     switch (txStatus) {
-      case TransactionStatus.IDLE: setTxProgress(0); break
-      case TransactionStatus.BUILDING: setTxProgress(20); break
-      case TransactionStatus.SIGNING: setTxProgress(40); break
-      case TransactionStatus.EXECUTING: setTxProgress(60); break
-      case TransactionStatus.CONFIRMING: setTxProgress(80); break
-      case TransactionStatus.SUCCESS: setTxProgress(100); break
-      case TransactionStatus.ERROR: break // Keep progress where it was
+      case TransactionStatus.IDLE: setTxProgress(0); break;
+      case TransactionStatus.BUILDING: setTxProgress(20); break;
+      case TransactionStatus.SIGNING: setTxProgress(40); break;
+      case TransactionStatus.EXECUTING: setTxProgress(60); break;
+      case TransactionStatus.CONFIRMING: setTxProgress(80); break;
+      case TransactionStatus.SUCCESS: setTxProgress(100); break;
+      case TransactionStatus.ERROR: break; // Keep progress where it was
     }
-  }, [txStatus])
+  }, [txStatus]);
 
   // Enhanced validation with detailed error messages and better UX
   const validateSelections = (selections: { [key: string]: string[] }, forceValidation = false) => {
@@ -597,38 +743,78 @@ export default function VotePage() {
     let requiredPollsCount = 0;
     let completedRequiredPolls = 0;
 
-    // Don't validate if user hasn't interacted yet, if we're still loading, or if user has already voted
-    if (!hasUserInteracted || loading || polls.length === 0 || hasVoted) {
+    // Don't validate if we're still loading, polls aren't loaded, or if user has already voted
+    if (loading || polls.length === 0 || hasVoted) {
       return {};
+    }
+
+    // For users who haven't interacted yet, only show validation for required polls if forced
+    const showValidationForNonInteracted = forceValidation || attemptedSubmit;
+
+    // Add immediate payment and token requirement validation
+    if (wallet.connected && vote) {
+      // Token requirement validation with proper balance checking
+      if (vote.tokenRequirement) {
+        const tokenSymbol = vote.tokenRequirement.split("::").pop() || "";
+        const requiredAmount = Number(vote.tokenAmount || 0);
+        console.log("tesing token requirements :", tokenBalance, requiredAmount)
+        if (tokenBalance === null) {
+          // Balance not loaded yet
+          validationErrors.tokens = "Checking token balance...";
+        } else if (tokenBalance < requiredAmount) {
+          validationErrors.tokens = `You need at least ${formatTokenAmount(requiredAmount, tokenSymbol, 2)} to vote`;
+        }
+      }
+
+      // Payment validation - show immediately if there are payment errors
+      if (paymentError) {
+        validationErrors.payment = paymentError;
+      }
+
+      // Fixed payment requirement validation
+      if (vote.paymentAmount && Number(vote.paymentAmount) > 0 && userBalance) {
+        const requiredPaymentSui = Number(fromDecimalUnits(vote.paymentAmount, 9));
+        const userBalanceSui = Number(fromDecimalUnits(userBalance, 9));
+        if (userBalanceSui < requiredPaymentSui) {
+          validationErrors.payment = `Insufficient balance. Required: ${requiredPaymentSui.toFixed(3)} SUI, Available: ${userBalanceSui.toFixed(3)} SUI`;
+        }
+      }
+    } else if (!wallet.connected && vote) {
+      // Show wallet connection requirement for amount-related validations
+      if (vote.tokenRequirement || Number(vote.paymentAmount) > 0 || vote.usePaymentWeighting) {
+        validationErrors.wallet = "Connect your wallet to check requirements";
+      }
     }
 
     // Check each poll for validation issues
     polls.forEach(poll => {
       const selectedOptions = selections[poll.id] || [];
       const shouldShowError = forceValidation || attemptedSubmit || touchedPolls[poll.id];
+      // Show validation errors for required polls immediately, even without interaction
+      const shouldShowRequiredError = shouldShowError || (poll.isRequired && (hasUserInteracted || showValidationForNonInteracted));
 
       // Count required polls
       if (poll.isRequired) {
         requiredPollsCount++;
       }
 
-      // Check if required poll has selections (only show error if poll was touched or submit attempted)
-      if (poll.isRequired && selectedOptions.length === 0 && shouldShowError) {
+      // Check if required poll has selections (show error immediately for required polls)
+      if (poll.isRequired && selectedOptions.length === 0 && shouldShowRequiredError) {
         validationErrors[poll.id] = `${poll.title} requires a response`;
         hasRequiredSelections = false;
       } else if (poll.isRequired && selectedOptions.length > 0) {
         completedRequiredPolls++;
       }
 
-      // Validate selection count based on poll type (only show error if poll was touched or submit attempted)
-      if (selectedOptions.length > 0 && shouldShowError) {
+      // Validate selection count based on poll type (show errors immediately if selections exist)
+      if (selectedOptions.length > 0) {
         if (!poll.isMultiSelect && selectedOptions.length > 1) {
           validationErrors[poll.id] = `${poll.title} allows only one selection`;
         } else if (poll.isMultiSelect && poll.maxSelections &&
           selectedOptions.length > poll.maxSelections) {
           validationErrors[poll.id] = `${poll.title}: Maximum ${poll.maxSelections} selections allowed`;
         } else if (poll.isMultiSelect && poll.minSelections &&
-          selectedOptions.length < poll.minSelections) {
+          selectedOptions.length < poll.minSelections && shouldShowError) {
           validationErrors[poll.id] = `${poll.title}: Minimum ${poll.minSelections} selections required`;
         }
       }
@@ -639,19 +825,19 @@ export default function VotePage() {
       }
     });
 
-    // Provide more specific error messages (only show if submit was attempted or user has interacted significantly)
-    const shouldShowGeneralError = forceValidation || attemptedSubmit || Object.keys(touchedPolls).length > 0;
+    // Provide more specific error messages with immediate feedback
+    const shouldShowGeneralError = forceValidation || attemptedSubmit || hasUserInteracted || showValidationForNonInteracted;
 
-    if (hasUserInteracted && !hasValidSelections && shouldShowGeneralError) {
+    if (!hasValidSelections && shouldShowGeneralError) {
       if (requiredPollsCount > 0) {
         validationErrors.general = `Please complete ${requiredPollsCount} required poll${requiredPollsCount > 1 ? 's' : ''}`;
-      } else {
+      } else if (hasUserInteracted) {
         validationErrors.general = "Please make at least one selection to submit your vote";
       }
     }
 
-    // Show progress for required polls (only if submit was attempted or multiple polls touched)
-    if (hasUserInteracted && requiredPollsCount > 0 && completedRequiredPolls < requiredPollsCount && shouldShowGeneralError) {
+    // Show progress for required polls with immediate feedback
+    if (requiredPollsCount > 0 && completedRequiredPolls < requiredPollsCount && shouldShowGeneralError) {
       if (!validationErrors.general) {
         validationErrors.general = `Complete ${requiredPollsCount - completedRequiredPolls} more required poll${(requiredPollsCount - completedRequiredPolls) > 1 ? 's' : ''} (${completedRequiredPolls}/${requiredPollsCount})`;
       }
@@ -670,10 +856,15 @@ export default function VotePage() {
 
     // Check validation errors with force validation
     const currentErrors = validateSelections(selections, true);
-    return Object.keys(currentErrors).length === 0;
+    if (Object.keys(currentErrors).length > 0) return false;
+
+    // Check payment validation if payment weighting is enabled
+    if (vote?.usePaymentWeighting && paymentError) return false;
+
+    return true;
   };
 
-  // Validate whenever selections change (but only after user interaction)
+  // Validate whenever selections change or when polls are loaded
   useEffect(() => {
     // Skip validation if user has already voted
     if (hasVoted) {
@@ -681,11 +872,11 @@ export default function VotePage() {
       return;
     }
 
-    if (polls.length > 0 && hasUserInteracted && !loading) {
+    if (polls.length > 0 && !loading) {
       const errors = validateSelections(selections);
       setValidationErrors(errors);
     }
-  }, [selections, polls, hasUserInteracted, loading, touchedPolls, attemptedSubmit, hasVoted]);
+  }, [selections, polls, hasUserInteracted, loading, touchedPolls, attemptedSubmit, hasVoted, wallet.connected, userHasRequiredTokens, paymentError, userBalance, vote?.tokenRequirement, vote?.paymentAmount, vote?.usePaymentWeighting]);
 
   // Handle option selection
   const handleOptionSelect = (pollId: string, optionId: string, isMultiSelect: boolean) => {
@@ -732,58 +923,46 @@ export default function VotePage() {
       return newSelections
     })
 
-    // Smart error clearing - trigger validation with delay to allow state updates
-    setTimeout(() => {
-      setValidationErrors(prev => {
-        // Get current selections and validate
-        const currentSelections = { ...selections };
-        if (isMultiSelect) {
-          const currentOptions = currentSelections[pollId] || [];
-          if (currentOptions.includes(optionId)) {
-            currentSelections[pollId] = currentOptions.filter(id => id !== optionId);
-          } else {
-            const poll = polls.find(p => p.id === pollId);
-            if (poll && currentOptions.length < poll.maxSelections) {
-              currentSelections[pollId] = [...currentOptions, optionId];
-            }
-          }
-        } else {
-          currentSelections[pollId] = [optionId];
-        }
-
-        return validateSelections(currentSelections);
-      });
-    }, 300);
+    // Validation will be handled by the useEffect that watches selections changes
+    // No need for setTimeout delay as React state updates are batched
   }
 
   // Validate vote submission
   const validateVote = () => {
     if (!vote) return false
 
-    const newErrors = {}
+    const newErrors: Record<string, string> = {}
     let isValid = true
 
     // Check if user is connected
     if (!wallet.connected) {
-      newErrors.wallet = "Please connect your wallet to vote"
+      newErrors['wallet'] = "Please connect your wallet to vote"
       isValid = false
     }
 
     // Check if user has already voted
     if (hasVoted) {
-      newErrors.voted = "You have already voted in this poll"
+      newErrors['voted'] = "You have already voted in this poll"
       isValid = false
     }
 
     // Check if user has required tokens
-    if (!userHasRequiredTokens && vote.tokenRequirement) {
-      newErrors.tokens = `You need at least ${formatTokenAmount(vote.tokenAmount || 0, vote.tokenRequirement.split("::").pop() || "", 2)} to vote`
-      isValid = false
+    if (vote.tokenRequirement) {
+      const tokenSymbol = vote.tokenRequirement.split("::").pop() || "";
+      const requiredAmount = Number(vote.tokenAmount || 0);
+
+      if (tokenBalance === null) {
+        newErrors['tokens'] = "Checking token balance...";
+        isValid = false;
+      } else if (tokenBalance < requiredAmount) {
+        newErrors['tokens'] = `You need at least ${formatTokenAmount(requiredAmount, tokenSymbol, 2)} to vote`;
+        isValid = false;
+      }
     }
 
     // Check if vote is active
     if (vote.status !== "active") {
-      newErrors.status = vote.status === "upcoming" ? "This vote has not started yet" : "This vote has ended"
+      newErrors['status'] = vote.status === "upcoming" ? "This vote has not started yet" : "This vote has ended"
       isValid = false
     }
 
@@ -827,12 +1006,18 @@ export default function VotePage() {
       setTxProgress(10);
 
       // STEP 1: Pre-flight checks
-      if (!wallet || !wallet.address) {
+      if (!wallet.connected || !wallet.address) {
         throw new Error("Please connect your wallet to vote");
       }
 
       if (!vote) {
         throw new Error("Vote data not loaded. Please refresh the page.");
+      }
+
+      // Extract voteId from params
+      const voteId = Array.isArray(params.id) ? params.id[0] : params.id;
+      if (!voteId) {
+        throw new Error('Vote ID is required');
       }
 
       if (vote.status !== "active") {
@@ -865,15 +1050,47 @@ export default function VotePage() {
         throw new Error("Please fix the validation errors before submitting");
       }
 
-      // STEP 3: Token balance verification for weighted voting
+      // STEP 3: Enhanced validation with better error messages
       setTxProgress(30);
+
+      // Token balance verification for weighted voting
       if (vote.tokenRequirement && !userHasRequiredTokens) {
-        throw new Error(`You need at least ${formatTokenAmount(vote.tokenAmount || 0, vote.tokenRequirement.split("::").pop() || "", 2)} to vote`);
+        const tokenSymbol = vote.tokenRequirement.split("::").pop() || "tokens";
+        const requiredAmount = formatTokenAmount(vote.tokenAmount || 0, tokenSymbol, 2);
+        throw new Error(`Token requirement not met. You need at least ${requiredAmount} to participate in this vote.`);
+      }
+
+      // Payment validation with consistent decimal handling
+      if (vote.usePaymentWeighting || (vote.paymentAmount && Number(vote.paymentAmount) > 0)) {
+        const userBalanceSui = Number(fromDecimalUnits(userBalance, 9));
+
+        if (vote.usePaymentWeighting) {
+          const paymentAmountNum = Number(paymentAmount);
+          const minPaymentSui = (vote.tokensPerVote && Number(vote.tokensPerVote) > 0) ? Number(fromDecimalUnits(Number(vote.tokensPerVote), 9)) : 0;
+
+          if (isNaN(paymentAmountNum) || paymentAmountNum <= 0) {
+            throw new Error("Please enter a valid payment amount greater than 0 SUI.");
+          }
+
+          if (paymentAmountNum > userBalanceSui) {
+            throw new Error(`Insufficient balance for payment. You have ${userBalanceSui.toFixed(3)} SUI available.`);
+          }
+
+          if (minPaymentSui > 0 && paymentAmountNum < minPaymentSui) {
+            throw new Error(`Payment amount too low. Minimum required: ${minPaymentSui.toFixed(3)} SUI for 1x vote weight.`);
+          }
+        } else if (vote.paymentAmount && Number(vote.paymentAmount) > 0) {
+          const requiredPaymentSui = Number(fromDecimalUnits(vote.paymentAmount, 9));
+
+          if (userBalanceSui < requiredPaymentSui) {
+            throw new Error(`Insufficient balance for required payment. Required: ${requiredPaymentSui.toFixed(3)} SUI, Available: ${userBalanceSui.toFixed(3)} SUI.`);
+          }
+        }
       }
       // STEP 4: Prepare transaction data
       setTxProgress(40);
-      const pollIndices = [];
-      const optionIndicesPerPoll = [];
+      const pollIndices: number[] = [];
+      const optionIndicesPerPoll: number[][] = [];
       let processedPolls = 0;
 
       // Process each poll with selections
@@ -886,7 +1103,7 @@ export default function VotePage() {
         }
 
         // Map option IDs to indices for the smart contract
-        const optionIndices = [];
+        const optionIndices: number[] = [];
         selectedOptionIds.forEach(optionId => {
           const optionIndex = poll.options.findIndex(option => option.id === optionId);
           if (optionIndex !== -1) {
@@ -917,23 +1134,23 @@ export default function VotePage() {
             tokenRequirement: vote.tokenRequirement,
             tokenAmount: vote.tokenAmount
           });
-          
+
           const tokenResult = await suivote.checkTokenBalance(
             wallet.address,
             vote.tokenRequirement,
-            vote.tokenAmount
+            Number(vote.tokenAmount || 0)
           );
-          
+
           console.log("[Vote Debug] Token balance result:", tokenResult);
-          
+
           tokenBalance = Math.floor(Number(tokenResult.tokenBalance));
-          
+
           console.log("[Vote Debug] Final tokenBalance for transaction:", {
             original: tokenResult.tokenBalance,
             processed: tokenBalance,
             type: typeof tokenBalance
           });
-          
+
         } catch (tokenError) {
           console.warn("[Vote Debug] Error checking token balance:", tokenError);
           // Continue with 0 balance for non-weighted voting
@@ -946,31 +1163,51 @@ export default function VotePage() {
       setTxStatus(TransactionStatus.BUILDING);
       setTxProgress(60);
 
+      // Determine payment amount based on payment weighting
+      const finalPaymentAmount = vote.usePaymentWeighting ? paymentAmount : (vote.paymentAmount || 0);
+
       console.log("[Vote Debug] Creating transaction with:", {
         voteId: params.id,
         pollIndices,
         optionIndicesPerPoll,
         tokenBalance,
-        paymentAmount: vote.paymentAmount || 0,
+        paymentAmount: finalPaymentAmount,
+        usePaymentWeighting: vote.usePaymentWeighting,
+        tokensPerVote: vote.tokensPerVote,
+        paymentTokenWeight: vote.paymentTokenWeight,
+        calculatedVoteWeight,
         singleVote: pollIndices.length === 1
       });
+
+      // Additional debugging for payment weighting
+      if (vote.usePaymentWeighting) {
+        const paymentAmountMist = parseInt(toDecimalUnits(finalPaymentAmount.toString(), 9));
+        const expectedVoteWeight = (vote.tokensPerVote && Number(vote.tokensPerVote) > 0) ? Math.floor(paymentAmountMist / Number(vote.tokensPerVote)) : 1;
+        console.log("[Vote Debug] Payment weighting calculation:", {
+          paymentAmountSui: finalPaymentAmount,
+          paymentAmountMist,
+          tokensPerVoteMist: vote.tokensPerVote || 0,
+          expectedVoteWeight,
+          willPassValidation: expectedVoteWeight > 0
+        });
+      }
 
       let transaction;
       if (pollIndices.length === 1) {
         transaction = await suivote.castVoteTransaction(
-          params.id,
+          voteId,
           pollIndices[0],
           optionIndicesPerPoll[0],
           tokenBalance,
-          vote.paymentAmount || 0
+          finalPaymentAmount
         );
       } else {
         transaction = await suivote.castMultipleVotesTransaction(
-          params.id,
+          voteId,
           pollIndices,
           optionIndicesPerPoll,
           tokenBalance,
-          vote.paymentAmount || 0
+          finalPaymentAmount
         );
       }
 
@@ -1050,11 +1287,14 @@ export default function VotePage() {
           // Show live results on the same page
           setShowingResults(true);
         }
-        
+
         // Refresh vote data to update the component state after a longer delay
         // This allows blockchain propagation while preserving the correct hasVoted state
         setTimeout(() => {
-          fetchVoteData();
+          // Only fetch if wallet state is stable to prevent race conditions
+          if (walletStateStable) {
+            fetchVoteData();
+          }
         }, 5000); // Wait 5 seconds for blockchain propagation
       }, 2000);
 
@@ -1069,23 +1309,24 @@ export default function VotePage() {
       let errorMessage = "An unexpected error occurred";
       let errorDescription = "Please try again or contact support if the issue persists";
 
-      if (error.message) {
-        errorMessage = error.message;
+      const errorObj = error as Error;
+      if (errorObj.message) {
+        errorMessage = errorObj.message;
 
         // Provide specific guidance for common errors
-        if (error.message.includes("User rejected") || error.message.includes("rejected")) {
+        if (errorObj.message.includes("User rejected") || errorObj.message.includes("rejected")) {
           errorMessage = "Transaction cancelled";
           errorDescription = "You cancelled the transaction in your wallet";
-        } else if (error.message.includes("insufficient")) {
+        } else if (errorObj.message.includes("insufficient")) {
           errorMessage = "Insufficient funds";
           errorDescription = "You don't have enough SUI to pay for transaction fees";
-        } else if (error.message.includes("network") || error.message.includes("connection")) {
+        } else if (errorObj.message.includes("network") || errorObj.message.includes("connection")) {
           errorMessage = "Network error";
           errorDescription = "Please check your internet connection and try again";
-        } else if (error.message.includes("already voted")) {
+        } else if (errorObj.message.includes("already voted")) {
           errorMessage = "Already voted";
           errorDescription = "You have already submitted your vote for this poll";
-        } else if (error.message.includes("not eligible")) {
+        } else if (errorObj.message.includes("not eligible")) {
           errorMessage = "Not eligible to vote";
           errorDescription = "You don't meet the requirements to vote in this poll";
         }
@@ -1110,7 +1351,7 @@ export default function VotePage() {
   // Helper functions for UI
 
   // Format date
-  const formatDate = (timestamp) => {
+  const formatDate = (timestamp: any) => {
     try {
       return format(new Date(timestamp), "PPP")
     } catch (e) {
@@ -1120,7 +1361,7 @@ export default function VotePage() {
   }
 
   // Format time
-  const formatTime = (timestamp) => {
+  const formatTime = (timestamp: any) => {
     try {
       return format(new Date(timestamp), "p")
     } catch (e) {
@@ -1130,7 +1371,7 @@ export default function VotePage() {
   }
 
   // Function to detect URLs in text and convert them to clickable links
-  const formatTextWithLinks = (text) => {
+  const formatTextWithLinks = (text: any) => {
     if (!text) return [text]
 
     // Simple and reliable URL regex
@@ -1239,7 +1480,6 @@ export default function VotePage() {
             Upcoming
           </Badge>
         )
-      case "ended":
       case "closed":
         return (
           <Badge className="bg-gray-500 hover:bg-gray-600 text-white">
@@ -1252,7 +1492,7 @@ export default function VotePage() {
   }
 
   // Truncate address for display
-  const truncateAddress = (address) => {
+  const truncateAddress = (address: any) => {
     if (!address) return ""
     return `${address.substring(0, 6)}...${address.substring(address.length - 4)}`
   }
@@ -1275,7 +1515,7 @@ export default function VotePage() {
   }
 
   // Handle copy address
-  const handleCopyAddress = (address) => {
+  const handleCopyAddress = (address: string) => {
     navigator.clipboard.writeText(address)
     toast.success("Address copied to clipboard")
   }
@@ -1287,21 +1527,49 @@ export default function VotePage() {
 
   // Error state
   if (loadingError || !vote) {
+    const isWalletError = loadingError?.includes("wallet") || loadingError?.includes("connect")
+    const isWhitelistError = loadingError?.includes("whitelisted")
+
     return (
       <div className="container max-w-4xl py-6 md:py-10 px-4 md:px-6 mx-auto">
         <Alert variant="destructive" className="mb-6">
           <AlertCircle className="h-4 w-4" />
           <AlertTitle>Error Loading Vote</AlertTitle>
-          <AlertDescription>
-            {loadingError || "Failed to load vote data. Please try again later."}
+          <AlertDescription className="space-y-2">
+            <div>{loadingError || "Failed to load vote data. Please try again later."}</div>
+            {isWalletError && (
+              <div className="text-sm text-muted-foreground">
+                If your wallet is connected but you're still seeing this error, try refreshing the page or reconnecting your wallet.
+              </div>
+            )}
+            {isWhitelistError && (
+              <div className="text-sm text-muted-foreground">
+                Make sure your wallet is properly connected and you have the required permissions to view this vote.
+              </div>
+            )}
           </AlertDescription>
         </Alert>
-        <Button asChild variant="outline" className="gap-2">
-          <Link href="/polls">
-            <ArrowLeft className="h-4 w-4" />
-            Back to Polls
-          </Link>
-        </Button>
+        <div className="flex flex-col sm:flex-row gap-3">
+          {(isWalletError || isWhitelistError) && (
+            <Button
+              onClick={() => {
+                setLoadingError(null)
+                fetchVoteData()
+              }}
+              variant="default"
+              className="gap-2"
+            >
+              <RefreshCw className="h-4 w-4" />
+              Retry
+            </Button>
+          )}
+          <Button asChild variant="outline" className="gap-2">
+            <Link href="/polls">
+              <ArrowLeft className="h-4 w-4" />
+              Back to Polls
+            </Link>
+          </Button>
+        </div>
       </div>
     )
   }
@@ -1333,14 +1601,10 @@ export default function VotePage() {
                 <div>
                   <CardTitle className="text-2xl md:text-3xl">{vote.title}</CardTitle>
                   <div className="flex items-center gap-2 mt-2">
-                    {vote.canBeStarted ? (
-                      <Badge className="bg-amber-500 hover:bg-amber-600 text-white">Ready to Start</Badge>
-                    ) : (
-                      <Badge className="bg-blue-500 hover:bg-blue-600 text-white">Upcoming</Badge>
-                    )}
+                    <Badge className="bg-blue-500 hover:bg-blue-600 text-white">Upcoming</Badge>
                     <Badge variant="outline" className="gap-1 transition-all duration-200 hover:translate-x-[2px]">
                       <Calendar className="h-3 w-3" />
-                      {vote.canBeStarted ? "Can be started now" : `Starts ${formatDate(vote.startTimestamp)}`}
+                      Starts {formatDate(vote.startTimestamp)}
                     </Badge>
                   </div>
                 </div>
@@ -1390,42 +1654,14 @@ export default function VotePage() {
               </div>
 
 
-              {Date.now() >= vote.startTimestamp && vote.canBeStarted && wallet.connected ? (
-                <div className="space-y-4">
-                  <Alert className="bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800">
-                    <Info className="h-4 w-4 text-amber-600 dark:text-amber-400" />
-                    <AlertTitle>Vote Ready to Start</AlertTitle>
-                    <AlertDescription>
-                      Auto-start failed. Please start the vote manually or refresh the page.
-                    </AlertDescription>
-                  </Alert>
-
-                  <Button
-                    size="lg"
-                    className="gap-2 w-full sm:w-auto"
-                    onClick={handleStartVote}
-                  >
-                    <Play className="h-4 w-4" />
-                    Start Vote
-                  </Button>
-                </div>
-              ) : Date.now() >= vote.startTimestamp && !wallet.connected ? (
-                <Alert className="bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800">
-                  <CheckCircle2 className="h-4 w-4 text-green-600 dark:text-green-400" />
-                  <AlertTitle>Vote Starting Automatically</AlertTitle>
-                  <AlertDescription>
-                    This vote will start automatically when a connected wallet visits this page.
-                  </AlertDescription>
-                </Alert>
-              ) : (
-                <Alert className="bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800">
-                  <Calendar className="h-4 w-4 text-blue-600 dark:text-blue-400" />
-                  <AlertTitle>This vote has not started yet</AlertTitle>
-                  <AlertDescription>
-                    This vote will be available for participation starting on {formatDate(vote.startTimestamp)} at{" "}
-                    {formatTime(vote.startTimestamp)}.
-                  </AlertDescription>
-                  <div className="mb-6">
+              <Alert className="bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800">
+                <Calendar className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+                <AlertTitle>This vote has not started yet</AlertTitle>
+                <AlertDescription>
+                  This vote will be available for participation starting on {formatDate(vote.startTimestamp)} at{" "}
+                  {formatTime(vote.startTimestamp)}.
+                </AlertDescription>
+                <div className="mb-6">
                   <div className="flex items-center gap-2 mb-3">
                     <div className="bg-purple-100 dark:bg-purple-900/30 p-2 rounded-full">
                       <Timer className="h-4 w-4 text-purple-600 dark:text-purple-400" />
@@ -1447,7 +1683,7 @@ export default function VotePage() {
                         const details = encodeURIComponent(`Participate in the vote: ${vote.title}${vote.description ? `\n\n${vote.description}` : ''}\n\nVote URL: ${window.location.href}`)
                         const startTime = startDate.toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z'
                         const endTime = endDate.toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z'
-                        
+
                         const googleUrl = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${title}&dates=${startTime}/${endTime}&details=${details}&location=${encodeURIComponent(window.location.href)}`
                         window.open(googleUrl, '_blank')
                       }}
@@ -1455,7 +1691,7 @@ export default function VotePage() {
                       <Calendar className="h-3 w-3" />
                       Google Calendar
                     </Button>
-                    
+
                     <Button
                       variant="outline"
                       size="sm"
@@ -1467,7 +1703,7 @@ export default function VotePage() {
                         const details = encodeURIComponent(`Participate in the vote: ${vote.title}${vote.description ? `\n\n${vote.description}` : ''}\n\nVote URL: ${window.location.href}`)
                         const startTime = startDate.toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z'
                         const endTime = endDate.toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z'
-                        
+
                         const outlookUrl = `https://outlook.live.com/calendar/0/deeplink/compose?subject=${title}&startdt=${startTime}&enddt=${endTime}&body=${details}&location=${encodeURIComponent(window.location.href)}`
                         window.open(outlookUrl, '_blank')
                       }}
@@ -1475,7 +1711,7 @@ export default function VotePage() {
                       <Calendar className="h-3 w-3" />
                       Outlook
                     </Button>
-                    
+
                     <Button
                       variant="outline"
                       size="sm"
@@ -1485,7 +1721,7 @@ export default function VotePage() {
                         const endDate = new Date(vote.endTimestamp)
                         const title = `Vote: ${vote.title}`
                         const details = `Participate in the vote: ${vote.title}${vote.description ? `\n\n${vote.description}` : ''}\n\nVote URL: ${window.location.href}`
-                        
+
                         // Create ICS file content
                         const icsContent = [
                           'BEGIN:VCALENDAR',
@@ -1501,7 +1737,7 @@ export default function VotePage() {
                           'END:VEVENT',
                           'END:VCALENDAR'
                         ].join('\r\n')
-                        
+
                         // Create and download ICS file
                         const blob = new Blob([icsContent], { type: 'text/calendar;charset=utf-8' })
                         const url = window.URL.createObjectURL(blob)
@@ -1512,7 +1748,7 @@ export default function VotePage() {
                         link.click()
                         document.body.removeChild(link)
                         window.URL.revokeObjectURL(url)
-                        
+
                         toast.success('Calendar file downloaded!', {
                           description: 'Open the file to add the reminder to your calendar app.'
                         })
@@ -1523,8 +1759,7 @@ export default function VotePage() {
                     </Button>
                   </div>
                 </div>
-                </Alert>
-              )}
+              </Alert>
             </CardContent>
           </Card>
         </motion.div>
@@ -1591,7 +1826,7 @@ export default function VotePage() {
                   </div>
                 )}
 
-                {vote.tokenRequirement && (
+                {!vote.usePaymentWeighting && vote.tokenRequirement && (
                   <div className="flex items-center gap-3">
                     <div className="h-10 w-10 rounded-full bg-purple-100 dark:bg-purple-900/30 flex items-center justify-center">
                       <Wallet className="h-5 w-5 text-purple-600 dark:text-purple-400" />
@@ -1605,19 +1840,38 @@ export default function VotePage() {
                   </div>
                 )}
 
-                {vote.paymentAmount > 0 && (
+                {!vote.usePaymentWeighting && Number(vote.paymentAmount) > 0 && (
                   <div className="flex items-center gap-3">
                     <div className="h-10 w-10 rounded-full bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center">
                       <Wallet className="h-5 w-5 text-amber-600 dark:text-amber-400" />
                     </div>
                     <div>
-                      <p className="text-sm font-medium">Payment Required</p>
-                      <p className="text-xs text-muted-foreground">{formatTokenAmount(vote.paymentAmount, "SUI")} to vote</p>
+                      <p className="text-sm font-medium">Fixed Payment Required</p>
+                      <p className="text-xs text-muted-foreground">{formatTokenAmount(String(vote.paymentAmount || 0), "SUI")} to vote</p>
                     </div>
                   </div>
                 )}
 
-                {!vote.hasWhitelist && !vote.tokenRequirement && vote.paymentAmount <= 0 && (
+                {vote.usePaymentWeighting && (vote.paymentTokenWeight || (vote.tokensPerVote && Number(vote.tokensPerVote) > 0)) && (
+                  <div className="flex items-center gap-3">
+                    <div className="h-10 w-10 rounded-full bg-gradient-to-br from-amber-100 to-orange-100 dark:from-amber-900/30 dark:to-orange-900/30 flex items-center justify-center">
+                      <Coins className="h-5 w-5 text-amber-600 dark:text-amber-400" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium">Payment Weighting</p>
+                      <p className="text-xs text-muted-foreground">
+                        {vote.paymentTokenWeight
+                          ? `${formatTokenAmount(String(vote.paymentTokenWeight || 0), "SUI")} per vote weight`
+                          : (vote.tokensPerVote && Number(vote.tokensPerVote) > 0)
+                            ? `Min: ${formatTokenAmount(String(fromDecimalUnits(Number(vote.tokensPerVote), 9)), "SUI")}`
+                            : "Variable payment amounts"
+                        }
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {!vote.hasWhitelist && !vote.tokenRequirement && Number(vote.paymentAmount) <= 0 && (
                   <div className="flex items-center gap-3">
                     <div className="h-10 w-10 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center">
                       <CheckCircle2 className="h-5 w-5 text-green-600 dark:text-green-400" />
@@ -1779,7 +2033,21 @@ export default function VotePage() {
         />
 
         {/* Transaction Status Dialog */}
-        <TransactionStatusDialog />
+        <TransactionStatusDialog
+          open={txStatusDialogOpen}
+          onOpenChange={(open) => {
+            if (!open) {
+              handleDialogClose();
+            }
+            setTxStatusDialogOpen(open);
+          }}
+          onClose={handleCloseTxStatusDialog}
+          txStatus={txStatus}
+          txDigest={txDigest}
+          failedStep={failedStep}
+          transactionError={transactionError}
+          explorerUrl={SUI_CONFIG.explorerUrl}
+        />
       </div>
     )
   }
@@ -1789,7 +2057,7 @@ export default function VotePage() {
   // Check if we should show success state
   // Note: vote.status can be 'voted' when user has voted, not just 'active'
   const shouldShowSuccess = hasVoted && !vote.showLiveStats && (vote.status === "active" || vote.status === "voted")
-  
+
   // Check if we should show closed state
   const shouldShowClosed = vote.status === "closed"
 
@@ -1812,8 +2080,8 @@ export default function VotePage() {
           </Button>
         </motion.div>
 
-        <VoteSuccess 
-          vote={vote} 
+        <VoteSuccess
+          vote={vote}
           txDigest={txDigest}
           onShare={handleShare}
         />
@@ -1869,8 +2137,8 @@ export default function VotePage() {
           </Button>
         </motion.div>
 
-        <VoteClosed 
-          vote={vote} 
+        <VoteClosed
+          vote={vote}
           polls={polls}
           onShare={handleShare}
         />
@@ -2002,7 +2270,7 @@ export default function VotePage() {
                     </div>
 
                     {/* Requirements - Compact Display */}
-                    {(vote.tokenRequirement || vote.paymentAmount > 0 || vote.hasWhitelist) && (
+                    {(vote.tokenRequirement || Number(vote.paymentAmount) > 0 || vote.hasWhitelist || vote.usePaymentWeighting) && (
                       <div className="pt-2 border-t border-blue-200/50 dark:border-blue-800/50">
                         <div className="flex flex-wrap gap-2 items-center">
                           <span className="text-xs font-medium text-blue-800 dark:text-blue-200">
@@ -2016,7 +2284,7 @@ export default function VotePage() {
                                 variant="outline"
                                 className={cn(
                                   "text-xs gap-1 cursor-pointer transition-all hover:scale-105",
-                                  userHasRequiredTokens
+                                  !validationErrors.tokens && wallet.connected
                                     ? "bg-green-50 text-green-700 border-green-200 dark:bg-green-900/20 dark:text-green-400"
                                     : "bg-red-50 text-red-700 border-red-200 dark:bg-red-900/20 dark:text-red-400"
                                 )}
@@ -2025,7 +2293,7 @@ export default function VotePage() {
                                 <Wallet className="h-3 w-3" />
                                 {formatTokenAmount(vote.tokenAmount || 0, vote.tokenRequirement.split("::").pop() || "", 2)}
                                 {wallet.connected && (
-                                  userHasRequiredTokens ?
+                                  !validationErrors.tokens ?
                                     <CheckCircle2 className="h-3 w-3" /> :
                                     <X className="h-3 w-3" />
                                 )}
@@ -2040,10 +2308,10 @@ export default function VotePage() {
                                     transition={{ duration: 0.2 }}
                                     className="text-xs text-muted-foreground bg-muted/50 p-2 rounded border"
                                   >
-                                    {userHasRequiredTokens && wallet.connected
+                                    {!validationErrors.tokens && wallet.connected
                                       ? `✅ You have enough ${vote.tokenRequirement.split("::").pop()} tokens to vote`
-                                      : wallet.connected
-                                        ? `❌ You need at least ${formatTokenAmount(vote.tokenAmount || 0, vote.tokenRequirement.split("::").pop() || "", 2)} in your wallet to participate`
+                                      : validationErrors.tokens
+                                        ? `❌ ${validationErrors.tokens}`
                                         : `You must hold at least ${formatTokenAmount(vote.tokenAmount || 0, vote.tokenRequirement.split("::").pop() || "", 2)} to vote. Connect your wallet to check your balance.`
                                     }
                                   </motion.div>
@@ -2052,79 +2320,8 @@ export default function VotePage() {
                             </div>
                           )}
 
-                          {/* Payment Requirement */}
-                          {vote.paymentAmount > 0 && (
-                            <div className="space-y-2">
-                              <Badge
-                                variant="outline"
-                                className="text-xs gap-1 bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/20 dark:text-amber-400 cursor-pointer transition-all hover:scale-105"
-                                onClick={() => toggleBadgeExpansion('paymentRequirement')}
-                              >
-                                <Wallet className="h-3 w-3" />
-                                {formatTokenAmount(vote.paymentAmount, "SUI")} 
-                                <Info className="h-3 w-3" />
-                              </Badge>
-                              <AnimatePresence>
-                                {expandedBadges.paymentRequirement && (
-                                  <motion.div
-                                    initial={{ opacity: 0, height: 0 }}
-                                    animate={{ opacity: 1, height: "auto" }}
-                                    exit={{ opacity: 0, height: 0 }}
-                                    transition={{ duration: 0.2 }}
-                                    className="text-xs text-muted-foreground bg-muted/50 p-2 rounded border"
-                                  >
-                                    💰 A payment of {formatTokenAmount(vote.paymentAmount, "SUI")}  is required to submit your vote. This fee helps prevent spam and supports the voting system.
-                                  </motion.div>
-                                )}
-                              </AnimatePresence>
-                            </div>
-                          )}
-
-                          {/* Whitelist Requirement */}
-                          {vote.hasWhitelist && (
-                            <div className="space-y-2">
-                              <Badge
-                                variant="outline"
-                                className={cn(
-                                  "text-xs gap-1 cursor-pointer transition-all hover:scale-105",
-                                  wallet.connected && userCanVote
-                                    ? "bg-green-50 text-green-700 border-green-200 dark:bg-green-900/20 dark:text-green-400"
-                                    : "bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-900/20 dark:text-blue-400"
-                                )}
-                                onClick={() => toggleBadgeExpansion('whitelistRequirement')}
-                              >
-                                <Shield className="h-3 w-3" />
-                                Whitelist
-                                {wallet.connected && (
-                                  userCanVote ?
-                                    <CheckCircle2 className="h-3 w-3" /> :
-                                    <AlertCircle className="h-3 w-3" />
-                                )}
-                                <Info className="h-3 w-3" />
-                              </Badge>
-                              <AnimatePresence>
-                                {expandedBadges.whitelistRequirement && (
-                                  <motion.div
-                                    initial={{ opacity: 0, height: 0 }}
-                                    animate={{ opacity: 1, height: "auto" }}
-                                    exit={{ opacity: 0, height: 0 }}
-                                    transition={{ duration: 0.2 }}
-                                    className="text-xs text-muted-foreground bg-muted/50 p-2 rounded border"
-                                  >
-                                    {wallet.connected && userCanVote
-                                      ? "✅ Your wallet address is approved to participate in this vote"
-                                      : wallet.connected
-                                        ? "❌ Only pre-approved wallet addresses can vote. Your address is not on the whitelist."
-                                        : "🛡️ This vote is restricted to pre-approved wallet addresses only. Connect your wallet to check if you're eligible."
-                                    }
-                                  </motion.div>
-                                )}
-                              </AnimatePresence>
-                            </div>
-                          )}
-
                           {/* Token Weighting Indicator */}
-                          {vote.useTokenWeighting && (
+                          {(vote.usePaymentWeighting || vote.tokenRequirement) && (Number(vote.paymentTokenWeight || 0) > 0 || (vote.tokensPerVote && Number(vote.tokensPerVote) > 0)) && (
                             <div className="space-y-2">
                               <Badge
                                 variant="outline"
@@ -2144,7 +2341,106 @@ export default function VotePage() {
                                     transition={{ duration: 0.2 }}
                                     className="text-xs text-muted-foreground bg-muted/50 p-2 rounded border"
                                   >
-                                    📊 Your voting power is weighted by your token balance. More tokens = more influence on the final results.
+                                    📊 Your voting power is weighted by how much you pay with ${Number(vote.tokensPerVote) > 0 ?
+                                      formatTokenAmount(Number(vote.tokensPerVote || 0), "SUI") : formatTokenAmount(Number(vote.paymentTokenWeight || 0), "SUI")} per vote weight.
+                                  </motion.div>
+                                )}
+                              </AnimatePresence>
+                            </div>
+                          )}
+
+                          {/* Fixed Payment Requirement */}
+                          {Number(vote.paymentAmount) > 0 && (
+                            <div className="space-y-2">
+                              <Badge
+                                variant="outline"
+                                className={cn(
+                                  "text-xs gap-1 cursor-pointer transition-all hover:scale-105",
+                                  !validationErrors.payment && wallet.connected && userBalance
+                                    ? "bg-green-50 text-green-700 border-green-200 dark:bg-green-900/20 dark:text-green-400"
+                                    : "bg-red-50 text-red-700 border-red-200 dark:bg-red-900/20 dark:text-red-400"
+                                )}
+                                onClick={() => toggleBadgeExpansion('paymentRequirement')}
+                              >
+                                <Wallet className="h-3 w-3" />
+                                {formatTokenAmount(String(vote.paymentAmount || 0), "SUI")}
+                                {wallet.connected && userBalance && (
+                                  !validationErrors.payment ?
+                                    <CheckCircle2 className="h-3 w-3" /> :
+                                    <X className="h-3 w-3" />
+                                )}
+                                <Info className="h-3 w-3" />
+                              </Badge>
+                              <AnimatePresence>
+                                {expandedBadges.paymentRequirement && (
+                                  <motion.div
+                                    initial={{ opacity: 0, height: 0 }}
+                                    animate={{ opacity: 1, height: "auto" }}
+                                    exit={{ opacity: 0, height: 0 }}
+                                    transition={{ duration: 0.2 }}
+                                    className="text-xs text-muted-foreground bg-muted/50 p-2 rounded border"
+                                  >
+                                    {wallet.connected && userBalance ? (
+                                      !validationErrors.payment ? (
+                                        `✅ You have sufficient balance to pay ${formatTokenAmount(String(vote.paymentAmount || 0), "SUI")} required for this vote`
+                                      ) : (
+                                        `❌ ${validationErrors.payment}`
+                                      )
+                                    ) : (
+                                      `💰 A payment of ${formatTokenAmount(String(vote.paymentAmount || 0), "SUI")} is required to submit your vote. Connect your wallet to check your balance.`
+                                    )}
+                                  </motion.div>
+                                )}
+                              </AnimatePresence>
+                            </div>
+                          )}
+
+                          {/* Whitelist Requirement */}
+                          {vote.hasWhitelist && (
+                            <div className="space-y-2">
+                              <Badge
+                                variant="outline"
+                                className={cn(
+                                  "text-xs gap-1 cursor-pointer transition-all hover:scale-105",
+                                  wallet.connected && isWhitelisted
+                                    ? "bg-green-50 text-green-700 border-green-200 dark:bg-green-900/20 dark:text-green-400"
+                                    : "bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-900/20 dark:text-blue-400"
+                                )}
+                                onClick={() => toggleBadgeExpansion('whitelistRequirement')}
+                              >
+                                <Shield className="h-3 w-3" />
+                                Whitelist
+                                {wallet.connected && (
+                                  isWhitelisted ?
+                                    <CheckCircle2 className="h-3 w-3" /> :
+                                    <AlertCircle className="h-3 w-3" />
+                                )}
+                                <Info className="h-3 w-3" />
+                              </Badge>
+                              <AnimatePresence>
+                                {expandedBadges.whitelistRequirement && (
+                                  <motion.div
+                                    initial={{ opacity: 0, height: 0 }}
+                                    animate={{ opacity: 1, height: "auto" }}
+                                    exit={{ opacity: 0, height: 0 }}
+                                    transition={{ duration: 0.2 }}
+                                    className="text-xs text-muted-foreground bg-muted/50 p-2 rounded border"
+                                  >
+                                    {wallet.connected && isWhitelisted
+                                      ? (
+                                        <div>
+                                          <div>✅ Your wallet address is approved to participate in this vote</div>
+                                          {userWhitelistWeight > 1 && (
+                                            <div className="mt-1 font-medium text-green-600 dark:text-green-400">
+                                              🎯 Pre-assigned vote weight: {userWhitelistWeight}x
+                                            </div>
+                                          )}
+                                        </div>
+                                      )
+                                      : wallet.connected
+                                        ? "❌ Only pre-approved wallet addresses can vote. Your address is not on the whitelist."
+                                        : "🛡️ This vote is restricted to pre-approved wallet addresses only. Connect your wallet to check if you're eligible."
+                                    }
                                   </motion.div>
                                 )}
                               </AnimatePresence>
@@ -2185,101 +2481,101 @@ export default function VotePage() {
                         "Your vote has been recorded. Live results are shown below." :
                         "Your vote has been recorded. Results will be available when voting ends."
                       }
-                    </div>                 
-                      <div className="pt-2 border-t border-green-200 dark:border-green-700">
-                        <div className="flex items-center gap-2 mb-2">
-                          <Timer className="h-3 w-3 text-green-600 dark:text-green-400" />
-                          <span className="text-xs font-medium">Set closing reminder:</span>
-                        </div>
-                        <div className="flex flex-wrap gap-2">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="gap-2 text-xs h-7 bg-white dark:bg-green-900/30 border-green-300 dark:border-green-600 hover:bg-green-50 dark:hover:bg-green-900/50"
-                            onClick={() => {
-                              const endDate = new Date(vote.endTimestamp)
-                              const reminderDate = new Date(vote.endTimestamp + 5 * 60 * 1000) // 5 minutes after voting ends
-                              const title = encodeURIComponent(`Vote Results: ${vote.title}`)
-                              const details = encodeURIComponent(`Voting has ended for: ${vote.title}${vote.description ? `\n\n${vote.description}` : ''}\n\nCheck results at: ${window.location.href}`)
-                              const reminderTime = reminderDate.toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z'
-                              const endTime = new Date(reminderDate.getTime() + 30 * 60 * 1000).toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z' // 30 min duration
-                              
-                              const googleUrl = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${title}&dates=${reminderTime}/${endTime}&details=${details}&location=${encodeURIComponent(window.location.href)}`
-                              window.open(googleUrl, '_blank')
-                            }}
-                          >
-                            <Calendar className="h-3 w-3" />
-                            Google
-                          </Button>
-                          
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="gap-2 text-xs h-7 bg-white dark:bg-green-900/30 border-green-300 dark:border-green-600 hover:bg-green-50 dark:hover:bg-green-900/50"
-                            onClick={() => {
-                              const endDate = new Date(vote.endTimestamp)
-                              const reminderDate = new Date(vote.endTimestamp + 5 * 60 * 1000) // 5 minutes after voting ends
-                              const title = encodeURIComponent(`Vote Results: ${vote.title}`)
-                              const details = encodeURIComponent(`Voting has ended for: ${vote.title}${vote.description ? `\n\n${vote.description}` : ''}\n\nCheck results at: ${window.location.href}`)
-                              const reminderTime = reminderDate.toISOString()
-                              const endTime = new Date(reminderDate.getTime() + 30 * 60 * 1000).toISOString() // 30 min duration
-                              
-                              const outlookUrl = `https://outlook.live.com/calendar/0/deeplink/compose?subject=${title}&startdt=${reminderTime}&enddt=${endTime}&body=${details}&location=${encodeURIComponent(window.location.href)}`
-                              window.open(outlookUrl, '_blank')
-                            }}
-                          >
-                            <Calendar className="h-3 w-3" />
-                            Outlook
-                          </Button>
-                          
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="gap-2 text-xs h-7 bg-white dark:bg-green-900/30 border-green-300 dark:border-green-600 hover:bg-green-50 dark:hover:bg-green-900/50"
-                            onClick={() => {
-                              const endDate = new Date(vote.endTimestamp)
-                              const reminderDate = new Date(vote.endTimestamp + 5 * 60 * 1000) // 5 minutes after voting ends
-                              const title = `Vote Results: ${vote.title}`
-                              const details = `Voting has ended for: ${vote.title}${vote.description ? `\n\n${vote.description}` : ''}\n\nCheck results at: ${window.location.href}`
-                              
-                              // Create ICS file content
-                              const icsContent = [
-                                'BEGIN:VCALENDAR',
-                                'VERSION:2.0',
-                                'PRODID:-//SuiVote//Vote Results Reminder//EN',
-                                'BEGIN:VEVENT',
-                                `UID:${Date.now()}-results@suivote.com`,
-                                `DTSTART:${reminderDate.toISOString().replace(/[-:]/g, '').split('.')[0]}Z`,
-                                `DTEND:${new Date(reminderDate.getTime() + 30 * 60 * 1000).toISOString().replace(/[-:]/g, '').split('.')[0]}Z`,
-                                `SUMMARY:${title}`,
-                                `DESCRIPTION:${details.replace(/\n/g, '\\n')}`,
-                                `URL:${window.location.href}`,
-                                'END:VEVENT',
-                                'END:VCALENDAR'
-                              ].join('\r\n')
-                              
-                              // Create and download ICS file
-                              const blob = new Blob([icsContent], { type: 'text/calendar;charset=utf-8' })
-                              const url = window.URL.createObjectURL(blob)
-                              const link = document.createElement('a')
-                              link.href = url
-                              link.download = `vote-results-reminder-${vote.title.replace(/[^a-zA-Z0-9]/g, '-')}.ics`
-                              document.body.appendChild(link)
-                              link.click()
-                              document.body.removeChild(link)
-                              window.URL.revokeObjectURL(url)
-                              
-                              toast.success('Calendar reminder downloaded!', {
-                                description: 'You\'ll be reminded when vote results are available.'
-                              })
-                            }}
-                          >
-                            <Calendar className="h-3 w-3" />
-                            .ics
-                          </Button>
-                        </div>
+                    </div>
+                    <div className="pt-2 border-t border-green-200 dark:border-green-700">
+                      <div className="flex items-center gap-2 mb-2">
+                        <Timer className="h-3 w-3 text-green-600 dark:text-green-400" />
+                        <span className="text-xs font-medium">Set closing reminder:</span>
                       </div>
-                    
+                      <div className="flex flex-wrap gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="gap-2 text-xs h-7 bg-white dark:bg-green-900/30 border-green-300 dark:border-green-600 hover:bg-green-50 dark:hover:bg-green-900/50"
+                          onClick={() => {
+                            const endDate = new Date(vote.endTimestamp)
+                            const reminderDate = new Date(vote.endTimestamp + 5 * 60 * 1000) // 5 minutes after voting ends
+                            const title = encodeURIComponent(`Vote Results: ${vote.title}`)
+                            const details = encodeURIComponent(`Voting has ended for: ${vote.title}${vote.description ? `\n\n${vote.description}` : ''}\n\nCheck results at: ${window.location.href}`)
+                            const reminderTime = reminderDate.toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z'
+                            const endTime = new Date(reminderDate.getTime() + 30 * 60 * 1000).toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z' // 30 min duration
+
+                            const googleUrl = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${title}&dates=${reminderTime}/${endTime}&details=${details}&location=${encodeURIComponent(window.location.href)}`
+                            window.open(googleUrl, '_blank')
+                          }}
+                        >
+                          <Calendar className="h-3 w-3" />
+                          Google
+                        </Button>
+
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="gap-2 text-xs h-7 bg-white dark:bg-green-900/30 border-green-300 dark:border-green-600 hover:bg-green-50 dark:hover:bg-green-900/50"
+                          onClick={() => {
+                            const endDate = new Date(vote.endTimestamp)
+                            const reminderDate = new Date(vote.endTimestamp + 5 * 60 * 1000) // 5 minutes after voting ends
+                            const title = encodeURIComponent(`Vote Results: ${vote.title}`)
+                            const details = encodeURIComponent(`Voting has ended for: ${vote.title}${vote.description ? `\n\n${vote.description}` : ''}\n\nCheck results at: ${window.location.href}`)
+                            const reminderTime = reminderDate.toISOString()
+                            const endTime = new Date(reminderDate.getTime() + 30 * 60 * 1000).toISOString() // 30 min duration
+
+                            const outlookUrl = `https://outlook.live.com/calendar/0/deeplink/compose?subject=${title}&startdt=${reminderTime}&enddt=${endTime}&body=${details}&location=${encodeURIComponent(window.location.href)}`
+                            window.open(outlookUrl, '_blank')
+                          }}
+                        >
+                          <Calendar className="h-3 w-3" />
+                          Outlook
+                        </Button>
+
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="gap-2 text-xs h-7 bg-white dark:bg-green-900/30 border-green-300 dark:border-green-600 hover:bg-green-50 dark:hover:bg-green-900/50"
+                          onClick={() => {
+                            const endDate = new Date(vote.endTimestamp)
+                            const reminderDate = new Date(vote.endTimestamp + 5 * 60 * 1000) // 5 minutes after voting ends
+                            const title = `Vote Results: ${vote.title}`
+                            const details = `Voting has ended for: ${vote.title}${vote.description ? `\n\n${vote.description}` : ''}\n\nCheck results at: ${window.location.href}`
+
+                            // Create ICS file content
+                            const icsContent = [
+                              'BEGIN:VCALENDAR',
+                              'VERSION:2.0',
+                              'PRODID:-//SuiVote//Vote Results Reminder//EN',
+                              'BEGIN:VEVENT',
+                              `UID:${Date.now()}-results@suivote.com`,
+                              `DTSTART:${reminderDate.toISOString().replace(/[-:]/g, '').split('.')[0]}Z`,
+                              `DTEND:${new Date(reminderDate.getTime() + 30 * 60 * 1000).toISOString().replace(/[-:]/g, '').split('.')[0]}Z`,
+                              `SUMMARY:${title}`,
+                              `DESCRIPTION:${details.replace(/\n/g, '\\n')}`,
+                              `URL:${window.location.href}`,
+                              'END:VEVENT',
+                              'END:VCALENDAR'
+                            ].join('\r\n')
+
+                            // Create and download ICS file
+                            const blob = new Blob([icsContent], { type: 'text/calendar;charset=utf-8' })
+                            const url = window.URL.createObjectURL(blob)
+                            const link = document.createElement('a')
+                            link.href = url
+                            link.download = `vote-results-reminder-${vote.title.replace(/[^a-zA-Z0-9]/g, '-')}.ics`
+                            document.body.appendChild(link)
+                            link.click()
+                            document.body.removeChild(link)
+                            window.URL.revokeObjectURL(url)
+
+                            toast.success('Calendar reminder downloaded!', {
+                              description: 'You\'ll be reminded when vote results are available.'
+                            })
+                          }}
+                        >
+                          <Calendar className="h-3 w-3" />
+                          .ics
+                        </Button>
+                      </div>
+                    </div>
+
                   </AlertDescription>
                 </Alert>
               ) : (
@@ -2471,7 +2767,7 @@ export default function VotePage() {
                               {showingResults && (
                                 <div
                                   className="absolute inset-0 bg-primary/5 origin-left transition-all duration-1000 ease-out"
-                                  style={{ transform: `scaleX(${option.percentage / 100})` }}
+                                  style={{ transform: `scaleX(${(option.percentage || 0) / 100})` }}
                                 ></div>
                               )}
 
@@ -2507,8 +2803,8 @@ export default function VotePage() {
                                   {showingResults && (
                                     <div className="mt-2 space-y-1">
                                       <div className="flex items-center justify-between text-sm">
-                                        <span className="text-muted-foreground">{option.votes} votes</span>
-                                        <span className="font-medium">{option.percentage.toFixed(1)}%</span>
+                                       {!vote.usePaymentWeighting && Number(vote.tokensPerVote || 0) <= 0 && <span className="text-muted-foreground">{option.votes} votes</span>}
+                                        <span className="font-medium">{(option.percentage || 0).toFixed(1)}%</span>
                                       </div>
                                     </div>
                                   )}
@@ -2560,7 +2856,7 @@ export default function VotePage() {
                                 {showingResults && (
                                   <div
                                     className="absolute inset-0 bg-primary/5 origin-left transition-all duration-1000 ease-out"
-                                    style={{ transform: `scaleX(${option.percentage / 100})` }}
+                                    style={{ transform: `scaleX(${(option.percentage || 0) / 100})` }}
                                   ></div>
                                 )}
 
@@ -2592,8 +2888,8 @@ export default function VotePage() {
                                     {showingResults && (
                                       <div className="mt-2 space-y-1">
                                         <div className="flex items-center justify-between text-sm">
-                                          <span className="text-muted-foreground">{option.votes} votes</span>
-                                          <span className="font-medium">{option.percentage.toFixed(1)}%</span>
+                                          <span className="text-muted-foreground">{!vote.usePaymentWeighting && Number(vote.tokensPerVote || 0) <= 0 ? `${option.votes} votes` : ""}</span>
+                                          <span className="font-medium">{(option.percentage || 0).toFixed(1)}%</span>
                                         </div>
                                       </div>
                                     )}
@@ -2792,9 +3088,9 @@ export default function VotePage() {
                                       #{originalIndex + 1}
                                     </span>
                                   </span>
-                                  <span>{option.votes} votes ({option.percentage.toFixed(1)}%)</span>
+                                  <span> {!vote.usePaymentWeighting && Number(vote.tokensPerVote || 0) <= 0 ? `${option.votes} votes` : ""} ({(option.percentage || 0).toFixed(1)}%)</span>
                                 </div>
-                                <Progress value={option.percentage} className="h-2" />
+                                <Progress value={option.percentage || 0} className="h-2" />
                               </div>
                             );
                           })
@@ -2884,6 +3180,186 @@ export default function VotePage() {
           </motion.div>
         )}
 
+        {/* Enhanced Payment Weighting Section */}
+        {vote.status === "active" && !hasVoted && userCanVote && vote.usePaymentWeighting && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5, delay: 0.25 }}
+            className="mt-8"
+          >
+            <Card className="border-purple-200 dark:border-purple-800 bg-gradient-to-br from-purple-50 to-blue-50 dark:from-purple-950/30 dark:to-blue-950/30 shadow-lg">
+              <CardHeader className="pb-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="h-10 w-10 rounded-full bg-purple-100 dark:bg-purple-900/50 flex items-center justify-center">
+                      <Coins className="h-5 w-5 text-purple-600 dark:text-purple-400" />
+                    </div>
+                    <div>
+                      <CardTitle className="text-lg text-purple-900 dark:text-purple-100">
+                        Payment Weighting
+                      </CardTitle>
+                      <CardDescription className="text-purple-700 dark:text-purple-300">
+                        Increase your vote influence with higher payment amounts
+                      </CardDescription>
+                    </div>
+                  </div>
+                  <Badge variant="secondary" className="bg-purple-100 dark:bg-purple-900/50 text-purple-700 dark:text-purple-300 border-purple-200 dark:border-purple-700">
+                    Active
+                  </Badge>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                {/* Payment Configuration Info */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 p-4 bg-white/50 dark:bg-gray-900/50 rounded-lg border border-purple-100 dark:border-purple-800">
+                  <div className="text-center">
+                    <div className="text-xs text-muted-foreground mb-1">Minimum Payment</div>
+                    <div className="font-semibold text-purple-700 dark:text-purple-300">
+                      {vote.usePaymentWeighting ? `${vote.paymentTokenWeight} SUI` : "0.001 SUI"}
+                    </div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-xs text-muted-foreground mb-1">Maximum Payment</div>
+                    <div className="font-semibold text-purple-700 dark:text-purple-300">
+                      {/* For payment weighting, paymentAmount is NOT the max limit - it's a fixed payment requirement */}
+                      {/* Payment weighting typically has no hard maximum, just practical limits */}
+                      {vote.paymentAmount && Number(vote.paymentAmount) > 0 && !vote.usePaymentWeighting
+                        ? `${Number(fromDecimalUnits(vote.paymentAmount, 9)).toFixed(3)} SUI`
+                        : "1000 SUI"}
+                    </div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-xs text-muted-foreground mb-1">
+                      {vote.paymentTokenWeight && Number(vote.paymentTokenWeight) !== 1 ? "Weight Per SUI" : "Base Weight"}
+                    </div>
+                    <div className="font-semibold text-purple-700 dark:text-purple-300">
+                      {vote.paymentTokenWeight && Number(vote.paymentTokenWeight) > 0 ? `${vote.paymentTokenWeight}x` : "1x"}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Payment Amount Input */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor="payment-amount" className="text-sm font-medium text-purple-900 dark:text-purple-100">
+                      Payment Amount (SUI)
+                    </Label>
+                    {vote.usePaymentWeighting && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 px-2 text-xs text-purple-600 dark:text-purple-400 hover:bg-purple-100 dark:hover:bg-purple-900/50"
+                        onClick={() => setPaymentAmount(parseFloat(vote.paymentTokenWeight || '0') || 0)}
+                      >
+                        Use Minimum
+                      </Button>
+                    )}
+                  </div>
+                  <div className="relative">
+                    <Input
+                      id="payment-amount"
+                      type="number"
+                      step="0.001"
+                      min={vote.usePaymentWeighting ? String(vote.paymentTokenWeight || 0) : "0"}
+                      max="1000"
+                      value={paymentAmount}
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        if (value === '' || (!isNaN(parseFloat(value)) && parseFloat(value) >= 0)) {
+                          setPaymentAmount(parseFloat(value) || 0);
+                        }
+                      }}
+                      placeholder={vote.usePaymentWeighting ? `Min: ${vote.paymentTokenWeight || 0} SUI` : "Enter payment amount"}
+                      className={cn(
+                        "pr-16 h-12 text-lg font-medium border-purple-200 dark:border-purple-700 focus:ring-purple-500 focus:border-purple-500",
+                        paymentError && "border-red-500 focus:ring-red-500 focus:border-red-500"
+                      )}
+                    />
+                    <div className="absolute inset-y-0 right-0 flex items-center pr-4 pointer-events-none">
+                      <span className="text-sm font-medium text-purple-600 dark:text-purple-400">SUI</span>
+                    </div>
+                  </div>
+                  {paymentError && (
+                    <div className="flex items-center gap-2 text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/30 p-2 rounded-md">
+                      <AlertCircle className="h-4 w-4" />
+                      {paymentError}
+                    </div>
+                  )}
+                </div>
+
+                {/* Enhanced Balance and Vote Weight Display */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  {/* Balance Card */}
+                  <div className="p-4 bg-gradient-to-br from-blue-50 to-indigo-50 dark:from-blue-950/30 dark:to-indigo-950/30 rounded-lg border border-blue-200 dark:border-blue-700">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Wallet className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+                      <span className="text-sm font-medium text-blue-900 dark:text-blue-100">Your Balance</span>
+                    </div>
+                    <div className="space-y-2">
+                      {balanceLoading ? (
+                        <div className="flex items-center gap-2">
+                          <RefreshCw className="h-4 w-4 animate-spin text-blue-600 dark:text-blue-400" />
+                          <span className="text-sm text-blue-700 dark:text-blue-300">Loading...</span>
+                        </div>
+                      ) : (
+                        <>
+                          <div className="text-xl font-bold text-blue-900 dark:text-blue-100">
+                            {userBalance ? `${Number(fromDecimalUnits(userBalance, 9)).toFixed(3)} SUI` : "0 SUI"}
+                          </div>
+                          {userBalance && paymentAmount && paymentAmount > 0 && (
+                            <div className="flex items-center gap-2">
+                              <div className="flex-1 bg-blue-200 dark:bg-blue-800 rounded-full h-2">
+                                <div
+                                  className="bg-blue-600 dark:bg-blue-400 h-2 rounded-full transition-all duration-300"
+                                  style={{
+                                    width: `${Math.min(100, (Number(paymentAmount) / Number(fromDecimalUnits(userBalance, 9))) * 100)}%`
+                                  }}
+                                />
+                              </div>
+                              <span className="text-xs text-blue-700 dark:text-blue-300 font-medium">
+                                {((Number(paymentAmount) / Number(fromDecimalUnits(userBalance, 9))) * 100).toFixed(1)}%
+                              </span>
+                            </div>
+                          )}
+                          {userBalance && paymentAmount && Number(paymentAmount) > 0 && (
+                            <div className="text-xs text-blue-600 dark:text-blue-400">
+                              Remaining: {(Number(fromDecimalUnits(userBalance, 9)) - Number(paymentAmount)).toFixed(3)} SUI
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Vote Weight Card */}
+                  <div className="p-4 bg-gradient-to-br from-green-50 to-emerald-50 dark:from-green-950/30 dark:to-emerald-950/30 rounded-lg border border-green-200 dark:border-green-700">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Award className="h-4 w-4 text-green-600 dark:text-green-400" />
+                      <span className="text-sm font-medium text-green-900 dark:text-green-100">Vote Weight</span>
+                    </div>
+                    <div className="space-y-2">
+                      <div className="text-2xl font-bold text-green-900 dark:text-green-100">
+                        {calculatedVoteWeight.toFixed(2)}x
+                      </div>
+                      {vote.hasWhitelist && userWhitelistWeight > 1 && (
+                        <div className="flex items-center gap-1 text-xs text-green-600 dark:text-green-400 bg-green-100 dark:bg-green-900/30 px-2 py-1 rounded-full">
+                          <CheckCircle2 className="h-3 w-3" />
+                          +{userWhitelistWeight}x whitelist bonus
+                        </div>
+                      )}
+                      {paymentAmount && Number(paymentAmount) > 0 && (
+                        <div className="text-xs text-green-600 dark:text-green-400">
+                          Based on {paymentAmount} SUI payment
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </motion.div>
+        )}
+
         {/* Submit button (only show if vote is active and user hasn't voted yet) */}
         {vote.status === "active" && !hasVoted && userCanVote && (
           <motion.div
@@ -2907,7 +3383,8 @@ export default function VotePage() {
                 <div className="text-sm text-red-600 dark:text-red-400 flex items-center gap-2">
                   <AlertCircle className="h-4 w-4" />
                   <span>
-                    {validationErrors.general ||
+                    {validationErrors.tokens || validationErrors.payment || validationErrors.wallet ||
+                      validationErrors.general ||
                       `${Object.keys(validationErrors).length} poll${Object.keys(validationErrors).length > 1 ? 's' : ''} need${Object.keys(validationErrors).length === 1 ? 's' : ''} attention`}
                   </span>
                   {activeTab === "polls" && Object.keys(validationErrors).length > 0 && (

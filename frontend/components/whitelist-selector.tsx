@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { cn } from "@/lib/utils"
 import { Badge } from "@/components/ui/badge"
-import { AlertCircle, X, Clipboard, ClipboardCheck, Download, Upload, Trash2, Plus, Users } from "lucide-react"
+import { AlertCircle, X, Clipboard, ClipboardCheck, Download, Upload, Trash2, Plus, Users, FileText, Percent, Copy } from "lucide-react"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { toast } from "sonner"
 
@@ -18,7 +18,9 @@ interface WhitelistSelectorProps {
   onWhitelistChange: (enabled: boolean) => void
   whitelistAddresses: string[]
   onWhitelistAddressesChange: (addresses: string[]) => void
-  className?: string
+  whitelistWeights?: { [address: string]: number }
+  onWhitelistWeightsChange?: (weights: { [address: string]: number }) => void
+  onVoteWeightsChange?: (enabled: boolean) => void
 }
 
 export function WhitelistSelector({
@@ -26,7 +28,9 @@ export function WhitelistSelector({
   onWhitelistChange,
   whitelistAddresses,
   onWhitelistAddressesChange,
-  className,
+  whitelistWeights = {},
+  onWhitelistWeightsChange,
+  onVoteWeightsChange,
 }: WhitelistSelectorProps) {
   const [whitelistInput, setWhitelistInput] = useState("")
   const [whitelistError, setWhitelistError] = useState<string | null>(null)
@@ -35,7 +39,13 @@ export function WhitelistSelector({
   const [clipboardSupported, setClipboardSupported] = useState(false)
   const [isClipboardCopied, setIsClipboardCopied] = useState(false)
   const [activeTab, setActiveTab] = useState<string>("input")
+  const [enableVoteWeights, setEnableVoteWeights] = useState(false)
+  
+  // Note: Removed automatic sync to prevent unwanted enabling on page refresh
+  // The enableVoteWeights state should only be controlled by user interaction
+  const [csvData, setCsvData] = useState<{ address: string; weight: number }[]>([])
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const csvInputRef = useRef<HTMLInputElement>(null)
 
   // Check if clipboard API is available
   useEffect(() => {
@@ -100,12 +110,76 @@ export function WhitelistSelector({
     }
   }
 
+  // Process CSV data with vote weights
+  const processCsvData = (csvContent: string) => {
+    const lines = csvContent.split('\n').filter(line => line.trim());
+    const data: { address: string; weight: number }[] = [];
+    const errors: string[] = [];
+    
+    lines.forEach((line, index) => {
+      const parts = line.split(',').map(part => part.trim());
+      if (parts.length >= 2) {
+        const address = parts[0];
+        const weight = parseFloat(parts[1]);
+        
+        if (isValidSuiAddress(address) && !isNaN(weight) && weight > 0 && weight <= 100) {
+          data.push({ address, weight });
+        } else {
+          errors.push(`Line ${index + 1}: Invalid address or weight`);
+        }
+      } else if (parts.length === 1 && parts[0]) {
+        // Single address without weight, assign default weight of 0.1%
+        const address = parts[0];
+        if (isValidSuiAddress(address)) {
+          data.push({ address, weight: 0.1 });
+        } else {
+          errors.push(`Line ${index + 1}: Invalid address`);
+        }
+      }
+    });
+    
+    if (errors.length > 0) {
+      toast.error(`CSV processing errors: ${errors.slice(0, 3).join(', ')}${errors.length > 3 ? ` and ${errors.length - 3} more` : ''}`);
+    }
+    
+    return data;
+  };
+  
+  // Update vote weight for an address
+  const updateVoteWeight = (address: string, weight: number) => {
+    if (onWhitelistWeightsChange) {
+      const newWeights = { ...whitelistWeights, [address]: weight };
+      onWhitelistWeightsChange(newWeights);
+    }
+  };
+
+  const distributeWeightsEvenly = () => {
+    if (whitelistAddresses.length === 0) return
+    
+    const evenWeight = parseFloat((100 / whitelistAddresses.length).toFixed(2))
+    const evenWeights: Record<string, number> = {}
+    
+    whitelistAddresses.forEach(address => {
+      evenWeights[address] = evenWeight
+    })
+    
+    onWhitelistWeightsChange?.(evenWeights)
+    toast.success(`Distributed weights evenly: ${evenWeight}% per address`)
+  }
+  
   // Remove a specific address
   const removeAddress = (addressToRemove: string) => {
     const updatedAddresses = whitelistAddresses.filter(
       addr => addr !== addressToRemove
     );
     onWhitelistAddressesChange(updatedAddresses);
+    
+    // Also remove from weights
+    if (onWhitelistWeightsChange) {
+      const newWeights = { ...whitelistWeights };
+      delete newWeights[addressToRemove];
+      onWhitelistWeightsChange(newWeights);
+    }
     
     // Update the textarea to reflect the change
     setWhitelistInput(updatedAddresses.join("\n"));
@@ -160,6 +234,44 @@ export function WhitelistSelector({
     }
   }
   
+  const triggerCsvUpload = () => {
+    csvInputRef.current?.click();
+  };
+  
+  const handleCsvUpload = (file: File) => {
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const content = event.target?.result as string;
+      const data = processCsvData(content);
+      
+      if (data.length > 0) {
+        const addresses = data.map(item => item.address);
+        const weights: { [address: string]: number } = {};
+        
+        data.forEach(item => {
+          weights[item.address] = item.weight;
+        });
+        
+        onWhitelistAddressesChange(addresses);
+        if (onWhitelistWeightsChange) {
+          onWhitelistWeightsChange(weights);
+        }
+        
+        setEnableVoteWeights(true);
+        setCsvData(data);
+        setWhitelistInput(addresses.join('\n'));
+        
+        toast.success(`CSV file "${file.name}" processed successfully. ${data.length} addresses with weights imported.`);
+      } else {
+        toast.error('No valid addresses found in CSV file.');
+      }
+    };
+    reader.onerror = () => {
+      toast.error('Error reading CSV file');
+    };
+    reader.readAsText(file);
+  };
+  
   // Paste from clipboard
   const pasteFromClipboard = async () => {
     try {
@@ -173,7 +285,7 @@ export function WhitelistSelector({
   }
 
   return (
-    <div className={cn("space-y-4", className)}>
+    <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Users className="h-4 w-4 text-primary" />
@@ -195,6 +307,41 @@ export function WhitelistSelector({
       
       {enableWhitelist && (
         <div className="space-y-3 pt-2 animate-in fade-in-50 duration-300">
+          {/* Vote Weights Toggle */}
+          <div className="flex items-center justify-between p-3 border rounded-lg bg-muted/30">
+            <div className="space-y-1">
+              <Label htmlFor="vote-weights-toggle" className="text-sm font-medium">
+                Enable Vote Weights
+              </Label>
+              <p className="text-xs text-muted-foreground">
+                Assign custom voting power to whitelist addresses (incompatible with payment/token weighting)
+              </p>
+            </div>
+            <Switch
+              id="vote-weights-toggle"
+              checked={enableVoteWeights}
+              onCheckedChange={(checked) => {
+                setEnableVoteWeights(checked)
+                if (!checked) {
+                  // Reset all weights to 1 when disabling
+                  const resetWeights: Record<string, number> = {}
+                  whitelistAddresses.forEach(address => {
+                    resetWeights[address] = 0.1
+                  })
+                  onWhitelistWeightsChange?.(resetWeights)
+                } else {
+                  // Initialize weights to 1 for all addresses when enabling
+                  const initialWeights: Record<string, number> = {}
+                  whitelistAddresses.forEach(address => {
+                    initialWeights[address] = whitelistWeights[address] || 0.1
+                  })
+                  onWhitelistWeightsChange?.(initialWeights)
+                }
+                onVoteWeightsChange?.(checked)
+              }}
+            />
+          </div>
+          
           <Tabs defaultValue="input" value={activeTab} onValueChange={setActiveTab} className="w-full">
             <TabsList className="grid w-full grid-cols-2 mb-4">
               <TabsTrigger value="input" className="text-sm">
@@ -240,6 +387,17 @@ export function WhitelistSelector({
                     >
                       <Upload className="h-3.5 w-3.5 mr-1" />
                       <span className="hidden sm:inline">Upload</span>
+                    </Button>
+                    
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 px-2 text-xs"
+                      onClick={triggerCsvUpload}
+                      title="Upload CSV with addresses and vote weights"
+                    >
+                      <FileText className="h-3.5 w-3.5 mr-1" />
+                      <span className="hidden sm:inline">CSV</span>
                     </Button>
                   </div>
                 </div>
@@ -321,6 +479,20 @@ export function WhitelistSelector({
                     }
                   }}
                 />
+                
+                <Input
+                  ref={csvInputRef}
+                  id="csv-file"
+                  type="file"
+                  accept=".csv"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) {
+                      handleCsvUpload(file);
+                    }
+                  }}
+                />
               </div>
             </TabsContent>
             
@@ -396,34 +568,120 @@ export function WhitelistSelector({
                   </Button>
                 </div>
               ) : (
-                <div className="border rounded-md p-3 max-h-[300px] overflow-y-auto bg-muted/20">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
-                    {whitelistAddresses.map((address, index) => (
-                      <Badge 
-                        key={index} 
-                        variant="outline"
-                        className="flex items-center justify-between gap-1 py-1.5 px-2 transition-all hover:bg-accent/50 group"
-                      >
-                        <span className="truncate text-xs font-mono">
-                          {address.substring(0, 8)}...{address.substring(address.length - 6)}
-                        </span>
-                        <button
-                          onClick={() => removeAddress(address)}
-                          className="text-muted-foreground opacity-50 group-hover:opacity-100 hover:text-red-500 transition-all"
-                          aria-label="Remove address"
-                          title={address}
+                <div className="border rounded-md p-3 max-h-[400px] overflow-y-auto bg-muted/20">
+                  {enableVoteWeights ? (
+                    <div className="space-y-3">
+                      <div className="flex justify-between items-center">
+                        <div className="text-sm font-medium">Address Weights</div>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={distributeWeightsEvenly}
+                          className="text-xs h-7"
                         >
-                          <X className="h-3.5 w-3.5" />
-                        </button>
-                      </Badge>
-                    ))}
-                  </div>
+                          Distribute Evenly
+                        </Button>
+                      </div>
+                      {whitelistAddresses.map((address, index) => (
+                        <div key={index} className="flex flex-col sm:flex-row items-start sm:items-center gap-3 p-3 border rounded-lg bg-background/50">
+                          <div className="flex-1 min-w-0">
+                            <div className="text-xs font-mono text-muted-foreground mb-1 break-all">
+                              {address.substring(0, 12)}...{address.substring(address.length - 8)}
+                            </div>
+                            <div className="text-xs text-muted-foreground break-all">
+                              Full: {address}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2 w-full sm:w-auto">
+                            <Percent className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                            <Input
+                              type="number"
+                              min="0.1"
+                              max="100"
+                              step="0.1"
+                              value={whitelistWeights[address] || 0.1}
+                              onChange={(e) => {
+                                const value = parseFloat(e.target.value) || 0.1;
+                                if (value >= 0.1 && value <= 100) {
+                                  updateVoteWeight(address, value);
+                                }
+                              }}
+                              className="w-20 h-8 text-xs flex-shrink-0"
+                              placeholder="0.1"
+                            />
+                            <span className="text-xs text-muted-foreground flex-shrink-0">%</span>
+                            <button
+                              onClick={() => removeAddress(address)}
+                              className="text-muted-foreground hover:text-red-500 transition-all p-1 flex-shrink-0 ml-auto sm:ml-0"
+                              aria-label="Remove address"
+                              title="Remove address"
+                            >
+                              <X className="h-4 w-4" />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                      <div className="mt-4 p-3 bg-blue-50/50 dark:bg-blue-950/20 rounded-lg border border-blue-200 dark:border-blue-800">
+                        <div className="flex items-center justify-between">
+                          <div className="text-xs text-blue-700 dark:text-blue-300 font-medium">
+                            Total Weight: {Object.values(whitelistWeights).reduce((sum, weight) => sum + (weight || 0), 0).toFixed(1)}%
+                          </div>
+                          {Object.values(whitelistWeights).reduce((sum, weight) => sum + (weight || 0), 0) !== 100 && (
+                            <div className="text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1">
+                              <AlertCircle className="h-3 w-3" />
+                              Should total 100%
+                            </div>
+                          )}
+                        </div>
+                        {Object.values(whitelistWeights).reduce((sum, weight) => sum + (weight || 0), 0) === 100 ? (
+                          <div className="text-xs text-green-600 dark:text-green-400 flex items-center gap-1 mt-1">
+                            <span>✓</span>
+                            Perfect! Weights total 100%
+                          </div>
+                        ) : (
+                          <div className="text-xs text-blue-600 dark:text-blue-400 mt-1">
+                            Recommended: Total should equal 100% for balanced voting
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
+                      {whitelistAddresses.map((address, index) => (
+                        <Badge 
+                          key={index} 
+                          variant="outline"
+                          className="flex items-center justify-between gap-1 py-1.5 px-2 transition-all hover:bg-accent/50 group"
+                        >
+                          <span className="truncate text-xs font-mono">
+                            {address.substring(0, 8)}...{address.substring(address.length - 6)}
+                          </span>
+                          <button
+                            onClick={() => removeAddress(address)}
+                            className="text-muted-foreground opacity-50 group-hover:opacity-100 hover:text-red-500 transition-all"
+                            aria-label="Remove address"
+                            title={address}
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        </Badge>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
               
-              <p className="text-xs text-muted-foreground italic">
-                Only these addresses will be able to vote on this poll.
-              </p>
+              <div className="space-y-1">
+                <p className="text-xs text-muted-foreground italic">
+                  Only these addresses will be able to vote on this poll.
+                </p>
+                {enableVoteWeights && (
+                  <p className="text-xs text-blue-600 dark:text-blue-400 italic">
+                    Vote weights determine the relative voting power of each address.
+                  </p>
+                )}
+              </div>
             </TabsContent>
           </Tabs>
         </div>

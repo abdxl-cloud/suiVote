@@ -12,6 +12,7 @@ import {
   Coins,
   Wallet,
   AlertCircle,
+  Circle,
   Settings,
   ChevronLeft,
   ChevronRight,
@@ -95,9 +96,13 @@ type VotingSettings = {
   requireAllPolls: boolean
   showLiveStats: boolean
   isTokenWeighted: boolean
-  tokenWeight: string
+  tokenWeight: string // For token weighting
+  paymentTokenWeight: string // For payment weighting
   enableWhitelist: boolean
   whitelistAddresses: string[]
+  whitelistWeights: { [address: string]: number }
+  whitelistWeightsEnabled: boolean
+  enableWeightedPayment: boolean
 }
 
 type ValidationErrors = {
@@ -115,6 +120,7 @@ type ValidationErrors = {
     dates?: string
     token?: string
     amount?: string
+    weightedPayment?: string
   }
   environment?: string
 }
@@ -224,12 +230,23 @@ export default function CreateVotePage() {
     requireAllPolls: true,
     showLiveStats: false,
     isTokenWeighted: false,
-    tokenWeight: "1",
+    tokenWeight: "1", // For token weighting
+    paymentTokenWeight: "0.1", // For payment weighting
     enableWhitelist: false,
-    whitelistAddresses: []
+    whitelistAddresses: [],
+    whitelistWeights: {},
+    whitelistWeightsEnabled: false,
+    enableWeightedPayment: false
   });
 
   const [errors, setErrors] = useState<ValidationErrors>({})
+  
+  // State to preserve values when inputs are disabled
+  const [preservedValues, setPreservedValues] = useState({
+    paymentTokenWeight: "0.1",
+    tokenWeight: "1",
+    paymentAmount: ""
+  })
   const [touchedFields, setTouchedFields] = useState<{
     title?: boolean
     description?: boolean
@@ -243,6 +260,7 @@ export default function CreateVotePage() {
       dates?: boolean
       token?: boolean
       amount?: boolean
+      weightedPayment?: boolean
     }
   }>({})
   const [attemptedSubmit, setAttemptedSubmit] = useState(false)
@@ -510,7 +528,10 @@ export default function CreateVotePage() {
         isTokenWeighted: false,
         tokenWeight: "1",
         enableWhitelist: false,
-        whitelistAddresses: []
+        whitelistAddresses: [],
+        whitelistWeights: {},
+        whitelistWeightsEnabled: false,
+        enableWeightedPayment: false
       })
       
       setActiveTab('details')
@@ -760,8 +781,19 @@ const addPoll = () => {
     const newPolls = [...polls]
     newPolls[pollIndex].isRequired = isRequired
     setPolls(newPolls)
+    
+    // If no polls are required anymore, turn off requireAllPolls
+    if (!isRequired && !newPolls.some(poll => poll.isRequired)) {
+      setVotingSettings({ ...votingSettings, requireAllPolls: false })
+    }
+    
     // Validate form without navigation to update errors in real-time
     setTimeout(() => validateForm(false), 0);
+  }
+
+  // Helper function to check if any polls are required
+  const hasRequiredPolls = () => {
+    return polls.some(poll => poll.isRequired)
   }
 
   // Update the addOption function to use timestamp-based unique IDs
@@ -915,13 +947,6 @@ const addPoll = () => {
         ...prev,
         title: "Vote title is required"
       }))
-
-      // Show toast notification with Sonner
-      toast.error("Vote title is required", {
-        description: "Please enter a title for your vote before proceeding",
-        icon: <AlertCircle className="h-4 w-4" />,
-        duration: 5000
-      })
       return
     }
     
@@ -996,7 +1021,16 @@ const preparePollDataForSubmission = () => {
 }
 
 
+  const validateFormWithSettings = (navigateToErrors: boolean = true, customVotingSettings?: VotingSettings, forceValidation: boolean = false): boolean => {
+    const settingsToUse = customVotingSettings || votingSettings
+    return validateFormInternal(navigateToErrors, forceValidation, settingsToUse)
+  }
+
   const validateForm = (navigateToErrors: boolean = true, forceValidation: boolean = false): boolean => {
+    return validateFormInternal(navigateToErrors, forceValidation, votingSettings)
+  }
+
+  const validateFormInternal = (navigateToErrors: boolean = true, forceValidation: boolean = false, settingsToUse: VotingSettings): boolean => {
     const newErrors: ValidationErrors = {}
     let errorTab: string | null = null
 
@@ -1011,14 +1045,35 @@ const preparePollDataForSubmission = () => {
       return false
     }
 
-    // Validate vote title (only show error if touched or force validation)
+    // Enhanced vote title validation
     if (!voteTitle.trim() && (touchedFields.title || forceValidation || attemptedSubmit)) {
       newErrors.title = "Vote title is required"
       errorTab = "details"
+    } else if (voteTitle.trim() && voteTitle.trim().length < 3) {
+      newErrors.title = "Vote title must be at least 3 characters long"
+      errorTab = "details"
+    } else if (voteTitle.trim() && voteTitle.trim().length > 100) {
+      newErrors.title = "Vote title must be less than 100 characters"
+      errorTab = "details"
     }
 
-    // Validate polls
+    // Enhanced vote description validation (optional)
+    if (voteDescription.trim() && voteDescription.trim().length < 10) {
+      newErrors.description = "Vote description must be at least 10 characters long"
+      errorTab = "details"
+    } else if (voteDescription.trim() && voteDescription.trim().length > 1000) {
+      newErrors.description = "Vote description must be less than 1000 characters"
+      errorTab = "details"
+    }
+
+    // Enhanced poll validation
     const pollErrors: ValidationErrors["polls"] = {}
+
+    // Check if we have at least one poll
+    if (polls.length === 0 && (forceValidation || attemptedSubmit)) {
+      newErrors.polls = { general: "At least one poll is required" }
+      errorTab = "polls"
+    }
 
     polls.forEach((poll, index) => {
       const pollError: {
@@ -1031,54 +1086,80 @@ const preparePollDataForSubmission = () => {
       const pollTouched = touchedFields.polls?.[poll.id]
       const shouldValidatePoll = forceValidation || attemptedSubmit || pollTouched?.title || pollTouched?.options
 
+      // Enhanced poll title validation
       if (!poll.title.trim() && (pollTouched?.title || forceValidation || attemptedSubmit)) {
         pollError.title = "Poll title is required"
         errorTab = "polls"
+      } else if (poll.title.trim() && poll.title.trim().length < 3) {
+        pollError.title = "Poll title must be at least 3 characters long"
+        errorTab = "polls"
+      } else if (poll.title.trim() && poll.title.trim().length > 200) {
+        pollError.title = "Poll title must be less than 200 characters"
+        errorTab = "polls"
       }
 
-      // Check for empty options (only show if options were touched or force validation)
+      // Enhanced option validation
       const emptyOptions = poll.options.filter((option) => !option.text.trim())
+      const validOptions = poll.options.filter((option) => option.text.trim())
+      
       if (emptyOptions.length > 0 && shouldValidatePoll) {
-        pollError.options = "All options must have text"
+        pollError.options = `${emptyOptions.length} option(s) need text`
         pollError.optionTexts = poll.options.map((option, optIndex) => {
           const optionTouched = pollTouched?.optionTexts?.[optIndex]
-          return (!option.text.trim() && (optionTouched || forceValidation || attemptedSubmit)) ? "Option text is required" : ""
+          if (!option.text.trim() && (optionTouched || forceValidation || attemptedSubmit)) {
+            return "Option text is required"
+          } else if (option.text.trim() && option.text.trim().length > 100) {
+            return "Option text must be less than 100 characters"
+          }
+          return ""
         })
         errorTab = "polls"
       }
 
-      // Check minimum number of options (only show if poll structure was modified)
-      if (poll.options.length < 2 && shouldValidatePoll) {
-        pollError.options = "Each poll must have at least 2 options"
+      // Check minimum number of valid options
+      if (validOptions.length < 2 && shouldValidatePoll) {
+        pollError.options = `Poll needs at least 2 valid options (currently has ${validOptions.length})`
         errorTab = "polls"
       }
 
-      // Validate maxSelections for multi-select polls
+      // Enhanced maxSelections validation for multi-select polls
       if (poll.isMultiSelect && (pollTouched?.maxSelections || forceValidation || attemptedSubmit)) {
         if (poll.maxSelections < 1) {
-          pollError.maxSelections = "Maximum selections must be at least 1";
-          errorTab = "polls";
-        } else if (poll.maxSelections >= poll.options.length) {
-          // Changed from >= to > to fix the edge case
-          pollError.maxSelections = `Maximum selections must be less than the number of options (${poll.options.length})`;
-          errorTab = "polls";
+          pollError.maxSelections = "Maximum selections must be at least 1"
+          errorTab = "polls"
+        } else if (poll.maxSelections >= validOptions.length && validOptions.length >= 2) {
+          pollError.maxSelections = `Maximum selections must be less than the number of valid options (${validOptions.length})`
+          errorTab = "polls"
         }
       }
 
-      const optionTexts = new Set();
-      let hasDuplicateOptions = false;
+      // Enhanced duplicate option detection
+      const optionTexts = new Set()
+      const duplicateIndices: number[] = []
+      let hasDuplicateOptions = false
 
-      poll.options.forEach(option => {
-        const trimmedText = option.text.trim();
-        if (optionTexts.has(trimmedText)) {
-          hasDuplicateOptions = true;
+      poll.options.forEach((option, optIndex) => {
+        const trimmedText = option.text.trim().toLowerCase()
+        if (trimmedText && optionTexts.has(trimmedText)) {
+          hasDuplicateOptions = true
+          duplicateIndices.push(optIndex)
         }
-        optionTexts.add(trimmedText);
-      });
+        if (trimmedText) {
+          optionTexts.add(trimmedText)
+        }
+      })
 
-      if (hasDuplicateOptions) {
-        pollError.options = "All poll options must be unique";
-        errorTab = "polls";
+      if (hasDuplicateOptions && shouldValidatePoll) {
+        pollError.options = "All poll options must be unique (case-insensitive)"
+        if (!pollError.optionTexts) {
+          pollError.optionTexts = poll.options.map(() => "")
+        }
+        duplicateIndices.forEach(index => {
+          if (pollError.optionTexts) {
+            pollError.optionTexts[index] = "Duplicate option text"
+          }
+        })
+        errorTab = "polls"
       }
 
       if (Object.keys(pollError).length > 0) {
@@ -1090,43 +1171,134 @@ const preparePollDataForSubmission = () => {
       newErrors.polls = pollErrors
     }
 
-    // Validate voting settings (only show errors if touched or force validation)
-    const settingsErrors: { dates?: string; token?: string; amount?: string } = {}
+    // Enhanced voting settings validation
+    const settingsErrors: { 
+      dates?: string; 
+      token?: string; 
+      amount?: string; 
+      weightedPayment?: string;
+      tokenWeight?: string;
+      paymentTokenWeight?: string;
+      whitelist?: string;
+    } = {}
     const settingsTouched = touchedFields.votingSettings
 
-    // Validate dates
+    // Enhanced date validation
     if (settingsTouched?.dates || forceValidation || attemptedSubmit) {
-      if (votingSettings.startDate && votingSettings.endDate) {
-        const now = new Date();
+      if (!settingsToUse.startDate || !settingsToUse.endDate) {
+        settingsErrors.dates = "Both start and end dates are required"
+        errorTab = "settings"
+      } else {
+        const now = new Date()
+        const minStartTime = new Date(now.getTime() + 5 * 60 * 1000) // 5 minutes from now
+        const maxEndTime = new Date(now.getTime() + 365 * 24 * 60 * 60 * 1000) // 1 year from now
+        const minDuration = 10 * 60 * 1000 // 10 minutes minimum duration
+        const maxDuration = 90 * 24 * 60 * 60 * 1000 // 90 days maximum duration
 
-        if (votingSettings.startDate < now) {
-          settingsErrors.dates = "Start date must be in the future";
-          errorTab = "settings";
-        } else if (!isAfter(votingSettings.endDate, votingSettings.startDate)) {
-          settingsErrors.dates = "End date must be after start date";
-          errorTab = "settings";
+        if (settingsToUse.startDate < minStartTime) {
+          settingsErrors.dates = "Start date must be at least 5 minutes in the future"
+          errorTab = "settings"
+        } else if (settingsToUse.endDate > maxEndTime) {
+          settingsErrors.dates = "End date cannot be more than 1 year in the future"
+          errorTab = "settings"
+        } else if (!isAfter(settingsToUse.endDate, settingsToUse.startDate)) {
+          settingsErrors.dates = "End date must be after start date"
+          errorTab = "settings"
+        } else {
+          const duration = settingsToUse.endDate.getTime() - settingsToUse.startDate.getTime()
+          if (duration < minDuration) {
+            settingsErrors.dates = "Voting period must be at least 10 minutes long"
+            errorTab = "settings"
+          } else if (duration > maxDuration) {
+            settingsErrors.dates = "Voting period cannot exceed 90 days"
+            errorTab = "settings"
+          }
         }
-      } else if (!votingSettings.startDate || !votingSettings.endDate) {
-        settingsErrors.dates = "Both start and end dates are required";
-        errorTab = "settings";
       }
     }
 
-    // Validate token requirements
-    if ((settingsTouched?.token || forceValidation || attemptedSubmit) && votingSettings.requiredToken && votingSettings.requiredToken !== "none") {
-      if (!votingSettings.requiredAmount) {
+    // Enhanced token requirements validation
+    if ((settingsTouched?.token || forceValidation || attemptedSubmit) && settingsToUse.requiredToken && settingsToUse.requiredToken !== "none") {
+      if (!settingsToUse.requiredAmount || settingsToUse.requiredAmount.trim() === "") {
         settingsErrors.token = "Token amount is required when a token is selected"
         errorTab = "settings"
-      } else if (Number.parseFloat(votingSettings.requiredAmount) <= 0) {
-        settingsErrors.amount = "Token amount must be greater than 0"
-        errorTab = "settings"
+      } else {
+        const amount = Number.parseFloat(settingsToUse.requiredAmount)
+        if (isNaN(amount) || amount <= 0) {
+          settingsErrors.token = "Token amount must be a valid number greater than 0"
+          errorTab = "settings"
+        } else if (amount > 1000000) {
+          settingsErrors.token = "Token amount seems unusually high (max: 1,000,000)"
+          errorTab = "settings"
+        }
       }
     }
 
-    // Validate payment amount
-    if ((settingsTouched?.amount || forceValidation || attemptedSubmit) && votingSettings.paymentAmount && Number.parseFloat(votingSettings.paymentAmount) < 0) {
-      settingsErrors.amount = "Payment amount cannot be negative"
-      errorTab = "settings"
+    // Enhanced payment amount validation
+    if (settingsTouched?.amount || forceValidation || attemptedSubmit) {
+      if (settingsToUse.paymentAmount && settingsToUse.paymentAmount.trim() !== "") {
+        const amount = Number.parseFloat(settingsToUse.paymentAmount)
+        if (isNaN(amount)) {
+          settingsErrors.amount = "Payment amount must be a valid number"
+          errorTab = "settings"
+        } else if (amount < 0) {
+          settingsErrors.amount = "Payment amount cannot be negative"
+          errorTab = "settings"
+        } else if (amount > 1000) {
+          settingsErrors.amount = "Payment amount seems unusually high (max: 1,000 SUI)"
+          errorTab = "settings"
+        }
+      }
+    }
+
+    // Enhanced token weight validation (for token requirements)
+    if (settingsToUse.isTokenWeighted && settingsToUse.requiredToken !== "none" && !settingsToUse.enableWeightedPayment && !settingsToUse.whitelistWeightsEnabled) {
+      if ((settingsTouched?.tokenWeight || forceValidation || attemptedSubmit)) {
+        if (!settingsToUse.tokenWeight || settingsToUse.tokenWeight.trim() === "") {
+          settingsErrors.tokenWeight = "Tokens per vote is required when token weighting is enabled"
+          errorTab = "settings"
+        } else {
+          const weight = Number.parseFloat(settingsToUse.tokenWeight)
+          if (isNaN(weight) || weight <= 0) {
+            settingsErrors.tokenWeight = "Tokens per vote must be a valid number greater than 0"
+            errorTab = "settings"
+          } else if (weight > 1000000) {
+            settingsErrors.tokenWeight = "Tokens per vote seems unusually high (max: 1,000,000)"
+            errorTab = "settings"
+          }
+        }
+      }
+    }
+
+    // Enhanced weighted payment validation
+    if ((settingsTouched?.weightedPayment || forceValidation || attemptedSubmit) && settingsToUse.enableWeightedPayment) {
+      if (!settingsToUse.paymentTokenWeight || settingsToUse.paymentTokenWeight.trim() === "") {
+        settingsErrors.paymentTokenWeight = `${settingsToUse.requiredToken !== "none" ? "Tokens" : "SUI"} per vote is required when weighted payment is enabled`
+        errorTab = "settings"
+      } else {
+        const weight = Number.parseFloat(settingsToUse.paymentTokenWeight)
+        if (isNaN(weight) || weight <= 0) {
+          settingsErrors.paymentTokenWeight = `${settingsToUse.requiredToken !== "none" ? "Tokens" : "SUI"} per vote must be a valid number greater than 0`
+          errorTab = "settings"
+        } else if (settingsToUse.requiredToken === "none" && weight < 0.001) {
+          settingsErrors.paymentTokenWeight = "SUI per vote must be at least 0.001"
+          errorTab = "settings"
+        } else if (weight > 1000000) {
+          settingsErrors.paymentTokenWeight = `${settingsToUse.requiredToken !== "none" ? "Tokens" : "SUI"} per vote seems unusually high (max: 1,000,000)`
+          errorTab = "settings"
+        }
+      }
+    }
+
+    // Enhanced whitelist validation
+    if (settingsToUse.enableWhitelist && (settingsTouched?.whitelist || forceValidation || attemptedSubmit)) {
+      if (!settingsToUse.whitelistAddresses || settingsToUse.whitelistAddresses.length === 0) {
+        settingsErrors.whitelist = "At least one address is required when whitelist is enabled"
+        errorTab = "settings"
+      } else if (settingsToUse.whitelistAddresses.length > 10000) {
+        settingsErrors.whitelist = "Whitelist cannot exceed 10,000 addresses"
+        errorTab = "settings"
+      }
     }
 
     if (Object.keys(settingsErrors).length > 0) {
@@ -1156,6 +1328,15 @@ const preparePollDataForSubmission = () => {
           setActivePollIndex(errorPollIndex)
         }
       }
+
+      // Auto-scroll to the first error field after tab switch
+      setTimeout(() => {
+        const firstErrorField = document.querySelector('.border-red-500, [data-error="true"]') as HTMLElement
+        if (firstErrorField) {
+          firstErrorField.scrollIntoView({ behavior: 'smooth', block: 'center' })
+          firstErrorField.focus()
+        }
+      }, 100)
 
       return false
     }
@@ -1293,9 +1474,7 @@ const preparePollDataForSubmission = () => {
           errors.title = 'Vote title must be less than 100 characters'
         }
         
-        if (!voteDescription.trim()) {
-          errors.description = 'Vote description is required'
-        } else if (voteDescription.length < 10) {
+        if (voteDescription.trim() && voteDescription.length < 10) {
           errors.description = 'Vote description must be at least 10 characters'
         } else if (voteDescription.length > 1000) {
           errors.description = 'Vote description must be less than 1000 characters'
@@ -1497,8 +1676,12 @@ const preparePollDataForSubmission = () => {
           showLiveStats: votingSettings.showLiveStats || false,
           isTokenWeighted: votingSettings.isTokenWeighted && votingSettings.requiredToken !== "none",
           tokenWeight: votingSettings.isTokenWeighted ? votingSettings.tokenWeight : "1",
+          enableWeightedPayment: votingSettings.enableWeightedPayment,
+          paymentTokenWeight: votingSettings.enableWeightedPayment ? votingSettings.paymentTokenWeight : "0.1",
           enableWhitelist: votingSettings.enableWhitelist,
           whitelistAddresses: whitelistAddressesToSend,
+          whitelistWeights: votingSettings.whitelistWeights,
+          whitelistWeightsEnabled: votingSettings.whitelistWeightsEnabled,
           polls: pollData
         });
       } catch (buildError) {
@@ -1912,6 +2095,24 @@ const preparePollDataForSubmission = () => {
                                     </Badge>
                                   )}
 
+                                  {votingSettings.enableWhitelist && (
+                                    <Badge variant="outline" className="text-xs bg-slate-50 text-slate-700 border-slate-200">
+                                      Whitelist {votingSettings.whitelistWeightsEnabled ? "(Weighted)" : "Only"}
+                                    </Badge>
+                                  )}
+
+                                  {votingSettings.isTokenWeighted && !(votingSettings.whitelistWeightsEnabled || votingSettings.enableWeightedPayment) && (
+                                    <Badge variant="outline" className="text-xs bg-emerald-50 text-emerald-700 border-emerald-200">
+                                      Token Weighted ({votingSettings.tokenWeight} per vote)
+                                    </Badge>
+                                  )}
+
+                                  {votingSettings.enableWeightedPayment && (
+                                    <Badge variant="outline" className="text-xs bg-indigo-50 text-indigo-700 border-indigo-200">
+                                      Weighted Payment ({votingSettings.tokenWeight} {votingSettings.requiredToken !== "none" ? "tokens" : "SUI"} per vote)
+                                    </Badge>
+                                  )}
+
                                   {Number(votingSettings.paymentAmount) > 0 && (
                                     <Badge variant="outline" className="text-xs bg-amber-50 text-amber-700 border-amber-200">
                                       Payment: {votingSettings.paymentAmount} SUI
@@ -1945,15 +2146,26 @@ const preparePollDataForSubmission = () => {
                     </CardHeader>
                     <CardContent className="space-y-6">
                       <div className="space-y-2">
-                        <Label htmlFor="title" className="text-base font-medium">
-                          Vote Title <span className="text-red-500">*</span>
-                        </Label>
+                        <div className="flex items-center justify-between">
+                          <Label htmlFor="title" className="text-base font-medium">
+                            Vote Title <span className="text-red-500">*</span>
+                          </Label>
+                          <span className={cn(
+                            "text-xs transition-colors",
+                            voteTitle.length > 100 ? "text-red-500" : 
+                            voteTitle.length > 80 ? "text-yellow-600" : "text-muted-foreground"
+                          )}>
+                            {voteTitle.length}/100
+                          </span>
+                        </div>
                         <Input
                           id="title"
                           placeholder="Enter a title for this vote"
                           value={voteTitle}
                           onChange={(e) => {
                             setVoteTitle(e.target.value);
+                            // Real-time validation
+                            setTimeout(() => validateForm(false), 0);
                           }}
                           onBlur={() => {
                             setTouchedFields(prev => ({ ...prev, title: true }))
@@ -1962,45 +2174,73 @@ const preparePollDataForSubmission = () => {
                           className={cn(
                             "h-12 transition-all focus:scale-[1.01]",
                             errors.title && "border-red-500 focus-visible:ring-red-500",
+                            voteTitle.length > 100 && "border-red-500"
                           )}
+                          maxLength={100}
                           required
                         />
+                        {errors.title && (
+                          <motion.p
+                            initial={{ opacity: 0, y: -5 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            className="text-sm text-red-500 flex items-center gap-1"
+                          >
+                            <AlertCircle className="h-3 w-3" />
+                            {errors.title}
+                          </motion.p>
+                        )}
                       </div>
 
                       <div className="space-y-2">
-                        <Label htmlFor="description" className="text-base font-medium">
-                          Vote Description
-                        </Label>
+                        <div className="flex items-center justify-between">
+                          <Label htmlFor="description" className="text-base font-medium">
+                            Vote Description
+                          </Label>
+                          <span className={cn(
+                            "text-xs transition-colors",
+                            voteDescription.length > 500 ? "text-red-500" : 
+                            voteDescription.length > 400 ? "text-yellow-600" : "text-muted-foreground"
+                          )}>
+                            {voteDescription.length}/500
+                          </span>
+                        </div>
                         <Textarea
                           id="description"
                           placeholder="Provide context or additional information about this vote"
                           value={voteDescription}
                           onChange={(e) => {
                             setVoteDescription(e.target.value);
-                            // Validate form without navigation to update errors in real-time
+                            // Real-time validation
                             setTimeout(() => validateForm(false), 0);
                           }}
-                          className="min-h-[150px] resize-none transition-all focus:scale-[1.01]"
+                          onBlur={() => {
+                            setTouchedFields(prev => ({ ...prev, description: true }))
+                            setTimeout(() => validateForm(false), 100)
+                          }}
+                          className={cn(
+                            "min-h-[150px] resize-none transition-all focus:scale-[1.01]",
+                            voteDescription.length > 500 && "border-red-500"
+                          )}
+                          maxLength={500}
                         />
+                        {errors.description && (
+                          <motion.p
+                            initial={{ opacity: 0, y: -5 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            className="text-sm text-red-500 flex items-center gap-1"
+                          >
+                            <AlertCircle className="h-3 w-3" />
+                            {errors.description}
+                          </motion.p>
+                        )}
                       </div>
                     </CardContent>
                     <CardFooter className="flex justify-end p-4">
                       <Button
                         onClick={() => {
-                          if (!voteTitle.trim().length) {
-                            // Show error but don't proceed
-                            toast.error("Please complete all required fields", {
-                              description: "Vote title is required",
-                              icon: <AlertCircle className="h-4 w-4" />
-                            });
-                            return;
-                          }
-
-                          // Otherwise proceed normally
-                          if (isSectionComplete("details")) {
+                          // Validate form and proceed if valid
+                          if (validateForm()) {
                             setActiveTab("polls");
-                          } else {
-                            validateForm();
                           }
                         }}
                         className="transition-all hover:scale-105"
@@ -2052,37 +2292,97 @@ const preparePollDataForSubmission = () => {
                         )}
                       </CardHeader>
                       <CardContent className="pt-4 space-y-6">
+                        {/* Poll Required Toggle */}
+                        <div className="flex items-center justify-between p-3 rounded-lg border bg-muted/30">
+                          <div className="flex items-center space-x-3">
+                            <input
+                              type="checkbox"
+                              id={`poll-required-top-${activePollIndex}`}
+                              checked={polls[activePollIndex].isRequired}
+                              onChange={(e) => updatePollRequired(activePollIndex, e.target.checked)}
+                              className="h-4 w-4 text-red-600 focus:ring-red-500 border-gray-300 rounded cursor-pointer"
+                            />
+                            <div className="space-y-0.5">
+                              <Label htmlFor={`poll-required-top-${activePollIndex}`} className="text-sm font-medium cursor-pointer select-none">
+                                Required Poll
+                              </Label>
+                              <p className="text-xs text-muted-foreground">
+                                {polls[activePollIndex].isRequired 
+                                  ? "Voters must answer this poll" 
+                                  : "This poll is optional"}
+                              </p>
+                            </div>
+                          </div>
+                          <Badge variant={polls[activePollIndex].isRequired ? "destructive" : "secondary"}>
+                            {polls[activePollIndex].isRequired ? "Required" : "Optional"}
+                          </Badge>
+                        </div>
+                        
                         <div className="space-y-2">
-                          <Label htmlFor={`poll-title-${activePollIndex}`} className="text-base font-medium">
-                            Poll Title <span className="text-red-500">*</span>
-                          </Label>
+                          <div className="flex items-center justify-between">
+                            <Label htmlFor={`poll-title-${activePollIndex}`} className="text-base font-medium">
+                              Poll Title <span className="text-red-500">*</span>
+                            </Label>
+                            <span className={cn(
+                              "text-xs transition-colors",
+                              polls[activePollIndex].title.length > 150 ? "text-red-500" : 
+                              polls[activePollIndex].title.length > 120 ? "text-yellow-600" : "text-muted-foreground"
+                            )}>
+                              {polls[activePollIndex].title.length}/150
+                            </span>
+                          </div>
                           <Input
                             id={`poll-title-${activePollIndex}`}
                             placeholder="Enter poll question"
                             value={polls[activePollIndex].title}
                             onChange={(e) => updatePollTitle(activePollIndex, e.target.value)}
+                            onBlur={() => {
+                              setTimeout(() => validateForm(false), 100)
+                            }}
                             className={cn(
                               "h-12 transition-all focus:scale-[1.01]",
                               errors.polls?.[polls[activePollIndex].id]?.title &&
                               "border-red-500 focus-visible:ring-red-500",
+                              polls[activePollIndex].title.length > 150 && "border-red-500"
                             )}
+                            maxLength={150}
                             required
                           />
                           {errors.polls?.[polls[activePollIndex].id]?.title && (
-                            <p className="text-sm text-red-500 mt-1">{errors.polls[polls[activePollIndex].id].title}</p>
+                            <motion.p
+                              initial={{ opacity: 0, y: -5 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              className="text-sm text-red-500 flex items-center gap-1"
+                            >
+                              <AlertCircle className="h-3 w-3" />
+                              {errors.polls[polls[activePollIndex].id].title}
+                            </motion.p>
                           )}
                         </div>
 
                         <div className="space-y-2">
-                          <Label htmlFor={`poll-description-${activePollIndex}`} className="text-base font-medium">
-                            Poll Description (Optional)
-                          </Label>
+                          <div className="flex items-center justify-between">
+                            <Label htmlFor={`poll-description-${activePollIndex}`} className="text-base font-medium">
+                              Poll Description (Optional)
+                            </Label>
+                            <span className={cn(
+                              "text-xs transition-colors",
+                              polls[activePollIndex].description.length > 300 ? "text-red-500" : 
+                              polls[activePollIndex].description.length > 250 ? "text-yellow-600" : "text-muted-foreground"
+                            )}>
+                              {polls[activePollIndex].description.length}/300
+                            </span>
+                          </div>
                           <Textarea
                             id={`poll-description-${activePollIndex}`}
                             placeholder="Provide additional context for this poll"
                             value={polls[activePollIndex].description}
                             onChange={(e) => updatePollDescription(activePollIndex, e.target.value)}
-                            className="min-h-[80px] resize-none transition-all focus:scale-[1.01]"
+                            className={cn(
+                              "min-h-[80px] resize-none transition-all focus:scale-[1.01]",
+                              polls[activePollIndex].description.length > 300 && "border-red-500"
+                            )}
+                            maxLength={300}
                           />
                         </div>
 
@@ -2140,21 +2440,7 @@ const preparePollDataForSubmission = () => {
                           </motion.div>
                         )}
 
-                        {!votingSettings.requireAllPolls && (
-                          <div className="flex items-center justify-between">
-                            <div className="space-y-0.5">
-                              <Label htmlFor={`required-poll-${activePollIndex}`} className="text-base">
-                                Required Poll
-                              </Label>
-                              <p className="text-sm text-muted-foreground">Voters must answer this poll</p>
-                            </div>
-                            <Switch
-                              id={`required-poll-${activePollIndex}`}
-                              checked={polls[activePollIndex].isRequired}
-                              onCheckedChange={(checked) => updatePollRequired(activePollIndex, checked)}
-                            />
-                          </div>
-                        )}
+
 
                         <Separator />
 
@@ -2177,37 +2463,61 @@ const preparePollDataForSubmission = () => {
                                 animate={{ opacity: 1, y: 0 }}
                                 transition={{ duration: 0.3 }}
                               >
-                                <div className="flex items-center gap-2">
-                                  <div className="w-6 h-6 flex items-center justify-center text-muted-foreground font-medium text-sm border rounded">
-                                    {optionIndex + 1}
+                                <div className="space-y-2">
+                                  <div className="flex items-center justify-between">
+                                    <div className="flex items-center gap-2">
+                                      <div className="w-6 h-6 flex items-center justify-center text-muted-foreground font-medium text-sm border rounded">
+                                        {optionIndex + 1}
+                                      </div>
+                                      <span className="text-sm font-medium text-muted-foreground">Option {optionIndex + 1}</span>
+                                    </div>
+                                    <span className={cn(
+                                      "text-xs transition-colors",
+                                      option.text.length > 100 ? "text-red-500" : 
+                                      option.text.length > 80 ? "text-yellow-600" : "text-muted-foreground"
+                                    )}>
+                                      {option.text.length}/100
+                                    </span>
                                   </div>
-                                  <Input
-                                    placeholder={`Option ${optionIndex + 1}`}
-                                    value={option.text}
-                                    onChange={(e) => updateOption(activePollIndex, optionIndex, e.target.value)}
-                                    className={cn(
-                                      "h-12 transition-all focus:scale-[1.01]",
-                                      errors.polls?.[polls[activePollIndex].id]?.optionTexts?.[optionIndex] &&
-                                      "border-red-500 focus-visible:ring-red-500",
+                                  <div className="flex items-center gap-2">
+                                    <Input
+                                      placeholder={`Enter option ${optionIndex + 1} text`}
+                                      value={option.text}
+                                      onChange={(e) => updateOption(activePollIndex, optionIndex, e.target.value)}
+                                      onBlur={() => {
+                                        setTimeout(() => validateForm(false), 100)
+                                      }}
+                                      className={cn(
+                                        "h-12 transition-all focus:scale-[1.01]",
+                                        errors.polls?.[polls[activePollIndex].id]?.optionTexts?.[optionIndex] &&
+                                        "border-red-500 focus-visible:ring-red-500",
+                                        option.text.length > 100 && "border-red-500"
+                                      )}
+                                      maxLength={100}
+                                      required
+                                    />
+                                    {polls[activePollIndex].options.length > 2 && (
+                                      <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        onClick={() => removeOption(activePollIndex, optionIndex)}
+                                        className="text-destructive hover:text-destructive/90 hover:bg-destructive/10 flex-shrink-0 transition-all hover:scale-110"
+                                      >
+                                        <Trash2 className="h-5 w-5" />
+                                      </Button>
                                     )}
-                                    required
-                                  />
-                                  {polls[activePollIndex].options.length > 2 && (
-                                    <Button
-                                      variant="ghost"
-                                      size="icon"
-                                      onClick={() => removeOption(activePollIndex, optionIndex)}
-                                      className="text-destructive hover:text-destructive/90 hover:bg-destructive/10 flex-shrink-0 transition-all hover:scale-110"
+                                  </div>
+                                  {errors.polls?.[polls[activePollIndex].id]?.optionTexts?.[optionIndex] && (
+                                    <motion.p
+                                      initial={{ opacity: 0, y: -5 }}
+                                      animate={{ opacity: 1, y: 0 }}
+                                      className="text-sm text-red-500 flex items-center gap-1"
                                     >
-                                      <Trash2 className="h-5 w-5" />
-                                    </Button>
+                                      <AlertCircle className="h-3 w-3" />
+                                      {errors.polls[polls[activePollIndex].id].optionTexts?.[optionIndex]}
+                                    </motion.p>
                                   )}
                                 </div>
-                                {errors.polls?.[polls[activePollIndex].id]?.optionTexts?.[optionIndex] && (
-                                  <p className="text-sm text-red-500 mt-1">
-                                    {errors.polls[polls[activePollIndex].id].optionTexts?.[optionIndex]}
-                                  </p>
-                                )}
 
                                 <div className="mt-2">
                   
@@ -2418,7 +2728,7 @@ const preparePollDataForSubmission = () => {
                                 }));
 
                                 // Mark dates as touched
-                                setTouchedFields(prev => ({ ...prev, settings: { ...prev.settings, dates: true } }))
+                                setTouchedFields(prev => ({ ...prev, votingSettings: { ...prev.votingSettings, dates: true } }))
 
                                 // If end date is now before or equal to start date, update it too
                                 if (!isAfter(endDate, validDate)) {
@@ -2434,6 +2744,7 @@ const preparePollDataForSubmission = () => {
                                 setTimeout(() => validateForm(false), 100);
                               }}
                               label="Start date and time"
+                              data-error={!!errors.votingSettings?.dates}
                             />
 
                             <DateTimePicker
@@ -2450,12 +2761,13 @@ const preparePollDataForSubmission = () => {
                                 }));
                                 
                                 // Mark dates as touched
-                                setTouchedFields(prev => ({ ...prev, settings: { ...prev.settings, dates: true } }))
+                                setTouchedFields(prev => ({ ...prev, votingSettings: { ...prev.votingSettings, dates: true } }))
                                 
                                 // Validate with smart validation
                                 setTimeout(() => validateForm(false), 100);
                               }}
                               label="End date and time"
+                              data-error={!!errors.votingSettings?.dates}
                             />
                           </div>
                         </div>
@@ -2474,37 +2786,121 @@ const preparePollDataForSubmission = () => {
                                   ...votingSettings,
                                   requiredToken: value,
                                   // Reset token weighted settings if no token is required
-                                  isTokenWeighted: value === "none" ? false : votingSettings.isTokenWeighted,
+                                 isTokenWeighted: value === "none" ? false : votingSettings.isTokenWeighted,
+                                 // Update token weight default for SUI when switching to no token
+                                 tokenWeight: value === "none" && votingSettings.tokenWeight === "1" ? "0.1" : votingSettings.tokenWeight,
                                 })
-                                // Mark token as touched
-                                setTouchedFields(prev => ({ ...prev, settings: { ...prev.settings, token: true } }))
+                                // Mark dates as touched
+                                setTouchedFields(prev => ({ ...prev, votingSettings: { ...prev.votingSettings, dates: true } }))
                                 setTimeout(() => validateForm(false), 100)
                               }}
                               onAmountChange={(amount) => {
                                 setVotingSettings({ ...votingSettings, requiredAmount: amount })
                                 // Mark token as touched when amount changes
-                                setTouchedFields(prev => ({ ...prev, settings: { ...prev.settings, token: true } }))
-                                setTimeout(() => validateForm(false), 100)
+                                setTouchedFields(prev => ({ ...prev, votingSettings: { ...prev.votingSettings, token: true } }))
+                                // Validate immediately with the new amount value
+                                setTimeout(() => {
+                                  // Create updated voting settings for validation
+                                  const updatedSettings = { ...votingSettings, requiredAmount: amount }
+                                  validateFormWithSettings(false, updatedSettings)
+                                }, 0)
                               }}
                               amount={votingSettings.requiredAmount}
                               error={errors.votingSettings?.token}
                               required={false}
-                              // Token weighted voting props
-                              enableTokenWeighted={votingSettings.isTokenWeighted}
-                              onTokenWeightedChange={(enabled) => {
-                                setVotingSettings({
-                                  ...votingSettings,
-                                  isTokenWeighted: enabled,
-                                })
-                              }}
-                              tokenWeight={votingSettings.tokenWeight}
-                              onTokenWeightChange={(weight) => {
-                                setVotingSettings({
-                                  ...votingSettings,
-                                  tokenWeight: weight,
-                                })
-                              }}
+
                             />
+
+                            {/* Token Weighting Section - Disabled when Weighted Vote Payment or Whitelist Weights are enabled */}
+                            {votingSettings.requiredToken !== "none" && (
+                              <div className="space-y-4 mt-4 p-4 bg-background/50 rounded-lg border">
+                                <div className="flex items-center justify-between">
+                                  <div className="space-y-1">
+                                    <Label className={cn("text-sm font-medium", (votingSettings.whitelistWeightsEnabled || votingSettings.enableWeightedPayment) && "text-muted-foreground")}>Enable Token Weighting</Label>
+                                    <p className="text-xs text-muted-foreground">
+                                      {votingSettings.whitelistWeightsEnabled 
+                                        ? "Disabled when custom whitelist weights are enabled"
+                                        : votingSettings.enableWeightedPayment
+                                        ? "Disabled when weighted vote payment is enabled"
+                                        : "Allow votes to be weighted based on token holdings"
+                                      }
+                                    </p>
+                                  </div>
+                                  <Switch
+                                    checked={votingSettings.isTokenWeighted && !(votingSettings.whitelistWeightsEnabled || votingSettings.enableWeightedPayment)}
+                                    disabled={votingSettings.whitelistWeightsEnabled || votingSettings.enableWeightedPayment}
+                                    onCheckedChange={(checked) => {
+                                      // Preserve current values before disabling
+                                      if (checked) {
+                                        setPreservedValues({
+                                          ...preservedValues,
+                                          paymentTokenWeight: votingSettings.paymentTokenWeight || "0.1",
+                                          paymentAmount: votingSettings.paymentAmount || ""
+                                        })
+                                      }
+                                      
+                                      setVotingSettings({
+                                        ...votingSettings,
+                                        isTokenWeighted: checked,
+                                        // Set default token weight when enabling
+                                        tokenWeight: checked && votingSettings.tokenWeight === "0" ? "1" : votingSettings.tokenWeight,
+                                        // Restore preserved payment values when disabling token weighting
+                                        paymentTokenWeight: checked ? votingSettings.paymentTokenWeight : preservedValues.paymentTokenWeight,
+                                        paymentAmount: checked ? votingSettings.paymentAmount : preservedValues.paymentAmount
+                                      })
+                                    }}
+                                  />
+                                </div>
+
+                                {/* Token Weight Input */}
+                                {votingSettings.isTokenWeighted && !(votingSettings.whitelistWeightsEnabled || votingSettings.enableWeightedPayment) && (
+                                  <div className="space-y-2">
+                                    <Label htmlFor="token-weight" className="text-sm">
+                                      Tokens per Vote (Token Requirements)
+                                    </Label>
+                                    <Input
+                                      id="token-weight"
+                                      type="number"
+                                      step="0.001"
+                                      min="0.001"
+                                      max="1000000"
+                                      value={votingSettings.tokenWeight}
+                                      onChange={(e) => {
+                                        setVotingSettings({
+                                          ...votingSettings,
+                                          tokenWeight: e.target.value
+                                        })
+                                        // Mark as touched
+                                        setTouchedFields(prev => ({ ...prev, votingSettings: { ...prev.votingSettings, tokenWeight: true } }))
+                                        setTimeout(() => validateForm(false), 100)
+                                      }}
+                                      onBlur={() => {
+                                        setTouchedFields(prev => ({ ...prev, votingSettings: { ...prev.votingSettings, tokenWeight: true } }))
+                                        setTimeout(() => validateForm(false), 100)
+                                      }}
+                                      placeholder="1"
+                                      className={cn(
+                                        "w-full transition-all focus:scale-[1.01]",
+                                        errors.votingSettings?.tokenWeight && "border-red-500 focus-visible:ring-red-500"
+                                      )}
+                                    />
+                                    <p className="text-xs text-muted-foreground">
+                                      Number of tokens required per vote weight for token requirements. Higher values mean more tokens needed for stronger votes.
+                                    </p>
+                                    {errors.votingSettings?.tokenWeight && (
+                                      <motion.p
+                                        initial={{ opacity: 0, y: -5 }}
+                                        animate={{ opacity: 1, y: 0 }}
+                                        className="text-sm text-red-500 flex items-center gap-1"
+                                      >
+                                        <AlertCircle className="h-3 w-3" />
+                                        {errors.votingSettings.tokenWeight}
+                                      </motion.p>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            )}
 
                             {/* Separate whitelist section */}
                             <div className="mt-8 pt-6 border-t">
@@ -2524,48 +2920,207 @@ const preparePollDataForSubmission = () => {
                                     whitelistAddresses: addresses,
                                   })
                                 }}
+                                whitelistWeights={votingSettings.whitelistWeights}
+                                onWhitelistWeightsChange={(weights) => {
+                                  setVotingSettings({
+                                    ...votingSettings,
+                                    whitelistWeights: weights,
+                                  })
+                                }}
+                                onVoteWeightsChange={(enabled) => {
+                                  // Preserve current values before disabling
+                                  if (enabled) {
+                                    setPreservedValues({
+                                      ...preservedValues,
+                                      paymentTokenWeight: votingSettings.paymentTokenWeight || "0.1",
+                                      tokenWeight: votingSettings.tokenWeight || "1",
+                                      paymentAmount: votingSettings.paymentAmount || ""
+                                    })
+                                  }
+                                  
+                                  setVotingSettings({
+                                    ...votingSettings,
+                                    whitelistWeightsEnabled: enabled,
+                                    // Disable other weight mechanisms when whitelist weights are enabled
+                                    isTokenWeighted: enabled ? false : votingSettings.isTokenWeighted,
+                                    enableWeightedPayment: enabled ? false : votingSettings.enableWeightedPayment,
+                                    // Restore preserved values when re-enabling
+                                    paymentTokenWeight: enabled ? votingSettings.paymentTokenWeight : preservedValues.paymentTokenWeight,
+                                    tokenWeight: enabled ? votingSettings.tokenWeight : preservedValues.tokenWeight,
+                                    paymentAmount: enabled ? votingSettings.paymentAmount : preservedValues.paymentAmount
+                                  })
+                                }}
                               />
                             </div>
                           </div>
                         </div>
 
-                        {/* Payment Amount */}
-                        <div className="space-y-4 p-4 bg-muted/30 rounded-lg">
-                          <Label className="text-base font-medium flex items-center gap-2">
-                            <Coins className="h-4 w-4" />
-                            Payment Amount
-                          </Label>
-                          <div>
-                            <Label htmlFor="payment-amount" className="text-sm">
-                              Amount to Pay by Voter
+                        {/* Payment Settings */}
+                        <div className="space-y-6 p-4 bg-muted/30 rounded-lg">
+                          {/* Payment Amount Section */}
+                          <div className="space-y-4">
+                            <Label className={cn("text-base font-medium flex items-center gap-2", votingSettings.enableWeightedPayment && "text-muted-foreground")}>
+                              <Coins className="h-4 w-4" />
+                              Payment Amount
                             </Label>
-                            <div className="flex items-center">
-                              <Input
-                                id="payment-amount"
-                                type="number"
-                                min="0"
-                                step="0.01"
-                                placeholder="0.00"
-                                value={votingSettings.paymentAmount}
-                                onChange={(e) => setVotingSettings({ ...votingSettings, paymentAmount: e.target.value })}
-                                onBlur={() => {
-                                  setTouchedFields(prev => ({ ...prev, settings: { ...prev.settings, amount: true } }))
-                                  setTimeout(() => validateForm(false), 100)
-                                }}
-                                className={cn(
-                                  "h-10 transition-all focus:scale-[1.01]",
-                                  errors.votingSettings?.amount && "border-red-500 focus-visible:ring-red-500",
-                                )}
-                              />
-                              <div className="ml-2 text-sm font-medium">
-                                <Coins className="h-4 w-4" />
+                            <div>
+                              <Label htmlFor="payment-amount" className={cn("text-sm", votingSettings.enableWeightedPayment && "text-muted-foreground")}>
+                                Amount to Pay by Voter
+                              </Label>
+                              <div className="flex items-center">
+                                <Input
+                                  id="payment-amount"
+                                  type="number"
+                                  min="0"
+                                  max="1000000"
+                                  step="0.01"
+                                  placeholder="0.00"
+                                  value={votingSettings.paymentAmount}
+                                  onChange={(e) => {
+                                    setVotingSettings({ ...votingSettings, paymentAmount: e.target.value })
+                                    // Real-time validation
+                                    setTimeout(() => validateForm(false), 0)
+                                  }}
+                                  onBlur={() => {
+                                    setTouchedFields(prev => ({ ...prev, votingSettings: { ...prev.votingSettings, amount: true } }))
+                                    setTimeout(() => validateForm(false), 100)
+                                  }}
+                                  disabled={votingSettings.enableWeightedPayment}
+                                  className={cn(
+                                    "h-10 transition-all focus:scale-[1.01]",
+                                    errors.votingSettings?.amount && "border-red-500 focus-visible:ring-red-500",
+                                  )}
+                                />
+                                <div className="ml-2 text-sm font-medium">
+                                  <Coins className="h-4 w-4" />
+                                </div>
                               </div>
+                              <p className={cn("text-xs mt-1", votingSettings.enableWeightedPayment ? "text-muted-foreground" : "text-muted-foreground")}>
+                                {votingSettings.enableWeightedPayment 
+                                  ? "Disabled when weighted vote payment is enabled - payment amount determines vote weight"
+                                  : "Amount in SUI that voters need to pay to participate (0 for free voting)"}
+                              </p>
+                              {errors.votingSettings?.amount && (
+                                <motion.p
+                                  initial={{ opacity: 0, y: -5 }}
+                                  animate={{ opacity: 1, y: 0 }}
+                                  className="text-sm text-red-500 flex items-center gap-1"
+                                >
+                                  <AlertCircle className="h-3 w-3" />
+                                  {errors.votingSettings.amount}
+                                </motion.p>
+                              )}
                             </div>
-                            <p className="text-xs text-muted-foreground mt-1">
-                              Amount in SUI that voters need to pay to participate (0 for free voting)
-                            </p>
-                            {errors.votingSettings?.amount && (
-                              <p className="text-sm text-red-500 mt-1">{errors.votingSettings.amount}</p>
+                          </div>
+
+                          {/* Separator */}
+                          <Separator />
+
+                          {/* Weighted Vote Payment Section */}
+                          <div className="space-y-4">
+                            <Label className="text-base font-medium flex items-center gap-2">
+                              <BarChart2 className="h-4 w-4" />
+                              Weighted Vote Payment
+                            </Label>
+                            
+                            <div className="flex items-center justify-between">
+                              <div className="space-y-0.5">
+                                <Label htmlFor="enable-weighted-payment" className={cn("text-base", votingSettings.whitelistWeightsEnabled && "text-muted-foreground")}>
+                                  Enable weighted vote payment
+                                </Label>
+                                <p className="text-sm text-muted-foreground">
+                                  {votingSettings.whitelistWeightsEnabled 
+                                    ? "Disabled when custom whitelist weights are enabled"
+                                    : votingSettings.enableWhitelist && !votingSettings.whitelistWeightsEnabled
+                                    ? "Payment weighting for whitelisted voters only"
+                                    : "Allow voters to pay SUI for additional vote weight"
+                                  }
+                                </p>
+                              </div>
+                              <Switch
+                                id="enable-weighted-payment"
+                                checked={votingSettings.enableWeightedPayment}
+                                disabled={votingSettings.whitelistWeightsEnabled}
+                                onCheckedChange={(checked) => {
+                                  // Preserve current values before disabling
+                                  if (checked) {
+                                    setPreservedValues({
+                                      ...preservedValues,
+                                      tokenWeight: votingSettings.tokenWeight || "1",
+                                      paymentAmount: votingSettings.paymentAmount || "0"
+                                    })
+                                  }
+                                  
+                                  setVotingSettings({ 
+                                    ...votingSettings, 
+                                    enableWeightedPayment: checked,
+                                    // Disable token weighting when payment weighting is enabled (mutual exclusivity)
+                                    isTokenWeighted: checked ? false : votingSettings.isTokenWeighted,
+                                    // Set default payment token weight if not already set (for payment weighting)
+                                    paymentTokenWeight: checked && !votingSettings.paymentTokenWeight ? (votingSettings.requiredToken === "none" ? "0.1" : "1") : votingSettings.paymentTokenWeight,
+                                    // Restore preserved payment amount when disabling weighted payment
+                                    paymentAmount: checked ? votingSettings.paymentAmount : (preservedValues.paymentAmount || votingSettings.paymentAmount),
+                                    // Restore preserved token weight when disabling payment weighting
+                                    tokenWeight: checked ? votingSettings.tokenWeight : preservedValues.tokenWeight
+                                  })
+                                }}
+                              />
+                            </div>
+
+                            {votingSettings.enableWeightedPayment && (
+                              <div className="space-y-4 pt-4 border-t">
+                                <div className="space-y-3">
+                                  <Label htmlFor="payment-token-weight" className="text-sm font-medium">
+                                    {votingSettings.requiredToken !== "none" ? "Tokens per vote" : "SUI per vote"} (Payment Weighting) <span className="text-red-500">*</span>
+                                  </Label>
+                                  <div className="flex items-center gap-2">
+                                    <Input
+                                      id="payment-token-weight"
+                                      type="number"
+                                      min="0.001"
+                                      max="1000000"
+                                      step="any"
+                                      placeholder={votingSettings.requiredToken !== "none" ? "1" : "0.1"}
+                                      value={votingSettings.paymentTokenWeight}
+                                      onChange={(e) => {
+                                        setVotingSettings({
+                                          ...votingSettings,
+                                          paymentTokenWeight: e.target.value,
+                                        })
+                                        // Real-time validation
+                                        setTimeout(() => validateForm(false), 0)
+                                      }}
+                                      onBlur={() => {
+                                        setTouchedFields(prev => ({ ...prev, votingSettings: { ...prev.votingSettings, paymentTokenWeight: true } }))
+                                        setTimeout(() => validateForm(false), 100)
+                                      }}
+                                      className={cn(
+                                        "flex-1 transition-all focus:scale-[1.01]",
+                                        errors.votingSettings?.paymentTokenWeight && "border-red-500 focus-visible:ring-red-500"
+                                      )}
+                                      data-error={!!errors.votingSettings?.paymentTokenWeight}
+                                    />
+                                    <div className="flex-shrink-0 text-sm font-medium text-muted-foreground w-20 text-center">
+                                      {votingSettings.requiredToken !== "none" ? "tokens" : "SUI"}
+                                    </div>
+                                  </div>
+                                  <p className="text-xs text-muted-foreground">
+                                    Each {votingSettings.paymentTokenWeight} {votingSettings.requiredToken !== "none" ? "token(s)" : "SUI"} paid equals 1 vote weight. This is separate from token requirements weighting.
+                                  </p>
+                                  {errors.votingSettings?.paymentTokenWeight && (
+                                    <motion.p
+                                      initial={{ opacity: 0, y: -5 }}
+                                      animate={{ opacity: 1, y: 0 }}
+                                      className="text-sm text-red-500 flex items-center gap-1"
+                                    >
+                                      <AlertCircle className="h-3 w-3" />
+                                      {errors.votingSettings.paymentTokenWeight}
+                                    </motion.p>
+                                  )}
+                                </div>
+                                
+                                
+                              </div>
                             )}
                           </div>
                         </div>
@@ -2579,14 +3134,20 @@ const preparePollDataForSubmission = () => {
 
                           <div className="flex items-center justify-between">
                             <div className="space-y-0.5">
-                              <Label htmlFor="require-all-polls" className="text-base">
+                              <Label htmlFor="require-all-polls" className={cn("text-base", !hasRequiredPolls() && "text-muted-foreground")}>
                                 Require voters to answer all polls
                               </Label>
-                              <p className="text-sm text-muted-foreground">Voters must complete every poll to submit</p>
+                              <p className={cn("text-sm text-muted-foreground", !hasRequiredPolls() && "text-muted-foreground/70")}>
+                                {hasRequiredPolls() 
+                                  ? "Voters must complete every poll to submit" 
+                                  : "No polls are marked as required - enable individual poll requirements first"
+                                }
+                              </p>
                             </div>
                             <Switch
                               id="require-all-polls"
                               checked={votingSettings.requireAllPolls}
+                              disabled={!hasRequiredPolls()}
                               onCheckedChange={(checked) => {
                                 setVotingSettings({ ...votingSettings, requireAllPolls: checked })
                                 // If requiring all polls, set all polls to required
@@ -2691,13 +3252,24 @@ const preparePollDataForSubmission = () => {
                                 Requires {votingSettings.requiredToken.length > 10
                                   ? `${votingSettings.requiredToken.substring(0, 6)}...${votingSettings.requiredToken.substring(votingSettings.requiredToken.length - 4)}`
                                   : votingSettings.requiredToken.toUpperCase()}
-                                {votingSettings.isTokenWeighted && " (Weighted)"}
                               </Badge>
                             )}
 
-                            {votingSettings.isTokenWeighted && votingSettings.requiredToken !== "none" && (
+                            {votingSettings.enableWhitelist && (
+                              <Badge variant="outline" className="bg-slate-50 text-slate-700 border-slate-200">
+                                Whitelist {votingSettings.whitelistWeightsEnabled ? "(Weighted)" : "Only"}
+                              </Badge>
+                            )}
+
+                            {votingSettings.isTokenWeighted && !(votingSettings.whitelistWeightsEnabled || votingSettings.enableWeightedPayment) && (
+                              <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200">
+                                Token Weighted ({votingSettings.tokenWeight} per vote)
+                              </Badge>
+                            )}
+
+                            {votingSettings.enableWeightedPayment && (
                               <Badge variant="outline" className="bg-indigo-50 text-indigo-700 border-indigo-200">
-                                {votingSettings.tokenWeight} tokens = 1 vote
+                                Weighted Payment ({votingSettings.tokenWeight} {votingSettings.requiredToken !== "none" ? "tokens" : "SUI"} per vote)
                               </Badge>
                             )}
 

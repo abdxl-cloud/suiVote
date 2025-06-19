@@ -14,17 +14,22 @@ export function toDecimalUnits(amount: string | number, decimals: number): strin
   }
 
   const amountStr = typeof amount === "number" ? amount.toString() : amount
-  const numAmount = parseFloat(amountStr)
   
-  if (isNaN(numAmount) || numAmount < 0) {
+  if (isNaN(parseFloat(amountStr)) || parseFloat(amountStr) < 0) {
     throw new Error("Invalid amount")
   }
 
-  // Convert to decimal units by multiplying by 10^decimals
-  const decimalAmount = numAmount * Math.pow(10, decimals)
+  // Split the amount into integer and fractional parts to avoid floating-point precision issues
+  const [integerPart = "0", fractionalPart = ""] = amountStr.split(".")
   
-  // Return as integer string (no decimals in the smallest unit)
-  return Math.floor(decimalAmount).toString()
+  // Pad or truncate the fractional part to match the required decimals
+  const paddedFractionalPart = fractionalPart.padEnd(decimals, "0").slice(0, decimals)
+  
+  // Combine integer and fractional parts
+  const combinedStr = integerPart + paddedFractionalPart
+  
+  // Remove leading zeros and return
+  return BigInt(combinedStr).toString()
 }
 
 /**

@@ -1,5 +1,5 @@
-import { VoteDetailSkeleton } from "@/components/skeletons"
+import { VoteDetailSkeleton } from "@/components/skeletons";
 
 export default function Loading() {
-  return <VoteDetailSkeleton />
+  return <VoteDetailSkeleton />;
 }

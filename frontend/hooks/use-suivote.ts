@@ -65,7 +65,7 @@ export function useSuiVote() {
         }
         
         // Pass the user's wallet address to enable voting status checking
-        return suiVoteService.subscribeToVoteUpdates(voteId, onUpdate, wallet.address)
+        return suiVoteService.subscribeToVoteUpdates(voteId, onUpdate, wallet.address || undefined)
       } catch (err) {
         const errorMessage = err instanceof Error ? err.message : String(err)
         console.error("Failed to subscribe to vote updates:", errorMessage)
@@ -243,34 +243,53 @@ export function useSuiVote() {
       startTimestamp: number,
       endTimestamp: number,
       requiredToken = "",
-      requiredAmount = 0,
-      paymentAmount = 0,
+      requiredAmount: number | string = 0,
+      paymentAmount: number | string = 0,
       requireAllPolls = true,
       showLiveStats = false,
       pollData: PollData[],
       isTokenWeighted = false,
-      tokenWeight = "1",
-      whitelistAddresses: string[] = [] 
+      tokenWeight: number | string = "1",
+      enableWeightedPayment = false,
+      whitelistAddresses: string[] = [],
+      voterWeights: number[] = [],
+      paymentTokenWeight: number | string = "0.1"
     ): Promise<Transaction> => {
       try {
         setLoading(true)
         setError(null)
 
         // Call the service method to create the transaction
+        // Use provided voter weights or generate default ones if empty
+        const finalVoterWeights = voterWeights.length > 0 
+          ? voterWeights
+          : whitelistAddresses.length > 0 
+            ? whitelistAddresses.map(() => 100) // Default weight of 100 for each address
+            : []
+          
+        // Convert amounts to numbers for service compatibility
+        const numericRequiredAmount = typeof requiredAmount === 'string' ? parseFloat(requiredAmount) || 0 : requiredAmount;
+        const numericPaymentAmount = typeof paymentAmount === 'string' ? parseFloat(paymentAmount) || 0 : paymentAmount;
+        const numericTokenWeight = typeof tokenWeight === 'string' ? parseFloat(tokenWeight) || 1 : tokenWeight;
+        const numericPaymentTokenWeight = typeof paymentTokenWeight === 'string' ? parseFloat(paymentTokenWeight) || 0.1 : paymentTokenWeight;
+        
         const transaction = await suiVoteService.createCompleteVoteTransaction(
           title,
           description,
           startTimestamp,
           endTimestamp,
           requiredToken,
-          requiredAmount,
-          paymentAmount,
+          numericRequiredAmount,
+          numericPaymentAmount,
           requireAllPolls,
           showLiveStats,
           pollData,
           isTokenWeighted,
-          tokenWeight,
-          whitelistAddresses 
+          numericTokenWeight,
+          enableWeightedPayment,
+          whitelistAddresses,
+          finalVoterWeights,
+          numericPaymentTokenWeight
         )
 
         return transaction
@@ -355,12 +374,15 @@ export function useSuiVote() {
    * Create a transaction to cast a vote
    */
   const castVoteTransaction = useCallback(
-    async (voteId: string, pollIndex: number, optionIndices: number[], tokenBalance: number = 0, payment = 0): Promise<Transaction> => {
+    async (voteId: string, pollIndex: number, optionIndices: number[], tokenBalance: number = 0, payment: number | string = 0): Promise<Transaction> => {
       try {
         setLoading(true)
         setError(null)
 
-        const transaction = await suiVoteService.castVoteTransaction(voteId, pollIndex, optionIndices, tokenBalance, payment)
+        // Convert payment to number for service compatibility
+        const numericPayment = typeof payment === 'string' ? parseFloat(payment) || 0 : payment;
+        
+        const transaction = await suiVoteService.castVoteTransaction(voteId, pollIndex, optionIndices, tokenBalance, numericPayment)
         return transaction
       } catch (err) {
         const errorMessage = err instanceof Error ? err.message : String(err)
@@ -377,17 +399,20 @@ export function useSuiVote() {
    * Create a transaction to cast multiple votes at once
    */
   const castMultipleVotesTransaction = useCallback(
-    async (voteId: string, pollIndices: number[], optionIndicesPerPoll: number[][],  tokenBalance: number = 0, payment = 0): Promise<Transaction> => {
+    async (voteId: string, pollIndices: number[], optionIndicesPerPoll: number[][],  tokenBalance: number = 0, payment: number | string = 0): Promise<Transaction> => {
       try {
         setLoading(true)
         setError(null)
 
+        // Convert payment to number for service compatibility
+        const numericPayment = typeof payment === 'string' ? parseFloat(payment) || 0 : payment;
+        
         const transaction = await suiVoteService.castMultipleVotesTransaction(
           voteId,
           pollIndices,
           optionIndicesPerPoll,
           tokenBalance,
-          payment,
+          numericPayment,
         )
         return transaction
       } catch (err) {
@@ -580,7 +605,7 @@ export function useSuiVote() {
         return { hasBalance: false, tokenBalance: 0 }
       }
 
-      const result = await suiVoteService.checkTokenBalance(userAddress, tokenType, requiredAmount)
+      const result = await suiVoteService.checkTokenBalance(userAddress, tokenType, String(requiredAmount))
       return result
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err)
@@ -593,19 +618,61 @@ export function useSuiVote() {
   }, [])
 
   /**
-   * Create a transaction to start a vote when its start time has passed
+   * @deprecated Votes start automatically based on timestamps
+   * No manual transaction is needed to start a vote
    */
   const startVoteTransaction = useCallback((voteId: string): Transaction => {
+    throw new Error('Vote starting is automatic based on timestamps. No manual transaction needed.')
+  }, [])
+
+  /**
+   * Get the whitelist weight for a voter in a specific vote
+   * @param voteId The vote object ID
+   * @param voterAddress The voter's address
+   * @returns The whitelist weight (0 if not whitelisted, 1+ if whitelisted)
+   */
+  const getWhitelistWeight = useCallback(async (voteId: string, voterAddress: string): Promise<number> => {
     try {
       setLoading(true)
       setError(null)
 
-      const transaction = suiVoteService.startVoteTransaction(voteId)
-      return transaction
+      if (!voteId || !voterAddress) {
+        throw new Error("Vote ID and voter address are required")
+      }
+
+      const result = await suiVoteService.getWhitelistWeight(voteId, voterAddress)
+      return result
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err)
       setError(errorMessage)
-      throw err
+      console.error("Error getting whitelist weight:", errorMessage)
+      return 0
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  /**
+   * Get the SUI balance for a user address
+   * @param userAddress The user's address
+   * @returns The SUI balance in MIST units
+   */
+  const getSuiBalance = useCallback(async (userAddress: string): Promise<number> => {
+    try {
+      setLoading(true)
+      setError(null)
+
+      if (!userAddress) {
+        throw new Error("User address is required")
+      }
+
+      const result = await suiVoteService.getSuiBalance(userAddress)
+      return result
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err)
+      setError(errorMessage)
+      console.error("Error getting SUI balance:", errorMessage)
+      return 0
     } finally {
       setLoading(false)
     }
@@ -637,5 +704,7 @@ export function useSuiVote() {
     isVoterWhitelisted,
     getWhitelistedVoters,
     subscribeToVoteUpdates,
+    getWhitelistWeight,
+    getSuiBalance,
   }
 }

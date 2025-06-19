@@ -7,32 +7,169 @@ import { toDecimalUnits, fromDecimalUnits } from "@/utils/token-utils"
 import { tokenService } from "@/services/token-service"
 import { requestQueue } from './request-queue'
 
+// Enhanced coin conversion utilities for consistent handling
+class CoinConverter {
+  private static instance: CoinConverter
+  private tokenCache = new Map<string, { decimals: number; symbol: string }>()
+  
+  static getInstance(): CoinConverter {
+    if (!CoinConverter.instance) {
+      CoinConverter.instance = new CoinConverter()
+    }
+    return CoinConverter.instance
+  }
+  
+  /**
+   * Convert human-readable amount to contract decimal units
+   * @param amount Human-readable amount
+   * @param tokenType Token type identifier
+   * @returns Converted amount in decimal units
+   */
+  async toContractUnits(amount: number | string, tokenType?: string): Promise<string> {
+    if (!amount || amount === 0 || amount === "0") return "0"
+    
+    try {
+      const decimals = await this.getTokenDecimals(tokenType)
+      const result = toDecimalUnits(amount.toString(), decimals)
+      console.log(`[CoinConverter] ${amount} ${tokenType || 'SUI'} -> ${result} (decimals: ${decimals})`)
+      return result
+    } catch (error) {
+      console.error(`[CoinConverter] Failed to convert ${amount} ${tokenType}:`, error)
+      throw new Error(`Failed to convert token amount: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+  
+  /**
+   * Convert contract decimal units to human-readable amount
+   * @param decimalAmount Amount in contract decimal units
+   * @param tokenType Token type identifier
+   * @returns Human-readable amount
+   */
+  async fromContractUnits(decimalAmount: number | string, tokenType?: string): Promise<string> {
+    if (!decimalAmount || decimalAmount === 0 || decimalAmount === "0") return "0"
+    
+    try {
+      const decimals = await this.getTokenDecimals(tokenType)
+      const result = fromDecimalUnits(decimalAmount.toString(), decimals)
+      console.log(`[CoinConverter] ${decimalAmount} (decimals: ${decimals}) -> ${result} ${tokenType || 'SUI'}`)
+      return result
+    } catch (error) {
+      console.error(`[CoinConverter] Failed to convert ${decimalAmount} from ${tokenType}:`, error)
+      throw new Error(`Failed to convert from contract units: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+  
+  /**
+   * Get token decimals with caching
+   * @param tokenType Token type identifier
+   * @returns Number of decimals for the token
+   */
+  private async getTokenDecimals(tokenType?: string): Promise<number> {
+    // Default to SUI if no token type specified
+    if (!tokenType || tokenType === "" || tokenType === "none") {
+      return tokenService.getSuiTokenInfo().decimals
+    }
+    
+    // Check cache first
+    if (this.tokenCache.has(tokenType)) {
+      return this.tokenCache.get(tokenType)!.decimals
+    }
+    
+    try {
+      const tokenInfo = await tokenService.getTokenInfo(tokenType)
+      if (tokenInfo && tokenInfo.decimals !== undefined) {
+        this.tokenCache.set(tokenType, { decimals: tokenInfo.decimals, symbol: tokenInfo.symbol })
+        return tokenInfo.decimals
+      }
+    } catch (error) {
+      console.warn(`[CoinConverter] Failed to get token info for ${tokenType}, defaulting to SUI:`, error)
+    }
+    
+    // Fallback to SUI decimals
+    const suiDecimals = tokenService.getSuiTokenInfo().decimals
+    this.tokenCache.set(tokenType, { decimals: suiDecimals, symbol: 'SUI' })
+    return suiDecimals
+  }
+  
+  /**
+   * Clear token cache (useful for testing or when token info changes)
+   */
+  clearCache(): void {
+    this.tokenCache.clear()
+  }
+}
+
+// Enhanced vote configuration interface for better type safety
+export interface VoteConfiguration {
+  title: string
+  description: string
+  startTimestamp: number
+  endTimestamp: number
+  paymentAmount: number | string  // Human-readable amount
+  requireAllPolls: boolean
+  tokenRequirement?: string
+  tokenAmount?: number | string   // Human-readable amount
+  showLiveStats: boolean
+  useTokenWeighting: boolean
+  tokensPerVote: number | string  // Human-readable amount
+  usePaymentWeighting: boolean
+  paymentTokenWeight: number | string  // Human-readable amount
+  whitelistAddresses: string[]
+  voterWeights: number[]
+}
+
+// Enhanced voting parameters interface
+export interface VotingParameters {
+  voteId: string
+  pollIndex: number
+  optionIndices: number[]
+  tokenBalance: number | string   // Human-readable amount
+  payment: number | string        // Human-readable amount
+}
+
 // Constants from configuration
 const PACKAGE_ID = SUI_CONFIG.PACKAGE_ID
 const ADMIN_ID = SUI_CONFIG.ADMIN_ID
 
 /**
- * Vote details interface
+ * Vote details interface with enhanced coin handling
  */
 export interface VoteDetails {
   id: string
   creator: string
+  creatorName?: string
   title: string
   description: string
   startTimestamp: number
   endTimestamp: number
-  paymentAmount: number
+  paymentAmount: string        // Human-readable amount
   requireAllPolls: boolean
   pollsCount: number
   totalVotes: number
   isCancelled: boolean
   status: "active" | "pending" | "upcoming" | "closed" | "voted"
   tokenRequirement?: string    
-  tokenAmount?: number        
+  tokenAmount?: string         // Human-readable amount
   hasWhitelist: boolean        
   showLiveStats: boolean
   useTokenWeighting: boolean 
-  tokensPerVote: number 
+  tokensPerVote: string        // Human-readable amount
+  paymentTokenWeight?: string  // Human-readable amount
+  // Security and audit fields
+  usePaymentWeighting: boolean
+  version: number
+  isLocked: boolean
+  creationTimestamp: number
+  // Security indicators (computed)
+  securityLevel: "basic" | "enhanced" | "maximum"
+  hasReentrancyProtection: boolean
+  hasInputValidation: boolean
+  
+  // Raw contract values (for internal use)
+  _rawPaymentAmount?: string
+  _rawTokenAmount?: string
+  _rawTokensPerVote?: string
+  _rawPaymentTokenWeight?: string
 }
 
 /**
@@ -44,6 +181,7 @@ export interface PollDetails {
   description: string
   isMultiSelect: boolean
   maxSelections: number
+  minSelections?: number
   isRequired: boolean
   optionsCount: number
   totalResponses: number
@@ -58,22 +196,29 @@ export interface PollOptionDetails {
   text: string
   mediaUrl?: string
   votes: number
+  percentage?: number
 }
 
 /**
- * Vote cast event interface
+ * Vote cast event interface with enhanced coin handling
  */
 export interface VoteCastEvent {
   vote_id: string
   poll_id: string
   voter: string
   option_indices: number[]
-  token_balance: number  
-  vote_weight: number
+  token_balance: string    // Human-readable amount
+  vote_weight: string      // Human-readable amount
+  payment_amount?: string  // Human-readable amount
+  
+  // Raw contract values (for internal use)
+  _rawTokenBalance?: string
+  _rawVoteWeight?: string
+  _rawPaymentAmount?: string
 }
 
 /**
- * Vote created event interface
+ * Vote created event interface with enhanced coin handling
  */
 export interface VoteCreatedEvent {
   vote_id: string
@@ -83,11 +228,19 @@ export interface VoteCreatedEvent {
   end_timestamp: number
   polls_count: number
   token_requirement?: string    
-  token_amount?: number         
+  token_amount?: string         // Human-readable amount
   has_whitelist: boolean        
   show_live_stats: boolean
   use_token_weighting: boolean
-  tokens_per_vote: number
+  tokens_per_vote: string       // Human-readable amount
+  payment_amount?: string       // Human-readable amount
+  payment_token_weight?: string // Human-readable amount
+  
+  // Raw contract values (for internal use)
+  _rawTokenAmount?: string
+  _rawTokensPerVote?: string
+  _rawPaymentAmount?: string
+  _rawPaymentTokenWeight?: string
 }
 
 /**
@@ -114,7 +267,7 @@ export interface PollData {
 }
 
 /**
- * Vote list interface for display
+ * Vote list interface for display with enhanced coin handling
  */
 export interface VoteList {
   id: string
@@ -126,29 +279,47 @@ export interface VoteList {
   pollCount: number
   endTimestamp: number
   tokenRequirement?: string
-  tokenAmount?: number
+  tokenAmount?: string         // Human-readable amount
   hasWhitelist: boolean
   isWhitelisted?: boolean  
   showLiveStats: boolean
   useTokenWeighting: boolean
-  tokensPerVote: number        
+  tokensPerVote: string        // Human-readable amount
+  paymentAmount?: string       // Human-readable amount
+  paymentTokenWeight?: string  // Human-readable amount
+  
+  // Raw contract values (for internal use)
+  _rawTokenAmount?: string
+  _rawTokensPerVote?: string
+  _rawPaymentAmount?: string
+  _rawPaymentTokenWeight?: string
 }
 
+/**
+ * Voter information interface with enhanced coin handling
+ */
 export interface VoterInfo {
   voter: string;
-  tokenBalance: number;
-  voteWeight: number;
-  timestamp: number; // New timestamp field
+  tokenBalance: string;        // Human-readable amount
+  voteWeight: string;          // Human-readable amount
+  paymentAmount?: string;      // Human-readable amount
+  timestamp: number;
   polls: {
     pollId: string;
     optionIndices: number[];
   }[];
+  
+  // Raw contract values (for internal use)
+  _rawTokenBalance?: string;
+  _rawVoteWeight?: string;
+  _rawPaymentAmount?: string;
 }
 
 export class SuiVoteService {
   private client: SuiClient
   private isInitialized = false
   private subscriptions: Map<string, () => void> = new Map()
+  private coinConverter: CoinConverter
   
   // Performance optimization: Caching
   private voteStatusCache = new Map<string, { hasVoted: boolean; timestamp: number }>()
@@ -157,6 +328,8 @@ export class SuiVoteService {
   private readonly VOTE_STATUS_CACHE_TTL = 2 * 60 * 1000 // 2 minutes for vote status
 
   constructor(network = SUI_CONFIG.NETWORK) {
+    // Initialize coin converter
+    this.coinConverter = CoinConverter.getInstance()
     try {
       // Initialize client with both HTTP and WebSocket transport
       const validNetwork = network as 'mainnet' | 'testnet' | 'devnet' | 'localnet'
@@ -499,7 +672,14 @@ export class SuiVoteService {
           isWhitelisted: whitelistedVoteIds.has(vote.id),
           showLiveStats: vote.showLiveStats,
           useTokenWeighting: vote.useTokenWeighting,
-          tokensPerVote: vote.tokensPerVote
+          tokensPerVote: vote.tokensPerVote,
+          paymentAmount: vote.paymentAmount,
+          paymentTokenWeight: vote.paymentTokenWeight,
+          // Raw contract values for internal use
+          _rawTokenAmount: vote._rawTokenAmount,
+          _rawTokensPerVote: vote._rawTokensPerVote,
+          _rawPaymentAmount: vote._rawPaymentAmount,
+          _rawPaymentTokenWeight: vote._rawPaymentTokenWeight
         }
       })
 
@@ -678,34 +858,92 @@ export class SuiVoteService {
       tokensPerVote = Number(fields.tokens_per_vote);
     }
 
-    // Convert token amounts from decimal units back to human-readable format
-    if (tokenRequirement && tokenAmount !== undefined && tokenAmount !== null) {
-      try {
-        const tokenInfo = await tokenService.getTokenInfo(tokenRequirement)
-        if (tokenInfo && tokenInfo.decimals !== undefined) {
-          const originalTokenAmount = tokenAmount.toString()
-          console.log(`[DEBUG] Converting token amount - Original: ${originalTokenAmount}, Decimals: ${tokenInfo.decimals}, Token: ${tokenRequirement}`)
-          
-          // Always convert from decimal units - remove problematic < 1000 assumption
-          tokenAmount = parseFloat(fromDecimalUnits(tokenAmount.toString(), tokenInfo.decimals))
-          console.log(`[DEBUG] Converted token amount: ${tokenAmount}`)
-          
-          if (useTokenWeighting && tokensPerVote > 0) {
-            const originalTokensPerVote = tokensPerVote.toString()
-            console.log(`[DEBUG] Converting tokens per vote - Original: ${originalTokensPerVote}, Decimals: ${tokenInfo.decimals}`)
-            
-            // Always convert from decimal units - remove problematic < 1000 assumption
-            tokensPerVote = parseFloat(fromDecimalUnits(tokensPerVote.toString(), tokenInfo.decimals))
-            console.log(`[DEBUG] Converted tokens per vote: ${tokensPerVote}`)
-          }
-        }
-      } catch (error) {
-        console.error('[DEBUG] Failed to convert token amounts from decimal units:', error)
-        // Continue with original values if conversion fails
+    // Extract security fields early to avoid hoisting issues
+    const usePaymentWeighting = !!fields.use_payment_weighting
+    
+    // Store raw contract values for internal use
+    const rawTokenAmount = tokenAmount?.toString()
+    const rawTokensPerVote = tokensPerVote?.toString()
+    const rawPaymentAmount = fields.payment_amount?.toString()
+    const rawPaymentTokenWeight = fields.payment_token_weight?.toString()
+    
+    // Convert token amounts from contract units to human-readable format using CoinConverter
+    let convertedTokenAmount: string | undefined
+    let convertedTokensPerVote: string
+    let convertedPaymentAmount: string
+    let convertedPaymentTokenWeight: string | undefined
+    
+    try {
+      // Convert token amount if present
+      if (tokenRequirement && tokenAmount !== undefined && tokenAmount !== null) {
+        convertedTokenAmount = await this.coinConverter.fromContractUnits(tokenAmount, tokenRequirement)
+        console.log(`[DEBUG] Converted token amount: ${tokenAmount} -> ${convertedTokenAmount} ${tokenRequirement}`)
       }
+      
+      // Convert tokens per vote for token weighting
+      if (useTokenWeighting && tokensPerVote > 0) {
+        const tokenType = tokenRequirement && tokenRequirement !== "none" ? tokenRequirement : undefined
+        convertedTokensPerVote = await this.coinConverter.fromContractUnits(tokensPerVote, tokenType)
+        console.log(`[DEBUG] Converted tokens per vote: ${tokensPerVote} -> ${convertedTokensPerVote}`)
+      } else {
+        convertedTokensPerVote = "0"
+      }
+      
+      // Convert payment amount (always in SUI/MIST)
+      const paymentAmount = fields.payment_amount || 0
+      convertedPaymentAmount = await this.coinConverter.fromContractUnits(paymentAmount)
+      console.log(`[DEBUG] Converted payment amount: ${paymentAmount} MIST -> ${convertedPaymentAmount} SUI`)
+      
+      // Convert payment token weight if present (always in SUI/MIST)
+      if (usePaymentWeighting && fields.payment_token_weight) {
+        convertedPaymentTokenWeight = await this.coinConverter.fromContractUnits(fields.payment_token_weight)
+        console.log(`[DEBUG] Converted payment token weight: ${fields.payment_token_weight} MIST -> ${convertedPaymentTokenWeight} SUI`)
+      } else {
+        // When payment weighting is disabled, set to "0"
+        convertedPaymentTokenWeight = "0"
+        console.log(`[DEBUG] Payment weighting disabled, setting payment token weight to "0"`)
+      }
+    } catch (error) {
+      console.error('[DEBUG] Failed to convert token amounts using CoinConverter:', error)
+      // Fallback to string conversion of original values
+      convertedTokenAmount = tokenAmount?.toString()
+      convertedTokensPerVote = tokensPerVote?.toString() || "0"
+      convertedPaymentAmount = fields.payment_amount?.toString() || "0"
+      convertedPaymentTokenWeight = usePaymentWeighting ? fields.payment_token_weight?.toString() : "0"
     }
     
-    // Build the vote details object with all fields
+    // Extract remaining security fields
+    const version = Number(fields.version || 1)
+    const isLocked = !!fields.is_locked
+    const creationTimestamp = Number(fields.creation_timestamp || startTimestamp)
+    
+    // Compute security indicators
+    const hasReentrancyProtection = version >= 2 // Reentrancy protection added in version 2
+    const hasInputValidation = version >= 2 // Input validation added in version 2
+    
+    // Calculate security level based on features
+    let securityLevel: "basic" | "enhanced" | "maximum" = "basic"
+    let securityScore = 0
+    
+    // Base security features
+    if (hasReentrancyProtection) securityScore += 2
+    if (hasInputValidation) securityScore += 2
+    if (version >= 2) securityScore += 1
+    
+    // Advanced security features
+    if (fields.has_whitelist) securityScore += 1
+    if (tokenRequirement) securityScore += 1
+    if (useTokenWeighting) securityScore += 1
+    if (usePaymentWeighting) securityScore += 1
+    
+    // Determine security level
+    if (securityScore >= 7) {
+      securityLevel = "maximum"
+    } else if (securityScore >= 4) {
+      securityLevel = "enhanced"
+    }
+
+    // Build the vote details object with all fields using converted values
     const voteDetails: VoteDetails = {
       id: voteId,
       creator: fields.creator,
@@ -713,33 +951,33 @@ export class SuiVoteService {
       description: fields.description,
       startTimestamp,
       endTimestamp,
-      paymentAmount: (() => {
-        let paymentAmount = fields.payment_amount;
-        if (paymentAmount !== undefined && paymentAmount !== null) {
-          const originalPaymentAmount = paymentAmount.toString();
-          const suiDecimals = tokenService.getSuiTokenInfo().decimals;
-          console.log(`[DEBUG] Converting payment amount - Original: ${originalPaymentAmount} MIST, SUI Decimals: ${suiDecimals}`);
-          
-          // Always convert from MIST to SUI - remove problematic < 1000 assumption
-          const convertedAmount = parseFloat(fromDecimalUnits(paymentAmount.toString(), suiDecimals));
-          console.log(`[DEBUG] Converted payment amount: ${convertedAmount} SUI`);
-          
-          return convertedAmount;
-        }
-        console.log(`[DEBUG] No payment amount found, returning 0`);
-        return 0;
-      })(), // Convert MIST to SUI using utility function with proper logging
+      paymentAmount: convertedPaymentAmount,
       requireAllPolls: !!fields.require_all_polls,
       pollsCount: Number(fields.polls_count || 0),
       totalVotes: Number(fields.total_votes || 0),
       isCancelled,
       status,
       tokenRequirement,
-      tokenAmount,
+      tokenAmount: convertedTokenAmount,
       hasWhitelist: !!fields.has_whitelist,
       showLiveStats: !!fields.show_live_stats,
       useTokenWeighting,
-      tokensPerVote
+      tokensPerVote: convertedTokensPerVote,
+      paymentTokenWeight: convertedPaymentTokenWeight,
+      // Security and audit fields
+      usePaymentWeighting,
+      version,
+      isLocked,
+      creationTimestamp,
+      // Security indicators (computed)
+      securityLevel,
+      hasReentrancyProtection,
+      hasInputValidation,
+      // Raw contract values for internal use
+      _rawPaymentAmount: rawPaymentAmount,
+      _rawTokenAmount: rawTokenAmount,
+      _rawTokensPerVote: rawTokensPerVote,
+      _rawPaymentTokenWeight: rawPaymentTokenWeight
     }
 
     // Cache the result
@@ -968,7 +1206,10 @@ export class SuiVoteService {
     pollData: PollData[],
     useTokenWeighting = false, 
     tokensPerVote = 0,
-    whitelistAddresses: string[] = []   
+    usePaymentWeighting = false,
+    whitelistAddresses: string[] = [],
+    voterWeights: number[] = [],
+    paymentTokenWeight = 0.1
   ): Promise<Transaction> {
     try {
       this.checkInitialization()
@@ -1041,54 +1282,105 @@ export class SuiVoteService {
         }
       }
 
-      // Convert token amounts to decimal units before sending to contract
+      // Convert token amounts to contract units using enhanced converter
       let convertedRequiredAmount = requiredAmount
       let convertedTokensPerVote = tokensPerVote
+      let convertedPaymentTokenWeight = paymentTokenWeight
+      let convertedPaymentAmount = paymentAmount
       
       console.log(`[DEBUG] Vote creation - Original values:`, {
         requiredToken,
         requiredAmount,
         tokensPerVote,
+        paymentTokenWeight,
         paymentAmount,
-        useTokenWeighting
+        useTokenWeighting,
+        usePaymentWeighting
       })
       
-      if (requiredToken && requiredAmount > 0) {
-        try {
-          const tokenInfo = await tokenService.getTokenInfo(requiredToken)
-          if (tokenInfo && tokenInfo.decimals !== undefined) {
-            console.log(`[DEBUG] Converting token amounts - Token: ${requiredToken}, Decimals: ${tokenInfo.decimals}`)
-            
-            convertedRequiredAmount = parseInt(toDecimalUnits(requiredAmount.toString(), tokenInfo.decimals))
-            console.log(`[DEBUG] Required amount conversion: ${requiredAmount} -> ${convertedRequiredAmount}`)
-            
-            if (useTokenWeighting && tokensPerVote > 0) {
-              convertedTokensPerVote = parseInt(toDecimalUnits(tokensPerVote.toString(), tokenInfo.decimals))
-              console.log(`[DEBUG] Tokens per vote conversion: ${tokensPerVote} -> ${convertedTokensPerVote}`)
-            }
-          }
-        } catch (error) {
-          console.error('[DEBUG] Failed to convert token amounts to decimal units:', error)
-          // Continue with original values if conversion fails
+      try {
+        // Convert required token amount
+        if (requiredToken && requiredAmount > 0) {
+          const convertedAmount = await this.coinConverter.toContractUnits(requiredAmount, requiredToken)
+          convertedRequiredAmount = parseInt(convertedAmount)
+          console.log(`[DEBUG] Required amount conversion: ${requiredAmount} -> ${convertedRequiredAmount}`)
         }
+        
+        // Convert tokens per vote for token weighting
+        if (useTokenWeighting && tokensPerVote > 0) {
+          const tokenType = requiredToken && requiredToken !== "none" ? requiredToken : undefined
+          const convertedAmount = await this.coinConverter.toContractUnits(tokensPerVote, tokenType)
+          convertedTokensPerVote = parseInt(convertedAmount)
+          console.log(`[DEBUG] Tokens per vote conversion: ${tokensPerVote} -> ${convertedTokensPerVote}`)
+        }
+        
+        // Convert payment token weight (always in SUI/MIST)
+        if (usePaymentWeighting && paymentTokenWeight > 0) {
+          const convertedAmount = await this.coinConverter.toContractUnits(paymentTokenWeight)
+          convertedPaymentTokenWeight = parseInt(convertedAmount)
+          console.log(`[DEBUG] Payment token weight conversion: ${paymentTokenWeight} SUI -> ${convertedPaymentTokenWeight} MIST`)
+        } else {
+          // When payment weighting is disabled, set to 0 in contract units
+          convertedPaymentTokenWeight = 0
+          console.log(`[DEBUG] Payment weighting disabled, setting payment token weight to 0`)
+        }
+        
+        // Convert payment amount (always in SUI/MIST)
+        if (paymentAmount > 0) {
+          const convertedAmount = await this.coinConverter.toContractUnits(paymentAmount)
+          convertedPaymentAmount = parseInt(convertedAmount)
+          console.log(`[DEBUG] Payment amount conversion: ${paymentAmount} SUI -> ${convertedPaymentAmount} MIST`)
+        }
+      } catch (error) {
+        console.error('[DEBUG] Failed to convert token amounts using CoinConverter:', error)
+        throw new Error(`Token conversion failed: ${error instanceof Error ? error.message : String(error)}`)
       }
       
-      // Convert payment amount from SUI to MIST
-      const suiDecimals = tokenService.getSuiTokenInfo().decimals
-      const convertedPaymentAmount = parseInt(toDecimalUnits(paymentAmount.toString(), suiDecimals))
-      console.log(`[DEBUG] Payment amount conversion: ${paymentAmount} SUI -> ${convertedPaymentAmount} MIST (decimals: ${suiDecimals})`)
+      // Handle voter weights: if empty but whitelist addresses exist, generate default weights of 1
+      let finalVoterWeights = voterWeights
+      if (whitelistAddresses.length > 0 && voterWeights.length === 0) {
+        finalVoterWeights = whitelistAddresses.map(() => 1) // Default weight of 1 for basic whitelist
+        console.log(`[DEBUG] Generated default voter weights for ${whitelistAddresses.length} whitelist addresses`)
+      }
+      
+      // Validate whitelist addresses and voter weights arrays match
+      if (whitelistAddresses.length !== finalVoterWeights.length) {
+        throw new Error(`Whitelist addresses (${whitelistAddresses.length}) and voter weights (${finalVoterWeights.length}) arrays must have the same length`)
+      }
+      
+      // Ensure voterWeights are properly converted to numbers
+      const numericVoterWeights = finalVoterWeights.map(weight => {
+        const numWeight = typeof weight === 'string' ? Number(weight) : Number(weight)
+        if (isNaN(numWeight) || numWeight <= 0) {
+          throw new Error(`Invalid voter weight: ${weight}. All voter weights must be valid positive numbers.`)
+        }
+        return numWeight
+      })
       
       console.log(`[DEBUG] Final converted values for contract:`, {
         convertedRequiredAmount,
         convertedTokensPerVote,
-        convertedPaymentAmount
+        convertedPaymentTokenWeight,
+        convertedPaymentAmount,
+        whitelistCount: whitelistAddresses.length,
+        voterWeightsCount: voterWeights.length,
+        originalVoterWeights: voterWeights,
+        finalVoterWeights: finalVoterWeights,
+        numericVoterWeights: numericVoterWeights,
+        numericVoterWeightsType: typeof numericVoterWeights,
+        numericVoterWeightsArray: Array.isArray(numericVoterWeights)
       })
+      
+      // Auto-set SUI as default token for payment/token weighting when no token is specified
+      if ((useTokenWeighting || usePaymentWeighting) && (!requiredToken || requiredToken.trim() === "")) {
+        requiredToken = "0x2::sui::SUI"
+        console.log('[DEBUG] Auto-setting SUI as default token for weighting')
+      }
       
       // Build the transaction with proper arguments matching the contract
       tx.moveCall({
         target: `${PACKAGE_ID}::voting::create_complete_vote`,
         arguments: [
-          tx.object(ADMIN_ID),
           tx.pure.string(title),
           tx.pure.string(description),
           tx.pure.u64(startTimestamp),
@@ -1099,7 +1391,10 @@ export class SuiVoteService {
           tx.pure.u64(convertedRequiredAmount), // Use converted token amount              
           tx.pure.bool(showLiveStats),
           tx.pure.bool(useTokenWeighting),   
-          tx.pure.u64(convertedTokensPerVote), // Use converted tokens per vote       
+          tx.pure.u64(convertedTokensPerVote), // Use converted tokens per vote
+          tx.pure.bool(usePaymentWeighting), // Payment weighting parameter
+          tx.pure.u64(convertedPaymentTokenWeight), // Use converted payment token weight
+          tx.pure.vector("u64", numericVoterWeights), // voter_weights must be 15th parameter
           tx.pure.vector("string", pollTitles),
           tx.pure.vector("string", pollDescriptions),
           tx.pure.vector("bool", pollIsMultiSelect),
@@ -1134,11 +1429,13 @@ export class SuiVoteService {
     paymentAmount = 0,
     requireAllPolls = true,
     showLiveStats = false,
-    useTokenWeighting = false,    // New parameter
-    tokensPerVote = 0,  
+    useTokenWeighting = false,
+    tokensPerVote = 0,
+    usePaymentWeighting = false,
     pollData: PollData[],
     mediaFiles: Record<string, { data: Uint8Array, contentType: string }>,
-    whitelistAddresses: string[] = []
+    whitelistAddresses: string[] = [],
+    voterWeights: number[] = []
   ): Promise<Transaction> {
     try {
       this.checkInitialization()
@@ -1322,17 +1619,40 @@ export class SuiVoteService {
       const convertedPaymentAmount = parseInt(toDecimalUnits(paymentAmount.toString(), suiDecimals))
       console.log(`[DEBUG] Payment amount conversion: ${paymentAmount} SUI -> ${convertedPaymentAmount} MIST (decimals: ${suiDecimals})`)
       
+      // Handle voter weights: if empty but whitelist addresses exist, generate default weights of 1
+      let finalVoterWeights = voterWeights
+      if (whitelistAddresses.length > 0 && voterWeights.length === 0) {
+        finalVoterWeights = whitelistAddresses.map(() => 1) // Default weight of 1 for basic whitelist
+        console.log(`[DEBUG] Generated default voter weights for ${whitelistAddresses.length} whitelist addresses`)
+      }
+      
+      // Validate whitelist addresses and voter weights arrays match
+      if (whitelistAddresses.length !== finalVoterWeights.length) {
+        throw new Error(`Whitelist addresses (${whitelistAddresses.length}) and voter weights (${finalVoterWeights.length}) arrays must have the same length`)
+      }
+      
+      // Ensure voterWeights are properly converted to numbers
+      const numericVoterWeights = finalVoterWeights.map(weight => {
+        const numWeight = typeof weight === 'string' ? Number(weight) : Number(weight)
+        if (isNaN(numWeight) || numWeight <= 0) {
+          throw new Error(`Invalid voter weight: ${weight}. All voter weights must be valid positive numbers.`)
+        }
+        return numWeight
+      })
+      
       console.log(`[DEBUG] Final converted values for contract:`, {
         convertedRequiredAmount,
         convertedTokensPerVote,
-        convertedPaymentAmount
+        convertedPaymentAmount,
+        originalVoterWeights: voterWeights,
+        finalVoterWeights: finalVoterWeights,
+        numericVoterWeights: numericVoterWeights
       })
 
       // 3. Create the vote using the actual SuiVote package ID
       const voteObj = tx.moveCall({
         target: `${PACKAGE_ID}::voting::create_complete_vote`,
         arguments: [
-          tx.object(ADMIN_ID),
           tx.pure.string(title),
           tx.pure.string(description),
           tx.pure.u64(startTimestamp),
@@ -1343,7 +1663,9 @@ export class SuiVoteService {
           tx.pure.u64(convertedRequiredAmount),     
           tx.pure.bool(showLiveStats),
           tx.pure.bool(useTokenWeighting),
-          tx.pure.u64(convertedTokensPerVote),            
+          tx.pure.u64(convertedTokensPerVote),
+          tx.pure.bool(usePaymentWeighting), // Add missing payment weighting parameter
+          tx.pure.vector("u64", numericVoterWeights), // voter_weights must be 14th parameter
           tx.pure.vector("string", pollTitles),
           tx.pure.vector("string", pollDescriptions),
           tx.pure.vector("bool", pollIsMultiSelect),
@@ -1519,6 +1841,63 @@ export class SuiVoteService {
   }
 
   /**
+   * Get the whitelist weight for a specific voter
+   * @param voteId The vote ID
+   * @param voterAddress The voter's address
+   * @returns The voter's whitelist weight (0 if not whitelisted, 1+ if whitelisted)
+   */
+  async getWhitelistWeight(voteId: string, voterAddress: string): Promise<number> {
+    try {
+      this.checkInitialization()
+
+      if (!voteId || !voterAddress) {
+        throw new Error("Vote ID and voter address are required")
+      }
+
+      // First check if the vote has a whitelist
+      const voteDetails = await this.getVoteDetails(voteId)
+      if (!voteDetails || !voteDetails.hasWhitelist) {
+        return 1 // No whitelist means everyone has weight 1
+      }
+
+      // Check if the voter is whitelisted
+      const isWhitelisted = await this.isVoterWhitelisted(voteId, voterAddress)
+      if (!isWhitelisted) {
+        return 0 // Not whitelisted
+      }
+
+      // Try to get the WhitelistEntry with weight (for version 2+)
+      try {
+        const dynamicField = await this.retryRequest(async () => {
+          return await this.client.getDynamicFieldObject({
+            parentId: voteId,
+            name: {
+              type: "address",
+              value: voterAddress
+            }
+          })
+        })
+
+        if (dynamicField.data?.content?.dataType === "moveObject") {
+          const fields = (dynamicField.data.content as any).fields
+          if (fields && fields.value && typeof fields.value.weight === "string") {
+            return parseInt(fields.value.weight)
+          }
+        }
+      } catch (error) {
+        // If we can't get the WhitelistEntry, fall back to legacy behavior
+        console.log(`Could not get whitelist weight for ${voterAddress}, using default weight 1`)
+      }
+
+      // Default weight for legacy entries or if we can't determine the weight
+      return 1
+    } catch (error) {
+      console.error(`Failed to get whitelist weight for ${voterAddress}:`, error)
+      return 0
+    }
+  }
+
+  /**
    * Get votes where a user is whitelisted
    * @param address User address
    * @param limit Maximum number of votes to return
@@ -1611,6 +1990,9 @@ export class SuiVoteService {
         throw new Error("Payment amount must be non-negative")
       }
 
+      // Get vote details to check payment weighting requirements
+      const vote = await this.getVoteDetails(voteId)
+      
       // Token balance is already in base units from checkTokenBalance
       let convertedTokenBalance = tokenBalance
 
@@ -1620,7 +2002,9 @@ export class SuiVoteService {
         optionIndices,
         tokenBalance,
         convertedTokenBalance,
-        payment
+        payment,
+        usePaymentWeighting: vote.usePaymentWeighting,
+        tokensPerVote: vote.tokensPerVote
       });
 
       // Convert payment amount from SUI to MIST
@@ -1629,6 +2013,15 @@ export class SuiVoteService {
         const suiDecimals = tokenService.getSuiTokenInfo().decimals
         convertedPaymentAmount = parseInt(toDecimalUnits(payment.toString(), suiDecimals))
         console.log(`[DEBUG] Payment amount conversion: ${payment} SUI -> ${convertedPaymentAmount} MIST (decimals: ${suiDecimals})`)
+      }
+      
+      // For payment weighting, ensure minimum payment is met
+      if (vote.usePaymentWeighting && vote.tokensPerVote && parseFloat(vote.tokensPerVote) > 0) {
+        const minimumPaymentMist = parseFloat(vote.tokensPerVote) // Convert string to number
+        if (convertedPaymentAmount < minimumPaymentMist) {
+          convertedPaymentAmount = minimumPaymentMist
+          console.log(`[DEBUG] Payment weighting: Using minimum payment ${minimumPaymentMist} MIST (${fromDecimalUnits(minimumPaymentMist.toString(), 9)} SUI)`)
+        }
       }
 
       const tx = new Transaction()
@@ -1744,6 +2137,9 @@ async castMultipleVotesTransaction(
       throw new Error("Payment amount must be non-negative")
     }
 
+    // Get vote details to check payment weighting requirements
+    const vote = await this.getVoteDetails(voteId)
+
     // Token balance is already in base units from checkTokenBalance
     let convertedTokenBalance = tokenBalance;
 
@@ -1759,6 +2155,15 @@ async castMultipleVotesTransaction(
       const suiDecimals = tokenService.getSuiTokenInfo().decimals
       convertedPaymentAmount = parseInt(toDecimalUnits(payment.toString(), suiDecimals))
       console.log(`[DEBUG] Payment amount conversion: ${payment} SUI -> ${convertedPaymentAmount} MIST (decimals: ${suiDecimals})`)
+    }
+    
+    // For payment weighting, ensure minimum payment is met
+    if (vote.usePaymentWeighting && vote.tokensPerVote && parseFloat(vote.tokensPerVote) > 0) {
+      const minimumPaymentMist = parseFloat(vote.tokensPerVote) // Convert string to number
+      if (convertedPaymentAmount < minimumPaymentMist) {
+        convertedPaymentAmount = minimumPaymentMist
+        console.log(`[DEBUG] Payment weighting: Using minimum payment ${minimumPaymentMist} MIST (${fromDecimalUnits(minimumPaymentMist.toString(), 9)} SUI)`)
+      }
     }
 
     const tx = new Transaction()
@@ -1911,36 +2316,14 @@ async castMultipleVotesTransaction(
   }
 
   /**
-   * Create a transaction to start a vote when its start time has passed
-   * @param voteId Vote object ID
-   * @returns Transaction to be signed
+   * Note: Votes automatically become active based on their start timestamp.
+   * No manual transaction is needed to start a vote - the Move contract
+   * checks timestamps during vote casting operations.
+   * This method is deprecated and should not be used.
+   * @deprecated Votes are time-based and start automatically
    */
   startVoteTransaction(voteId: string): Transaction {
-    try {
-      this.checkInitialization()
-
-      if (!voteId) {
-        throw new Error("Vote ID is required")
-      }
-
-      const tx = new Transaction()
-
-      // Get the clock object
-      const clockObj = tx.object(SUI_CLOCK_OBJECT_ID)
-
-      tx.moveCall({
-        target: `${PACKAGE_ID}::voting::start_vote`,
-        arguments: [
-          tx.object(voteId),
-          clockObj,
-        ],
-      })
-
-      return tx
-    } catch (error) {
-      console.error(`Failed to create start vote transaction:`, error)
-      throw new Error(`Failed to start vote: ${error instanceof Error ? error.message : String(error)}`)
-    }
+    throw new Error("Vote starting is automatic based on timestamps. No manual transaction needed.")
   }
 
   /**
@@ -2220,12 +2603,25 @@ async castMultipleVotesTransaction(
           let voterInfo = voterMap.get(voteCast.voter);
           
           if (!voterInfo) {
+            // Convert token amounts using CoinConverter
+            const tokenBalance = await this.coinConverter.fromContractUnits(
+              voteCast.token_balance || '0',
+              'SUI' // Default to SUI since token_type is not available in VoteCastEvent
+            );
+            const voteWeight = await this.coinConverter.fromContractUnits(
+              voteCast.vote_weight || '0',
+              'SUI' // Default to SUI since token_type is not available in VoteCastEvent
+            );
+            
             voterInfo = {
               voter: voteCast.voter,
-              tokenBalance: Number(voteCast.token_balance) || 0,
-              voteWeight: Number(voteCast.vote_weight) || 0,
+              tokenBalance: tokenBalance,
+              voteWeight: voteWeight,
               timestamp: timestamp, // Store timestamp
-              polls: []
+              polls: [],
+              // Store raw values for internal use
+              _rawTokenBalance: voteCast.token_balance || '0',
+              _rawVoteWeight: voteCast.vote_weight || '0'
             };
             voterMap.set(voteCast.voter, voterInfo);
           }
@@ -2281,7 +2677,7 @@ async castMultipleVotesTransaction(
       });
 
       // Return default values if no token requirement or required amount is zero
-      if (!tokenType || requiredAmount === undefined) {
+      if (!tokenType || !requiredAmount) {
         console.log("[Token Debug] No token requirement, returning default");
         return { hasBalance: true, tokenBalance: 0 };
       }
@@ -2323,7 +2719,7 @@ async castMultipleVotesTransaction(
       console.log("[Token Debug] Token decimals:", decimals);
 
       // Parse required amount into base units (ensure it's a string)
-      const requiredAmountStr = typeof requiredAmount === 'string' ? requiredAmount : requiredAmount.toString();
+      const requiredAmountStr = String(requiredAmount);
       const requiredBase = this.parseToBaseUnits(requiredAmountStr, decimals);
       const userBalance = BigInt(totalBalance);
       
@@ -2353,6 +2749,57 @@ async castMultipleVotesTransaction(
     } catch (error) {
       console.error("checkTokenBalance error:", error instanceof Error ? error.message : String(error));
       return { hasBalance: false, tokenBalance: 0 };
+    }
+  }
+
+  /**
+   * Get SUI balance for a user address
+   * @param userAddress User address
+   * @returns SUI balance in base units (MIST)
+   */
+  async getSuiBalance(userAddress: string): Promise<number> {
+    try {
+      this.checkInitialization();
+
+      if (!userAddress) {
+        return 0;
+      }
+
+      // Add retry logic for rate limiting
+      let retries = 0;
+      const maxRetries = 3;
+      const baseDelay = 1000; // 1 second
+
+      while (retries < maxRetries) {
+        try {
+          const { totalBalance } = await this.client.getBalance({
+            owner: userAddress,
+            coinType: "0x2::sui::SUI",
+          });
+
+          return totalBalance ? Number(totalBalance) : 0;
+        } catch (fetchError: any) {
+          // Check if it's a rate limiting error
+          if (fetchError?.message?.includes('429') || 
+              fetchError?.message?.includes('Too Many Requests') ||
+              fetchError?.message?.includes('Failed to fetch')) {
+            retries++;
+            if (retries < maxRetries) {
+              const delay = baseDelay * Math.pow(2, retries - 1); // Exponential backoff
+              console.warn(`Rate limited, retrying in ${delay}ms (attempt ${retries}/${maxRetries})`);
+              await new Promise(resolve => setTimeout(resolve, delay));
+              continue;
+            }
+          }
+          throw fetchError;
+        }
+      }
+
+      throw new Error('Max retries exceeded for getSuiBalance');
+    } catch (error) {
+      console.error("getSuiBalance error:", error instanceof Error ? error.message : String(error));
+      // Return 0 instead of throwing to prevent UI crashes
+      return 0;
     }
   }
 
@@ -2416,4 +2863,12 @@ async castMultipleVotesTransaction(
     }
   }
 
+}
+
+// Create a singleton instance
+const suivoteService = new SuiVoteService()
+
+// Export standalone function for getWhitelistWeight
+export const getWhitelistWeight = async (voteId: string, voterAddress: string): Promise<number> => {
+  return await suivoteService.getWhitelistWeight(voteId, voterAddress)
 }
