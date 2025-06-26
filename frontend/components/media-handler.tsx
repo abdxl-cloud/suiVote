@@ -280,8 +280,20 @@ export function VoteMediaHandler({ children }: { children: (handlers: MediaHandl
            // Convert percentage to decimal (e.g., 50% -> 0.5)
            return weight / 100
          })
+         console.log(`[DEBUG] Media Handler: Using whitelist weighting with ${voterWeights.length} weights:`, voterWeights)
+       } else {
+         console.log(`[DEBUG] Media Handler: Whitelist weighting disabled, using empty voter weights array`)
        }
-       // When whitelist weighting is not enabled, pass empty array for voter weights     
+       
+       console.log(`[DEBUG] Media Handler: Final parameters:`, {
+         isTokenWeighted: params.isTokenWeighted,
+         whitelistWeightsEnabled: params.whitelistWeightsEnabled,
+         whitelistAddressesCount: whitelistAddresses.length,
+         voterWeightsCount: voterWeights.length,
+         hasWhitelistWeights: params.whitelistWeights ? Object.keys(params.whitelistWeights).length : 0
+       })
+       // When whitelist weighting is not enabled, always pass empty array for voter weights
+       // This prevents the contract from interpreting basic whitelist as whitelist weighting     
       const transaction = await createCompleteVoteTransaction(
         params.voteTitle,
         params.voteDescription,
@@ -310,10 +322,12 @@ export function VoteMediaHandler({ children }: { children: (handlers: MediaHandl
             // Call success callback if provided
             if (result && params.onSuccess) {
               // Extract vote ID from result if available
-              const voteId = result.objectChanges?.find((change: { type: string; objectType: string | string[] }) =>
-                  change.type === 'created' &&
-                  change.objectType.includes('::voting::Vote')
-              )?.objectId
+              const voteId = (result.effects && typeof result.effects === 'object' && 'created' in result.effects)
+                ? result.effects.created?.find((created: any) =>
+                    created.reference?.objectId &&
+                    created.reference?.objectType?.includes('::voting::Vote')
+                  )?.reference?.objectId
+                : undefined
 
               if (voteId) {
                 params.onSuccess(voteId)

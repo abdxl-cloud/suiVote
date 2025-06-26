@@ -260,12 +260,17 @@ export function useSuiVote() {
         setError(null)
 
         // Call the service method to create the transaction
-        // Use provided voter weights or generate default ones if empty
-        const finalVoterWeights = voterWeights.length > 0 
-          ? voterWeights
-          : whitelistAddresses.length > 0 
-            ? whitelistAddresses.map(() => 100) // Default weight of 100 for each address
-            : []
+        // Only use voter weights when explicitly provided (whitelist weighting enabled)
+        // For basic whitelist (access control only), keep voter weights empty
+        const finalVoterWeights = voterWeights.length > 0 ? voterWeights : []
+        
+        console.log(`[DEBUG] Hook: Processing voter weights:`, {
+          originalVoterWeights: voterWeights,
+          finalVoterWeights: finalVoterWeights,
+          whitelistAddressesCount: whitelistAddresses.length,
+          isTokenWeighted,
+          enableWeightedPayment
+        })
           
         // Convert amounts to numbers for service compatibility
         const numericRequiredAmount = typeof requiredAmount === 'string' ? parseFloat(requiredAmount) || 0 : requiredAmount;

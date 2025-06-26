@@ -1336,16 +1336,21 @@ export class SuiVoteService {
         throw new Error(`Token conversion failed: ${error instanceof Error ? error.message : String(error)}`)
       }
       
-      // Handle voter weights: if empty but whitelist addresses exist, generate default weights of 1
+      // Handle voter weights: only generate weights when explicitly using whitelist weighting
       let finalVoterWeights = voterWeights
-      if (whitelistAddresses.length > 0 && voterWeights.length === 0) {
-        finalVoterWeights = whitelistAddresses.map(() => 1) // Default weight of 1 for basic whitelist
-        console.log(`[DEBUG] Generated default voter weights for ${whitelistAddresses.length} whitelist addresses`)
-      }
       
-      // Validate whitelist addresses and voter weights arrays match
-      if (whitelistAddresses.length !== finalVoterWeights.length) {
-        throw new Error(`Whitelist addresses (${whitelistAddresses.length}) and voter weights (${finalVoterWeights.length}) arrays must have the same length`)
+      // For basic whitelist (access control only), keep voter weights empty
+      // Only generate weights when voter weights are explicitly provided (whitelist weighting)
+      if (voterWeights.length > 0) {
+        // Validate whitelist addresses and voter weights arrays match when weights are provided
+        if (whitelistAddresses.length !== finalVoterWeights.length) {
+          throw new Error(`Whitelist addresses (${whitelistAddresses.length}) and voter weights (${finalVoterWeights.length}) arrays must have the same length`)
+        }
+        console.log(`[DEBUG] Using custom voter weights for ${whitelistAddresses.length} whitelist addresses`)
+      } else {
+        // Empty voter weights array for basic whitelist or no whitelist
+        finalVoterWeights = []
+        console.log(`[DEBUG] Using basic whitelist (no custom weights) for ${whitelistAddresses.length} addresses`)
       }
       
       // Ensure voterWeights are properly converted to numbers
@@ -1619,16 +1624,21 @@ export class SuiVoteService {
       const convertedPaymentAmount = parseInt(toDecimalUnits(paymentAmount.toString(), suiDecimals))
       console.log(`[DEBUG] Payment amount conversion: ${paymentAmount} SUI -> ${convertedPaymentAmount} MIST (decimals: ${suiDecimals})`)
       
-      // Handle voter weights: if empty but whitelist addresses exist, generate default weights of 1
+      // Handle voter weights: only generate weights when explicitly using whitelist weighting
       let finalVoterWeights = voterWeights
-      if (whitelistAddresses.length > 0 && voterWeights.length === 0) {
-        finalVoterWeights = whitelistAddresses.map(() => 1) // Default weight of 1 for basic whitelist
-        console.log(`[DEBUG] Generated default voter weights for ${whitelistAddresses.length} whitelist addresses`)
-      }
       
-      // Validate whitelist addresses and voter weights arrays match
-      if (whitelistAddresses.length !== finalVoterWeights.length) {
-        throw new Error(`Whitelist addresses (${whitelistAddresses.length}) and voter weights (${finalVoterWeights.length}) arrays must have the same length`)
+      // For basic whitelist (access control only), keep voter weights empty
+      // Only generate weights when voter weights are explicitly provided (whitelist weighting)
+      if (voterWeights.length > 0) {
+        // Validate whitelist addresses and voter weights arrays match when weights are provided
+        if (whitelistAddresses.length !== finalVoterWeights.length) {
+          throw new Error(`Whitelist addresses (${whitelistAddresses.length}) and voter weights (${finalVoterWeights.length}) arrays must have the same length`)
+        }
+        console.log(`[DEBUG] Using custom voter weights for ${whitelistAddresses.length} whitelist addresses`)
+      } else {
+        // Empty voter weights array for basic whitelist or no whitelist
+        finalVoterWeights = []
+        console.log(`[DEBUG] Using basic whitelist (no custom weights) for ${whitelistAddresses.length} addresses`)
       }
       
       // Ensure voterWeights are properly converted to numbers

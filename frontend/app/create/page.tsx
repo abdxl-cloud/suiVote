@@ -81,6 +81,7 @@ type PollType = {
     id: string
     text: string
     mediaUrl: string | null
+    fileId?: string | null
   }[]
   isMultiSelect: boolean
   maxSelections: number
@@ -121,12 +122,22 @@ type ValidationErrors = {
     token?: string
     amount?: string
     weightedPayment?: string
+    tokenWeight?: string
+    paymentTokenWeight?: string
+    whitelist?: string
   }
   environment?: string
 }
 
 // Sortable Poll Item component
-const SortablePollItem = ({ poll, index, activePollIndex, setActivePollIndex, removePoll, pollsLength }) => {
+const SortablePollItem = ({ poll, index, activePollIndex, setActivePollIndex, removePoll, pollsLength }: {
+  poll: PollType
+  index: number
+  activePollIndex: number
+  setActivePollIndex: (index: number) => void
+  removePoll: (index: number) => void
+  pollsLength: number
+}) => {
   const {
     attributes,
     listeners,
@@ -261,6 +272,9 @@ export default function CreateVotePage() {
       token?: boolean
       amount?: boolean
       weightedPayment?: boolean
+      tokenWeight?: boolean
+      paymentTokenWeight?: boolean
+      whitelist?: boolean
     }
   }>({})
   const [attemptedSubmit, setAttemptedSubmit] = useState(false)
@@ -307,12 +321,12 @@ export default function CreateVotePage() {
   );
 
   // Handle drag start event
-  const handleDragStart = (event) => {
+  const handleDragStart = (event: any) => {
     setActiveId(event.active.id);
   };
 
   // Handle drag end event
-  const handleDragEnd = (event) => {
+  const handleDragEnd = (event: any) => {
     const { active, over } = event;
     
     if (active.id !== over?.id) {
@@ -381,9 +395,9 @@ export default function CreateVotePage() {
           const hasTitle = parsedData.voteTitle && parsedData.voteTitle.trim() !== ''
           const hasDescription = parsedData.voteDescription && parsedData.voteDescription.trim() !== ''
           const hasPolls = parsedData.polls && parsedData.polls.length > 0
-          const hasPollTitles = hasPolls && parsedData.polls.some(poll => poll.title && poll.title.trim() !== '')
-          const hasPollOptions = hasPolls && parsedData.polls.some(poll => 
-            poll.options && poll.options.some(option => option.text && option.text.trim() !== '')
+          const hasPollTitles = hasPolls && parsedData.polls.some((poll: any) => poll.title && poll.title.trim() !== '')
+          const hasPollOptions = hasPolls && parsedData.polls.some((poll: any) => 
+            poll.options && poll.options.some((option: any) => option.text && option.text.trim() !== '')
           )
           
 
@@ -449,11 +463,11 @@ export default function CreateVotePage() {
           setFormDataLoaded(true)
           
           // Create a summary of what was loaded
-          const loadedItems = [];
+          const loadedItems: string[] = [];
           if (hasTitle) loadedItems.push('title');
           if (hasDescription) loadedItems.push('description');
           if (hasPollTitles) {
-            const pollCount = parsedData.polls.filter(poll => poll.title && poll.title.trim() !== '').length
+            const pollCount = parsedData.polls.filter((poll: any) => poll.title && poll.title.trim() !== '').length
             loadedItems.push(`${pollCount} poll${pollCount > 1 ? 's' : ''}`);
           }
           
@@ -531,7 +545,8 @@ export default function CreateVotePage() {
         whitelistAddresses: [],
         whitelistWeights: {},
         whitelistWeightsEnabled: false,
-        enableWeightedPayment: false
+        enableWeightedPayment: false,
+        paymentTokenWeight: "0.1"
       })
       
       setActiveTab('details')
@@ -567,8 +582,8 @@ export default function CreateVotePage() {
   // Make debug function available globally for testing
   useEffect(() => {
     if (typeof window !== 'undefined') {
-      window.checkSavedData = checkSavedData
-      window.loadFormData = loadFormData
+      ;(window as any).checkSavedData = checkSavedData
+      ;(window as any).loadFormData = loadFormData
     }
   }, [])
 
@@ -921,16 +936,16 @@ const addPoll = () => {
           poll.options.every(option => option.text.trim().length > 0)
         )
       case "settings":
-        const hasValidDates = votingSettings.startDate && votingSettings.endDate &&
-          isAfter(votingSettings.endDate, votingSettings.startDate)
+        const hasValidDates = !!(votingSettings.startDate && votingSettings.endDate &&
+          isAfter(votingSettings.endDate, votingSettings.startDate))
 
         const hasValidToken = votingSettings.requiredToken === "none" ||
           (votingSettings.requiredToken !== "none" &&
             votingSettings.requiredAmount &&
             Number.parseFloat(votingSettings.requiredAmount) > 0)
 
-        const hasValidPayment = !votingSettings.paymentAmount ||
-          Number.parseFloat(votingSettings.paymentAmount) >= 0
+        const hasValidPayment = !!(!votingSettings.paymentAmount ||
+          Number.parseFloat(votingSettings.paymentAmount) >= 0)
 
         return hasValidDates && hasValidToken && hasValidPayment && wallet.connected
       default:
@@ -1071,7 +1086,7 @@ const preparePollDataForSubmission = () => {
 
     // Check if we have at least one poll
     if (polls.length === 0 && (forceValidation || attemptedSubmit)) {
-      newErrors.polls = { general: "At least one poll is required" }
+      pollErrors['general'] = { title: "At least one poll is required" }
       errorTab = "polls"
     }
 
@@ -1487,7 +1502,7 @@ const preparePollDataForSubmission = () => {
         }
         
         polls.forEach((poll, pollIndex) => {
-          if (!poll.question.trim()) {
+          if (!poll.title.trim()) {
             errors[`poll_${pollIndex}_question`] = `Poll ${pollIndex + 1} question is required`
           }
           
@@ -1530,7 +1545,7 @@ const preparePollDataForSubmission = () => {
     const settingsErrors = validateFormSection('settings')
     
     const allErrors = { ...detailsErrors, ...pollsErrors, ...settingsErrors }
-    setValidationErrors(allErrors)
+    setErrors(allErrors)
     
     return Object.keys(allErrors).length === 0
   }
@@ -1569,7 +1584,7 @@ const preparePollDataForSubmission = () => {
       }
       
       // STEP 2: Validate poll structure and data
-      const pollValidationErrors = [];
+      const pollValidationErrors: string[] = [];
       polls.forEach((poll, index) => {
         if (!poll.title.trim()) {
           pollValidationErrors.push(`Poll ${index + 1}: Missing title`);
@@ -2716,7 +2731,7 @@ const preparePollDataForSubmission = () => {
                             <DateTimePicker
                               id="start-date"
                               value={startDate}
-                              onChange={(date) => {
+                              onChange={(date: Date | undefined) => {
                                 // Ensure date is in the future
                                 const now = new Date();
                                 const validDate = date && date > now ? date : new Date(now.getTime() + 10 * 60 * 1000);
@@ -2750,7 +2765,7 @@ const preparePollDataForSubmission = () => {
                             <DateTimePicker
                               id="end-date"
                               value={endDate}
-                              onChange={(date) => {
+                              onChange={(date: Date | undefined) => {
                                 // Ensure date is after start date
                                 const validDate = date && isAfter(date, startDate) ? date : new Date(startDate.getTime() + 24 * 60 * 60 * 1000);
 
@@ -2912,6 +2927,18 @@ const preparePollDataForSubmission = () => {
                                     ...votingSettings,
                                     enableWhitelist: enabled,
                                   })
+                                  setTouchedFields(prev => ({ ...prev, votingSettings: { ...prev.votingSettings, whitelist: true } }))
+                                  
+                                  // Clear whitelist error when disabled
+                                  if (!enabled) {
+                                    setErrors(prev => ({
+                                      ...prev,
+                                      votingSettings: {
+                                        ...prev.votingSettings,
+                                        whitelist: undefined
+                                      }
+                                    }))
+                                  }
                                 }}
                                 whitelistAddresses={votingSettings.whitelistAddresses}
                                 onWhitelistAddressesChange={(addresses) => {
@@ -2919,6 +2946,7 @@ const preparePollDataForSubmission = () => {
                                     ...votingSettings,
                                     whitelistAddresses: addresses,
                                   })
+                                  setTouchedFields(prev => ({ ...prev, votingSettings: { ...prev.votingSettings, whitelist: true } }))
                                 }}
                                 whitelistWeights={votingSettings.whitelistWeights}
                                 onWhitelistWeightsChange={(weights) => {
@@ -2926,6 +2954,7 @@ const preparePollDataForSubmission = () => {
                                     ...votingSettings,
                                     whitelistWeights: weights,
                                   })
+                                  setTouchedFields(prev => ({ ...prev, votingSettings: { ...prev.votingSettings, whitelist: true } }))
                                 }}
                                 onVoteWeightsChange={(enabled) => {
                                   // Preserve current values before disabling
@@ -2951,6 +2980,9 @@ const preparePollDataForSubmission = () => {
                                   })
                                 }}
                               />
+                              {errors.votingSettings?.whitelist && (
+                                <p className="text-sm text-red-500 mt-2">{errors.votingSettings.whitelist}</p>
+                              )}
                             </div>
                           </div>
                         </div>
